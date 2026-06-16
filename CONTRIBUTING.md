@@ -14,8 +14,7 @@ make check                   # confirm a clean baseline
 ## Branching model
 
 We are a small team, so the rules are deliberately simple and enforced from day
-one (this was flagged HIGH risk in the issue tracker — cheap to fix now).
-
+one.
 - **`main`** — protected. No direct pushes. Only updated via reviewed pull
   requests from `dev`. Always releasable.
 - **`dev`** — integration branch. Feature branches merge here first and soak
