@@ -1,0 +1,8 @@
+# Development toolchain only. No production dependencies live here.
+pytest
+pytest-cov
+pytest-asyncio
+ruff
+mypy
+bandit
+pre-commit

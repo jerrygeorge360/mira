@@ -1,0 +1,5 @@
+# Production dependencies
+# Each teammate adds their own as they implement their assigned issues:
+# Jerry   -> core/ (agent, memory, retrieval, llm)
+# Kelechi -> core/db/, deployment
+# Sarah   -> ui/, evaluation/
