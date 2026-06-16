@@ -28,11 +28,6 @@ embedding store (vector), or a blend of both.
         └──────────────┘      └──────────────┘
 ```
 
-| Area | Path | Owner |
-| --- | --- | --- |
-| Agent, memory, retrieval, LLM | `core/` | Jerry |
-| Persistence & deployment | `core/db/` | Kelechi |
-| UI & evaluation | `ui/`, `evaluation/` | Sarah |
 
 ## Quickstart
 
