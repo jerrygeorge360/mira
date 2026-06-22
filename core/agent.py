@@ -1,38 +1,22 @@
-"""Agent orchestration loop for MIRA.
+"""Top-level orchestration contract for session-aware MIRA turns.
 
-Wires the dual-stream memory subsystem, retrieval router, and LLM client into
-a single conversational agent. The agent ingests a user turn, observes it onto
-the fast path, retrieves relevant context, generates a response, and schedules
-slow-path consolidation.
-
-ISSUE-001: Agent orchestration.
+Ownership: Jerry.
+Related issue: ISSUE-001.
+Architecture area: context.
 """
-
-from __future__ import annotations
 
 
 class Agent:
-    """Top-level MIRA agent coordinating memory, retrieval, and generation."""
+    """Coordinate observation, session continuity, retrieval, prompting, and generation."""
 
     def __init__(self, session_id: str) -> None:
-        """Initialise the agent for a given conversation session.
-
-        Args:
-            session_id: Stable identifier for the conversation this agent serves.
-        """
+        """Create an agent contract for a conversation session."""
         raise NotImplementedError
 
     def handle_turn(self, user_message: str) -> str:
-        """Process a single user turn and return the agent's reply.
-
-        Args:
-            user_message: The raw user utterance for this turn.
-
-        Returns:
-            The agent's generated response text.
-        """
+        """Accept one user turn and return the eventual model response."""
         raise NotImplementedError
 
-    def reset(self) -> None:
-        """Clear transient per-session state without dropping persisted memory."""
+    def reset_session(self) -> None:
+        """Reset temporary session state without deleting durable memory."""
         raise NotImplementedError

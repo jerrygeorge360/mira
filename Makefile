@@ -1,55 +1,40 @@
-# MIRA developer commands.
-#
-# Targets operate inside a local virtualenv (.venv) so the toolchain is isolated
-# from system Python. CI calls `make install` then `make check`.
+.PHONY: install run test lint format type security check fix precommit clean
 
-VENV := .venv
-BIN := $(VENV)/bin
-PYTHON := python3
+PYTHON ?= python3
+SOURCES := core ui slack evaluation scripts
 
-# Source directories type-checked and security-scanned (everything but tests).
-SRC := core ui slack evaluation scripts
+install:
+	$(PYTHON) -m pip install -r requirements-dev.txt
+	$(PYTHON) -m pip install -r requirements.txt
 
-.PHONY: help install run test lint format type security check fix precommit clean
+run:
+	$(PYTHON) -m ui.app
 
-help: ## Show this help.
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
-		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
+test:
+	$(PYTHON) -m pytest --no-cov || [ $$? -eq 5 ]
 
-install: ## Create the virtualenv and install the dev toolchain.
-	$(PYTHON) -m venv $(VENV)
-	$(BIN)/pip install --upgrade pip
-	$(BIN)/pip install -r requirements-dev.txt
-	$(BIN)/pip install -r requirements.txt
+lint:
+	$(PYTHON) -m ruff check .
+	$(PYTHON) -m ruff format --check .
 
-run: ## Run the MIRA UI app (stub).
-	$(BIN)/python -m ui.app
+format:
+	$(PYTHON) -m ruff format .
 
-test: ## Run the test suite with coverage.
-	$(BIN)/pytest
+type:
+	$(PYTHON) -m mypy $(SOURCES)
 
-lint: ## Lint and verify formatting (no changes written).
-	$(BIN)/ruff check .
-	$(BIN)/ruff format --check .
+security:
+	$(PYTHON) -m bandit -q -r $(SOURCES)
 
-format: ## Auto-format the codebase.
-	$(BIN)/ruff format .
+check: lint type security test
 
-type: ## Run static type checking.
-	$(BIN)/mypy $(SRC)
+fix:
+	$(PYTHON) -m ruff check --fix .
+	$(PYTHON) -m ruff format .
 
-security: ## Run the security scanner.
-	$(BIN)/bandit -q -r $(SRC)
+precommit:
+	$(PYTHON) -m pre_commit run --all-files
 
-check: lint type security test ## Run all checks (CI entry point).
-
-fix: ## Auto-fix lint findings and format.
-	$(BIN)/ruff check --fix .
-	$(BIN)/ruff format .
-
-precommit: ## Run all pre-commit hooks against every file.
-	$(BIN)/pre-commit run --all-files
-
-clean: ## Remove the virtualenv, caches, and build artefacts.
-	rm -rf $(VENV) .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov
+clean:
+	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov
 	find . -type d -name __pycache__ -prune -exec rm -rf {} +

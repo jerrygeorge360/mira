@@ -1,7 +1,6 @@
-"""LLM client layer for MIRA.
+"""LLM integration contracts used after context construction.
 
-Houses the Qwen client (via DashScope) and the function-calling schema helpers
-used by the agent and the memory consolidation workers.
-
-ISSUE-002: LLM layer bootstrap.
+Ownership: Jerry.
+Related issue: ISSUE-002.
+Architecture area: context.
 """

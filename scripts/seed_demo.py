@@ -1,26 +1,19 @@
-"""Seed scripted demo data into MIRA.
+"""Demo-seeding contract for future MIRA examples.
 
-Populates the database with a scripted conversation so the demo mode (and the
-UI/eval work that depends on it) has realistic memory to render without waiting
-for real conversations to accumulate.
+Examples cover observations, session items, graph edges, foresight, reflections, and
+community summaries.
 
-Run with: python scripts/seed_demo.py
-
-ISSUE-020: Demo mode seed (owned by Sarah; stub provided to unblock).
+Ownership: Sarah.
+Related issue: ISSUE-902.
+Architecture area: evaluation.
 """
 
-from __future__ import annotations
 
-
-def seed() -> None:
-    """Load the scripted demo conversation into the configured database."""
+def seed_demo_data(database_path: str) -> None:
+    """Seed future demonstration records without implementing persistence yet."""
     raise NotImplementedError
 
 
 def main() -> None:
-    """Run the demo seeder as a standalone script."""
+    """Run the future demo-data seeding command."""
     raise NotImplementedError
-
-
-if __name__ == "__main__":
-    main()

@@ -1,31 +1,20 @@
-"""Foresight / anticipatory memory for MIRA.
+"""Future-relevant constraint records and lifecycle status contracts.
 
-Projects forward from consolidated memory to anticipate the user's likely next
-needs, pre-fetching or pre-computing context so the agent can respond with
-relevant information before it is explicitly requested.
-
-ISSUE-008: Foresight.
+Ownership: Jerry.
+Related issue: ISSUE-107.
+Architecture area: slow path.
 """
 
-from __future__ import annotations
 
-
-def anticipate(session_id: str) -> list[str]:
-    """Predict context the user is likely to need next in this session.
-
-    Args:
-        session_id: Conversation to generate anticipatory context for.
-
-    Returns:
-        Identifiers of memory items predicted to be relevant soon.
-    """
+def create_foresight(
+    content: str,
+    evidence_ids: list[str],
+    lifecycle_status: str,
+) -> dict[str, object]:
+    """Create a future-relevant constraint backed by evidence."""
     raise NotImplementedError
 
 
-def prefetch(memory_ids: list[str]) -> None:
-    """Warm caches for memory items expected to be needed shortly.
-
-    Args:
-        memory_ids: Items to pre-load ahead of an anticipated request.
-    """
+def update_foresight_status(foresight_id: str, lifecycle_status: str) -> None:
+    """Update the lifecycle status of a foresight record."""
     raise NotImplementedError

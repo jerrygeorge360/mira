@@ -1,34 +1,16 @@
-"""Slow-path consolidation worker for MIRA.
+"""Asynchronous durable enrichment pipeline contract for cross-session memory.
 
-Asynchronous background worker that drains the consolidation queue and runs the
-heavier memory operations (reflection, foresight, graph extraction, community
-detection) off the critical path of the agent's response.
-
-ISSUE-005: Slow-path worker.
+Ownership: Jerry.
+Related issue: ISSUE-103.
+Architecture area: slow path.
 """
 
-from __future__ import annotations
+
+async def enrich_observation(observation_id: str) -> None:
+    """Synthesize durable memory artifacts from one queued observation."""
+    raise NotImplementedError
 
 
-class SlowPathWorker:
-    """Background worker that consolidates observations into durable memory."""
-
-    def __init__(self) -> None:
-        """Initialise the worker and its consolidation queue."""
-        raise NotImplementedError
-
-    async def run(self) -> None:
-        """Continuously drain the queue and consolidate pending observations."""
-        raise NotImplementedError
-
-    async def consolidate(self, observation_id: str) -> None:
-        """Consolidate a single observation into long-term memory structures.
-
-        Args:
-            observation_id: Identifier of the observation to consolidate.
-        """
-        raise NotImplementedError
-
-    async def stop(self) -> None:
-        """Signal the worker to finish the current item and shut down."""
-        raise NotImplementedError
+async def run_slow_path(batch_size: int = 20) -> None:
+    """Process a future batch of queued observations asynchronously."""
+    raise NotImplementedError

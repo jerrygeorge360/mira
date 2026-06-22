@@ -1,67 +1,49 @@
 # MIRA Architecture
 
-MIRA is a cognitive memory framework for persistent AI agents. This document
-describes the moving parts and how a turn flows through them. It is a living
-document; sections firm up as each issue is implemented.
+## Fast path
 
-## Design goals
+The fast path saves each raw observation and queues its identifier. It performs no model
+calls or enrichment.
 
-- **Persistence** — memory survives across sessions and accumulates structure.
-- **Responsiveness** — the agent never blocks on heavy consolidation work.
-- **Explainability** — retrieval can justify *why* a memory was surfaced.
+## Session micro-path
 
-## Dual-stream memory
+A rule-assisted extractor proposes operations for a new turn, a deterministic validator
+checks them, and validated operations update temporary current-session state.
 
-MIRA splits memory work into two streams so the user-facing path stays fast.
+## Session Working Set
 
-### Fast path (synchronous)
+The Session Working Set stores provisional active-session items. It is not a cold, warm,
+or hot tier. Prompt construction gives it hot-level priority for immediate continuity.
 
-`core/memory/observation.py` captures each incoming turn as a raw observation,
-persists it, and enqueues it for consolidation. `core/memory/working.py` holds
-the bounded in-session buffer the agent reasons over directly.
+## Cross-session slow path
 
-### Slow path (asynchronous)
+The asynchronous slow path creates durable atomic facts, typed temporal graph edges,
+foresight, reflections, community summaries, and tier changes. It confirms, rejects,
+expires, narrows, or promotes provisional session items.
 
-`core/memory/slow_path.py` drains the consolidation queue off the critical path
-and runs the heavier operations:
+## Prompt builder
 
-- **Reflection** (`reflection.py`) — distil insights and stable facts.
-- **Foresight** (`foresight.py`) — anticipate what the user will need next.
-- **Knowledge graph** (`graph.py`) — extract entities and typed relations.
-- **Community detection** (`community.py`) — partition the graph and summarise.
+The prompt builder merges recent turns, Session Working Set items, cross-session memory,
+retrieval results, and Sensa-style ambient context under a token budget. Ambient context
+includes date, time, timezone, session gap, and optional location or weather signals.
 
-## Retrieval
+## Retrieval modes
 
-`core/retrieval/router.py` classifies each query and dispatches it to:
+- **Quick:** vector, keyword, and atomic-fact lookup.
+- **Deep:** graph-derived community summaries.
+- **Relational:** graph traversal for entities, contradiction, supersession, causality,
+  and evidence.
+- **Auto:** route classification.
 
-- **Formal retrieval** (`formal.py`) — precise, explainable graph traversal.
-- **Vector retrieval** (`vector.py`) — semantic nearest-neighbour search over
-  the Chroma embedding store.
+A structured sufficiency check permits one retry.
 
-…or a hybrid blend, then merges and ranks the results.
+## Durable tiers and persistence
 
-## Persistence
+Confirmed memory may move among cold, warm, and hot tiers. SQLite is the source of truth.
+ChromaDB is a rebuildable vector index only. NetworkX will provide an in-process view and
+algorithms for the single typed temporal graph, not another source of truth.
 
-- **SQLite** (`core/db/schema.py`) — observations, consolidated memories, and
-  the knowledge graph (nodes and edges).
-- **Chroma** (`core/db/chroma.py`) — the embedding store backing vector search.
+## Provisional and confirmed memory
 
-## LLM layer
-
-`core/llm/qwen.py` wraps the Qwen chat API (via DashScope);
-`core/llm/functions.py` builds the tool schemas and dispatches model-requested
-calls.
-
-## Surfaces
-
-- `ui/` — chat front-end plus a live knowledge-graph visualisation.
-- `slack/` — a Slack bot and an MCP server exposing MIRA as tools.
-- `evaluation/` — an LLM-as-judge harness for measuring quality.
-
-## Decisions
-
-Key architectural decisions are recorded as ADRs in [adr/](adr/):
-
-- [0001](adr/0001-leiden-over-louvain.md) — Leiden over Louvain for communities.
-- [0002](adr/0002-sqlite-over-postgres.md) — SQLite over Postgres for the store.
-- [0003](adr/0003-dual-stream-memory.md) — dual-stream (fast/slow) memory.
+Session items remain provisional until the slow path confirms them. Corrections apply
+forward without rewriting raw observations; only confirmed candidates may become durable.

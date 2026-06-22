@@ -1,62 +1,50 @@
 # Contributing to MIRA
 
-Thanks for working on MIRA. This guide covers the branching model, the local
-workflow, and the conventions every change is expected to follow.
+## Branch strategy
 
-## Getting set up
+`main`
 
-```bash
-make install                 # create .venv and install the dev toolchain
-.venv/bin/pre-commit install # enable the git hooks
-make check                   # confirm a clean baseline
-```
+- Protected.
+- No direct pushes.
+- Release-ready branch.
 
-## Branching model
+`dev`
 
-We are a small team, so the rules are deliberately simple and enforced from day
-one.
-- **`main`** — protected. No direct pushes. Only updated via reviewed pull
-  requests from `dev`. Always releasable.
-- **`dev`** — integration branch. Feature branches merge here first and soak
-  before promotion to `main`.
-- **`feature/issue-XXX-short-description`** — one branch per issue, cut from
-  `dev`. Example: `feature/issue-010-leiden-communities`.
+- Integration branch.
+- Feature branches merge here first.
 
-Fix branches follow the same shape: `fix/issue-XXX-short-description`.
+`feature/issue-XXX-short-description`
 
-### Flow
+- One branch per issue.
+- Must link to the issue.
+- Must pass `make check` before a pull request.
 
-```
-feature/issue-XXX  ──PR──►  dev  ──PR──►  main
-```
+Create feature branches from `dev`, merge them into `dev` through review, and promote
+release-ready integration changes to `main` through a separate reviewed pull request.
 
-1. Cut `feature/issue-XXX-...` from an up-to-date `dev`.
-2. Open a PR into `dev`. CI (`make check`) must pass and one teammate must
-   approve.
-3. Periodically, `dev` is promoted to `main` via a reviewed PR.
+## Commit convention
 
-## Commit messages
+Use `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, or `chore:`. Keep commits
+focused and reference the issue where useful.
 
-Use [Conventional Commits](https://www.conventionalcommits.org/):
-`feat:`, `fix:`, `docs:`, `chore:`, `refactor:`, `test:`. Reference the issue
-where relevant, e.g. `feat(memory): add Leiden community detection (ISSUE-010)`.
+## Code quality expectations
 
-## Code conventions
+- Use Python 3.11, complete type hints, and useful public API docstrings.
+- Use standard-library imports only until an implementation issue approves dependencies.
+- Keep fast-path code free of model calls.
+- Keep the Session Working Set separate from durable tiered memory.
+- Add tests with business logic and run `make check` before every pull request.
 
-- Every module starts with a docstring naming what it does and its `ISSUE-XXX`.
-- Full type hints on every function and method; `make type` runs mypy `--strict`.
-- Public functions and classes carry docstrings.
-- Keep lines within 100 columns; `make format` handles layout.
-- New code lands with tests. `make check` must be green before you open a PR.
+## Pull request checklist
 
-## Before you push
-
-```bash
-make check   # lint + types + security + tests, exactly what CI runs
-```
+- [ ] The pull request links its issue and is narrowly scoped.
+- [ ] Interfaces and documentation are updated.
+- [ ] Tests are added or scaffold-only status is explained.
+- [ ] `make check` passes.
+- [ ] No secrets, databases, caches, or indexes are committed.
+- [ ] Review feedback is resolved.
 
 ## Architecture decisions
 
-Significant decisions are logged as ADRs in [docs/adr/](docs/adr/). If your
-change reverses or extends a decision, add or supersede the relevant ADR in the
-same PR.
+New architecture decisions must go into `docs/adr/` with title, status, context,
+decision, and consequences. Superseding decisions must link prior ADRs.

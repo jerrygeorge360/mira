@@ -3,12 +3,7 @@ line-length = 100
 target-version = "py311"
 
 [tool.ruff.lint]
-# Moved under [tool.ruff.lint] (modern form) so recent ruff versions do not emit
-# the top-level-settings deprecation warning. Same rule set as specified.
 select = ["E", "F", "I", "UP", "B", "SIM"]
-
-[tool.ruff.lint.isort]
-known-first-party = ["core", "ui", "slack", "evaluation"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -18,9 +13,6 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=core --cov-report=term-missing"
-# Slow-path worker and Slack bot are async; auto mode means async tests need no
-# per-test marker (see requirements-dev.txt -> pytest-asyncio).
-asyncio_mode = "auto"
 
 [tool.bandit]
 exclude_dirs = ["tests"]
