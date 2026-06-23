@@ -66,6 +66,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         expires_at TEXT,
+        resolution_reason TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions (id)
     )
     """,

@@ -164,6 +164,7 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
             "updated_at",
             "expires_at",
+            "resolution_reason",
         }
     ),
     "atomic_facts": frozenset(
@@ -634,6 +635,11 @@ def _connect() -> sqlite3.Connection:
     database_path = _configured_database_path()
     initialize_database(database_path)
     return connect_sqlite(database_path)
+
+
+def repository_connection() -> sqlite3.Connection:
+    """Open a configured SQLite connection after ensuring the schema exists."""
+    return _connect()
 
 
 def _now() -> str:
