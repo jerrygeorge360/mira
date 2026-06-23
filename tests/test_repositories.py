@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from core.db.repositories import (
+    claim_pending_batch,
     claim_slow_path_batch,
     configure_database,
     create_atomic_fact,
@@ -31,10 +32,15 @@ from core.db.repositories import (
     link_reflection_evidence,
     list_active_foresight,
     list_active_session_items,
+    list_failed_jobs,
     list_observations,
     list_session_items_by_status,
+    mark_done,
+    mark_failed,
+    mark_processing,
     mark_queue_done,
     mark_queue_failed,
+    move_to_dead_letter,
     save_observation,
     update_session_item_status,
 )
@@ -66,6 +72,16 @@ def _fetch_count(database_path: Path, table_name: str) -> int:
     return int(row["count"])
 
 
+def _fetch_queue_job(database_path: Path, queue_id: str) -> dict[str, object]:
+    with connect_sqlite(database_path) as connection:
+        row = connection.execute(
+            "SELECT * FROM slow_path_queue WHERE id = ?",
+            (queue_id,),
+        ).fetchone()
+    assert row is not None
+    return dict(row)
+
+
 def test_session_observation_and_queue_flow(database_path: Path) -> None:
     """Sessions, observations, and queue records can be created/read/updated."""
     session_id = create_session("user-1", "Demo")
@@ -88,11 +104,66 @@ def test_session_observation_and_queue_flow(database_path: Path) -> None:
     assert _fetch_status(database_path, "slow_path_queue", queue_id) == "failed"
 
     second_queue_id = enqueue_observation(observation_id)
+    mark_processing(second_queue_id)
     mark_queue_done(second_queue_id)
     assert _fetch_status(database_path, "slow_path_queue", second_queue_id) == "done"
 
     end_session(session_id)
     assert _fetch_status(database_path, "sessions", session_id) == "ended"
+
+
+def test_slow_path_queue_claim_retry_and_dead_letter_flow(database_path: Path) -> None:
+    """Slow-path queue jobs survive retries and support dead-letter transitions."""
+    session_id = create_session("user-1")
+    observation_id = save_observation(session_id, "user", "queue this observation")
+    queue_id = enqueue_observation(observation_id)
+
+    claimed = claim_pending_batch(1)
+    assert claimed[0]["id"] == queue_id
+    assert claimed[0]["observation_id"] == observation_id
+    assert claimed[0]["status"] == "processing"
+    assert claimed[0]["attempt_count"] == 1
+
+    mark_failed(queue_id, "temporary extraction error")
+    failed_jobs = list_failed_jobs(10)
+    assert failed_jobs[0]["id"] == queue_id
+    assert failed_jobs[0]["last_error"] == "temporary extraction error"
+
+    retried = claim_pending_batch(1)
+    assert retried[0]["id"] == queue_id
+    assert retried[0]["status"] == "processing"
+    assert retried[0]["attempt_count"] == 2
+    assert retried[0]["last_error"] is None
+
+    mark_done(queue_id)
+    assert _fetch_status(database_path, "slow_path_queue", queue_id) == "done"
+
+
+def test_slow_path_queue_dead_letter_behavior(database_path: Path) -> None:
+    """Failed queue jobs can be moved to dead letter and no longer retried."""
+    session_id = create_session("user-1")
+    observation_id = save_observation(session_id, "user", "poison queue item")
+    queue_id = enqueue_observation(observation_id)
+
+    mark_processing(queue_id)
+    mark_failed(queue_id, "non-retryable parse error")
+    move_to_dead_letter(queue_id, "poison message")
+
+    queue_job = _fetch_queue_job(database_path, queue_id)
+    assert queue_job["status"] == "dead_letter"
+    assert queue_job["last_error"] == "poison message"
+    assert list_failed_jobs(10) == []
+    assert claim_pending_batch(1) == []
+
+
+def test_slow_path_queue_rejects_invalid_transition(database_path: Path) -> None:
+    """Queue primitives enforce documented status transitions."""
+    session_id = create_session("user-1")
+    observation_id = save_observation(session_id, "user", "do not finish before processing")
+    queue_id = enqueue_observation(observation_id)
+
+    with pytest.raises(ValueError, match="Invalid queue transition"):
+        mark_done(queue_id)
 
 
 def test_session_item_crud_flow(database_path: Path) -> None:
