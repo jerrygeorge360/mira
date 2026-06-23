@@ -1,11 +1,19 @@
-"""SQLite source-of-truth connection and transaction contracts.
+"""SQLite source-of-truth connection helpers.
 
 Ownership: Kelechi.
-Related issue: ISSUE-502.
+Related issue: ISSUE-005.
 Architecture area: slow path.
 """
 
+from __future__ import annotations
 
-def connect_sqlite(database_path: str) -> object:
-    """Open the future SQLite source-of-truth connection."""
-    raise NotImplementedError
+import sqlite3
+from pathlib import Path
+
+
+def connect_sqlite(database_path: str | Path) -> sqlite3.Connection:
+    """Open a SQLite connection configured for MIRA source-of-truth access."""
+    connection = sqlite3.connect(Path(database_path))
+    connection.row_factory = sqlite3.Row
+    connection.execute("PRAGMA foreign_keys = ON")
+    return connection
