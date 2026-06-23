@@ -1,7 +1,7 @@
 """Lifecycle gate that decides the fate of provisional session items.
 
 Ownership: Jerry.
-Related issue: ISSUE-205.
+Related issue: ISSUE-014.
 Architecture area: session micro-path.
 
 Provisional Session Working Set items are immediately useful inside a session
@@ -174,6 +174,7 @@ def promote_session_item_to_durable_candidate(item_id: str) -> str:
 
 
 def _confirmation_gate_failure(item: SessionItem) -> str | None:
+    item_id = str(item["id"])
     source_ids = _json_list(item.get("source_observations_json"))
     if not source_ids:
         return "missing_source_grounding"
@@ -192,7 +193,39 @@ def _confirmation_gate_failure(item: SessionItem) -> str | None:
         return "missing_evidence_span"
     if not _evidence_grounded(evidence_span, observation_contents):
         return "evidence_not_grounded"
+    if _has_later_cancellation(item_id, item):
+        return "later_cancellation_or_contradiction"
     return None
+
+
+def _has_later_cancellation(item_id: str, item: SessionItem) -> bool:
+    """Return True when newer session evidence explicitly cancels this item."""
+    session_id = str(item["session_id"])
+    created_at = str(item["created_at"])
+    updated_at = str(item["updated_at"])
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, type, status, supersedes_json, resolution_reason
+            FROM session_working_set
+            WHERE session_id = ?
+              AND id != ?
+              AND (created_at > ? OR updated_at > ?)
+            """,
+            (session_id, item_id, created_at, updated_at),
+        ).fetchall()
+
+    for row in rows:
+        supersedes = _json_list(row["supersedes_json"])
+        reason = row["resolution_reason"]
+        reason_text = "" if reason is None else str(reason)
+        if item_id in supersedes:
+            return True
+        if item_id in reason_text and (
+            str(row["type"]) == "resolution" or str(row["status"]) in TERMINAL_STATUSES
+        ):
+            return True
+    return False
 
 
 def _observation_contents(observation_ids: list[str]) -> list[str]:

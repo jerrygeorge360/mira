@@ -1,7 +1,7 @@
-"""Verify the ISSUE-205 session-item confirmation lifecycle.
+"""Verify the ISSUE-014 session-item confirmation lifecycle.
 
 Ownership: MIRA contributors.
-Related issue: ISSUE-205.
+Related issue: ISSUE-014.
 Architecture area: session micro-path.
 """
 
@@ -20,6 +20,7 @@ from core.db.repositories import (
 )
 from core.session.confirmation import (
     confirm_session_item,
+    downgrade_session_item_scope,
     mark_session_item_forward_only,
     promote_session_item_to_durable_candidate,
     reject_session_item_after_review,
@@ -68,6 +69,18 @@ def _item_status(item_id: str) -> str | None:
             (item_id,),
         ).fetchone()
     return None if row is None else str(row["status"])
+
+
+def _item_scope_and_reason(item_id: str) -> tuple[str, str | None]:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT scope, resolution_reason FROM session_working_set WHERE id = ?",
+            (item_id,),
+        ).fetchone()
+    if row is None:
+        raise AssertionError(f"missing session item {item_id}")
+    reason = row["resolution_reason"]
+    return str(row["scope"]), None if reason is None else str(reason)
 
 
 def _working_memory_item(candidate_id: str) -> dict[str, object] | None:
@@ -126,6 +139,33 @@ def test_project_item_promoted_to_durable_candidate(database_path: Path) -> None
     assert _item_status(item_id) == "confirmed"
 
 
+def test_scope_downgrade_is_forward_only(database_path: Path) -> None:
+    """A broad item can be narrowed without changing its prior influence."""
+    session_id = create_session("jerry")
+    item_id = _seed_item(
+        session_id,
+        "For this project, prefer plain sqlite3 repositories.",
+        item_type="active_constraint",
+        scope="project",
+        explicitness_label="direct_instruction",
+    )
+
+    downgrade_session_item_scope(item_id, "current_session", "Only relevant to current work.")
+
+    scope, reason = _item_scope_and_reason(item_id)
+    assert scope == "current_session"
+    assert reason == "scope_downgraded:Only relevant to current work."
+
+
+def test_scope_downgrade_rejects_widening(database_path: Path) -> None:
+    """Downgrade cannot accidentally widen session-only evidence to durable scope."""
+    session_id = create_session("jerry")
+    item_id = _seed_item(session_id, "Use repository helpers for this session.")
+
+    with pytest.raises(ValueError, match="new_scope must narrow"):
+        downgrade_session_item_scope(item_id, "project", "Make durable.")
+
+
 def test_local_current_response_item_expires(database_path: Path) -> None:
     """A current-response item retired forward-only expires from future prompts."""
     session_id = create_session("jerry")
@@ -141,6 +181,53 @@ def test_local_current_response_item_expires(database_path: Path) -> None:
 
     assert _item_status(item_id) == "expired"
     assert export_prompt_ready_session_items(session_id, 10) == []
+
+
+def test_later_resolution_blocks_confirmation(database_path: Path) -> None:
+    """A newer explicit resolution prevents an older provisional item from confirming."""
+    session_id = create_session("jerry")
+    original_id = _seed_item(session_id, "Use recursive summaries for communities.")
+    observation_id = save_observation(session_id, "user", "Ignore that recursive summary idea.")
+    upsert_session_item(
+        session_id,
+        {
+            "type": "resolution",
+            "content": "Ignore the recursive summary idea.",
+            "scope": "current_session",
+            "status": "provisional",
+            "priority": 0.95,
+            "explicitness_label": "direct_instruction",
+            "evidence_span": "Ignore that recursive summary idea.",
+            "source_observations": [observation_id],
+            "supersedes": [original_id],
+        },
+    )
+
+    confirm_session_item(original_id, "kelechi")
+
+    assert _item_status(original_id) == "rejected"
+
+
+def test_missing_source_grounding_blocks_promotion(database_path: Path) -> None:
+    """Durable promotion requires source observations that exist in cold storage."""
+    session_id = create_session("jerry")
+    item_id = upsert_session_item(
+        session_id,
+        {
+            "type": "active_constraint",
+            "content": "Use project scope only when the user is explicit.",
+            "scope": "project",
+            "status": "provisional",
+            "priority": 0.9,
+            "explicitness_label": "direct_instruction",
+            "evidence_span": "Use project scope only when the user is explicit.",
+            "source_observations": ["obs_missing"],
+            "supersedes": [],
+        },
+    )
+
+    with pytest.raises(ValueError, match="ungrounded_source_observations"):
+        promote_session_item_to_durable_candidate(item_id)
 
 
 def test_rejected_item_not_in_prompt_export(database_path: Path) -> None:
