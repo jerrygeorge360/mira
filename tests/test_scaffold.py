@@ -82,7 +82,7 @@ def test_application_modules_import_without_third_party() -> None:
 
 
 def test_application_imports_are_standard_library_only() -> None:
-    """Ensure declared application imports remain standard-library or local-only."""
+    """Ensure application imports remain standard-library or local-only."""
     for module_name in EXPECTED_MODULES:
         path = PROJECT_ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
         tree = ast.parse(path.read_text(encoding="utf-8"))
