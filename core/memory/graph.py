@@ -9,7 +9,16 @@ from __future__ import annotations
 
 import json
 
-from core.db.repositories import create_entity, create_graph_node, repository_connection
+from core.db.repositories import (
+    create_entity,
+    repository_connection,
+)
+from core.db.repositories import (
+    create_graph_edge as create_graph_edge_record,
+)
+from core.db.repositories import (
+    create_graph_node as create_graph_node_record,
+)
 from core.llm.prompts import PROMPT_TEMPLATES
 from core.llm.qwen import call_qwen_json
 
@@ -93,14 +102,108 @@ def link_entity_mention(entity_id: str, observation_id: str) -> str:
     entity = _require_entity(entity_id)
     _ensure_observation_exists(observation_id)
     return create_graph_node(
+        node_type="entity",
+        source_table="entities",
+        source_id=entity_id,
+        label=str(entity["name"]),
+    )
+
+
+def create_graph_node(
+    node_type: str,
+    label: str,
+    source_table: str | None = None,
+    source_id: str | None = None,
+) -> str:
+    """Create a typed graph node over a canonical source record."""
+    if not label.strip():
+        raise ValueError("label must not be empty")
+    return create_graph_node_record(
         {
-            "node_type": "entity",
-            "source_table": "entities",
-            "source_id": entity_id,
-            "label": str(entity["name"]),
-            "metadata_json": {"observation_id": observation_id},
+            "node_type": node_type,
+            "source_table": source_table,
+            "source_id": source_id,
+            "label": label,
         }
     )
+
+
+def create_graph_edge(
+    source_node_id: str,
+    target_node_id: str,
+    edge_type: str,
+    confidence: float,
+    source_observations: list[str],
+) -> str:
+    """Create a typed graph edge with confidence and source observation evidence."""
+    if not 0.0 <= confidence <= 1.0:
+        raise ValueError("confidence must be in [0, 1]")
+    if not source_observations:
+        raise ValueError("source_observations must not be empty")
+    _ensure_graph_node_exists(source_node_id)
+    _ensure_graph_node_exists(target_node_id)
+    for observation_id in source_observations:
+        _ensure_observation_exists(observation_id)
+    return create_graph_edge_record(
+        {
+            "source_node_id": source_node_id,
+            "target_node_id": target_node_id,
+            "edge_type": edge_type,
+            "confidence": confidence,
+            "source_observations_json": list(source_observations),
+            "metadata_json": {},
+        }
+    )
+
+
+def get_neighbors(
+    node_id: str,
+    edge_types: list[str] | None = None,
+    depth: int = 1,
+) -> list[dict[str, object]]:
+    """Traverse outgoing typed graph edges from a node up to the requested depth."""
+    if depth < 1:
+        raise ValueError("depth must be a positive integer")
+    _ensure_graph_node_exists(node_id)
+    allowed_edge_types = set(edge_types or [])
+    visited_nodes = {node_id}
+    frontier = [(node_id, 0)]
+    neighbors: list[dict[str, object]] = []
+
+    while frontier:
+        current_node_id, current_depth = frontier.pop(0)
+        if current_depth >= depth:
+            continue
+        for edge in _outgoing_edges(current_node_id, allowed_edge_types):
+            target_node = _fetch_graph_node(str(edge["target_node_id"]))
+            if target_node is None:
+                continue
+            result = {
+                "depth": current_depth + 1,
+                "edge": edge,
+                "node": target_node,
+            }
+            neighbors.append(result)
+            target_node_id = str(target_node["id"])
+            if target_node_id not in visited_nodes:
+                visited_nodes.add(target_node_id)
+                frontier.append((target_node_id, current_depth + 1))
+    return neighbors
+
+
+def find_edges_by_type(edge_type: str) -> list[dict[str, object]]:
+    """List active graph edges of one type."""
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT *
+            FROM graph_edges
+            WHERE edge_type = ? AND invalidated_at IS NULL
+            ORDER BY created_at ASC
+            """,
+            (edge_type,),
+        ).fetchall()
+    return [_public_edge(dict(row)) for row in rows]
 
 
 def add_typed_edge(
@@ -110,12 +213,12 @@ def add_typed_edge(
     valid_at: str | None = None,
 ) -> str:
     """Add a future typed temporal edge and return its identifier."""
-    raise NotImplementedError
+    raise NotImplementedError("Use create_graph_edge() with source observations")
 
 
 def traverse_graph(entity_id: str, relation_types: set[str]) -> list[dict[str, object]]:
     """Traverse durable graph relationships from an entity."""
-    raise NotImplementedError
+    return get_neighbors(entity_id, sorted(relation_types), depth=1)
 
 
 def _find_entity_by_name(name: str) -> str | None:
@@ -179,6 +282,51 @@ def _ensure_observation_exists(observation_id: str) -> None:
         raise ValueError(f"Observation not found: {observation_id}")
 
 
+def _ensure_graph_node_exists(node_id: str) -> None:
+    if _fetch_graph_node(node_id) is None:
+        raise ValueError(f"Graph node not found: {node_id}")
+
+
+def _fetch_graph_node(node_id: str) -> dict[str, object] | None:
+    with repository_connection() as connection:
+        row = connection.execute("SELECT * FROM graph_nodes WHERE id = ?", (node_id,)).fetchone()
+    if row is None:
+        return None
+    record = dict(row)
+    if record.get("metadata_json") is not None:
+        record["metadata_json"] = _json_object(record["metadata_json"])
+    return record
+
+
+def _outgoing_edges(node_id: str, edge_types: set[str]) -> list[dict[str, object]]:
+    parameters: list[object] = [node_id]
+    edge_type_filter = ""
+    if edge_types:
+        edge_type_filter = f"AND edge_type IN ({', '.join('?' for _ in edge_types)})"
+        parameters.extend(sorted(edge_types))
+    with repository_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT *
+            FROM graph_edges
+            WHERE source_node_id = ?
+              AND invalidated_at IS NULL
+              {edge_type_filter}
+            ORDER BY created_at ASC
+            """,  # nosec B608
+            tuple(parameters),
+        ).fetchall()
+    return [_public_edge(dict(row)) for row in rows]
+
+
+def _public_edge(row: dict[str, object]) -> dict[str, object]:
+    edge = dict(row)
+    edge["source_observations"] = _json_list(edge.pop("source_observations_json", None))
+    metadata = edge.get("metadata_json")
+    edge["metadata_json"] = _json_object(metadata) if metadata is not None else {}
+    return edge
+
+
 def _infer_entity_type(name: str) -> str:
     if name in {"SQLite", "ChromaDB"}:
         return "technology"
@@ -221,6 +369,19 @@ def _json_list(value: object) -> list[str]:
     if not isinstance(decoded, list):
         return []
     return [item for item in decoded if isinstance(item, str)]
+
+
+def _json_object(value: object) -> dict[str, object]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    if not isinstance(value, str):
+        return {}
+    decoded = json.loads(value)
+    if not isinstance(decoded, dict):
+        return {}
+    return {str(key): item for key, item in decoded.items()}
 
 
 def _json_dump(value: object) -> str:
