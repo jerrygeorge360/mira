@@ -1,9 +1,6 @@
-"""Database adapters for MIRA.
+"""Persistence adapters for SQLite truth and auxiliary vector indexing.
 
-Owns the persistent stores: the SQLite relational schema for observations,
-memories, and the knowledge graph, and the Chroma adapter for embeddings.
-
-See docs/adr/0002-sqlite-over-postgres.md for the relational store choice.
-
-ISSUE-014: Database layer bootstrap.
+Ownership: Kelechi.
+Related issue: ISSUE-500.
+Architecture area: slow path.
 """

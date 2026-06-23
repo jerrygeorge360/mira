@@ -1,20 +1,11 @@
-"""Manual smoke check for the Qwen client.
+"""Manual Qwen integration-check contract for development evaluation.
 
-Developer convenience script: sends a single prompt through the Qwen client to
-verify DASHSCOPE_API_KEY and connectivity. Not part of the automated suite.
-
-Run with: python scripts/test_qwen.py
-
-ISSUE-002: Qwen connectivity check.
+Ownership: Sarah.
+Related issue: ISSUE-901.
+Architecture area: evaluation.
 """
-
-from __future__ import annotations
 
 
 def main() -> None:
-    """Send a single test prompt through the Qwen client and print the reply."""
+    """Run the future manual Qwen integration check."""
     raise NotImplementedError
-
-
-if __name__ == "__main__":
-    main()

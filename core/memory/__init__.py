@@ -1,8 +1,6 @@
-"""Dual-stream memory subsystem for MIRA.
+"""Durable cross-session memory package for MIRA.
 
-Implements the fast path (synchronous observation of incoming turns) and the
-slow path (asynchronous consolidation: reflection, foresight, graph and
-community maintenance) that together form MIRA's cognitive memory.
-
-ISSUE-004: Memory subsystem bootstrap.
+Ownership: Jerry.
+Related issue: ISSUE-100.
+Architecture area: slow path.
 """

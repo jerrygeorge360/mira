@@ -1,42 +1,16 @@
-"""Working memory for MIRA.
+"""Durable hot working-memory pool contracts, distinct from session state.
 
-Holds the bounded, in-session context that the agent reasons over directly: the
-recent turns plus the salient facts promoted from long-term memory. Acts as the
-buffer between the fast path and the LLM prompt.
-
-ISSUE-006: Working memory.
+Ownership: Jerry.
+Related issue: ISSUE-105.
+Architecture area: slow path.
 """
 
-from __future__ import annotations
+
+def store_hot_memory(memory_id: str) -> None:
+    """Place confirmed durable memory in the hot working pool."""
+    raise NotImplementedError
 
 
-class WorkingMemory:
-    """Bounded in-session buffer of recent and salient context."""
-
-    def __init__(self, capacity: int = 32) -> None:
-        """Initialise working memory with a fixed item capacity.
-
-        Args:
-            capacity: Maximum number of items retained before eviction.
-        """
-        raise NotImplementedError
-
-    def add(self, item: str) -> None:
-        """Add an item to working memory, evicting the oldest if at capacity.
-
-        Args:
-            item: The context fragment to retain.
-        """
-        raise NotImplementedError
-
-    def snapshot(self) -> list[str]:
-        """Return the current contents in retention order.
-
-        Returns:
-            The retained items, oldest first.
-        """
-        raise NotImplementedError
-
-    def clear(self) -> None:
-        """Drop all items from working memory."""
-        raise NotImplementedError
+def list_hot_memories(limit: int) -> list[dict[str, object]]:
+    """List confirmed durable memories in the hot working pool."""
+    raise NotImplementedError

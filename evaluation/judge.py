@@ -1,25 +1,15 @@
-"""LLM-as-judge evaluation for MIRA.
+"""Evaluation-judge contracts for future memory quality scoring.
 
-Scores agent responses against expected behaviour using an LLM judge, producing
-per-criterion scores and rationale for the evaluation reports.
-
-ISSUE-021: LLM judge.
+Ownership: Sarah.
+Related issue: ISSUE-801.
+Architecture area: evaluation.
 """
 
-from __future__ import annotations
 
-from typing import Any
-
-
-def judge_response(question: str, response: str, reference: str) -> dict[str, Any]:
-    """Score a single agent response against a reference answer.
-
-    Args:
-        question: The question or prompt that was posed to the agent.
-        response: The agent's response under evaluation.
-        reference: The expected or gold-standard answer.
-
-    Returns:
-        A mapping of criterion to score, plus the judge's rationale.
-    """
+def judge_response(
+    response: str,
+    expected: str,
+    context: list[dict[str, object]],
+) -> dict[str, object]:
+    """Score a future response against expected memory behavior."""
     raise NotImplementedError

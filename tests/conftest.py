@@ -1,10 +1,6 @@
-"""Shared pytest fixtures for the MIRA test suite.
+"""Shared pytest configuration boundary for future MIRA verification.
 
-Fixtures land here as the modules they support gain real implementations.
-``pytest-asyncio`` is configured in auto mode (see pyproject.toml) so async
-tests for the slow-path worker and Slack bot need no per-test markers.
-
-ISSUE-001: Test fixtures bootstrap.
+Ownership: MIRA contributors.
+Related issue: ISSUE-900.
+Architecture area: evaluation.
 """
-
-from __future__ import annotations

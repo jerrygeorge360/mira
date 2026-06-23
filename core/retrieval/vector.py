@@ -1,23 +1,11 @@
-"""Vector (semantic) retrieval for MIRA.
+"""Vector-index lookup boundary for retrieval candidates.
 
-Embeds queries and performs approximate nearest-neighbour search over the
-Chroma-backed embedding store to surface semantically related memory, even
-when no explicit graph relation exists.
-
-ISSUE-012: Vector retrieval.
+Ownership: Jerry.
+Related issue: ISSUE-305.
+Architecture area: retrieval.
 """
 
-from __future__ import annotations
 
-
-def retrieve(query: str, top_k: int = 8) -> list[str]:
-    """Retrieve memory items by semantic similarity to the query.
-
-    Args:
-        query: The natural-language query to embed and search with.
-        top_k: Maximum number of nearest neighbours to return.
-
-    Returns:
-        Identifiers of matching memory items, most similar first.
-    """
+def vector_search(query: str, limit: int = 8) -> list[dict[str, object]]:
+    """Search the future vector index for semantic candidates."""
     raise NotImplementedError

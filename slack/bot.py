@@ -1,35 +1,16 @@
-"""Slack bot front-end for MIRA.
+"""Slack bot lifecycle and event-handling contracts.
 
-Listens for Slack events (mentions and direct messages), forwards them to the
-agent, and posts responses back to the originating channel or thread.
-
-ISSUE-018: Slack bot.
+Ownership: Kelechi.
+Related issue: ISSUE-701.
+Architecture area: Slack.
 """
 
-from __future__ import annotations
+
+def run_bot() -> None:
+    """Run the future Slack bot integration."""
+    raise NotImplementedError
 
 
-class SlackBot:
-    """Event-driven Slack front-end for the MIRA agent."""
-
-    def __init__(self, bot_token: str, app_token: str) -> None:
-        """Initialise the bot with its Slack credentials.
-
-        Args:
-            bot_token: Slack bot (xoxb) token used to call the Web API.
-            app_token: Slack app-level (xapp) token used for Socket Mode.
-        """
-        raise NotImplementedError
-
-    async def start(self) -> None:
-        """Connect to Slack and begin processing incoming events."""
-        raise NotImplementedError
-
-    async def handle_message(self, channel: str, text: str) -> None:
-        """Handle an inbound message and reply with the agent's response.
-
-        Args:
-            channel: Identifier of the channel or DM the message arrived on.
-            text: The message text from the user.
-        """
-        raise NotImplementedError
+def handle_message(channel_id: str, user_id: str, text: str) -> str:
+    """Handle one future Slack message event."""
+    raise NotImplementedError

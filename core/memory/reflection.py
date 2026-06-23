@@ -1,34 +1,16 @@
-"""Reflection over consolidated memory for MIRA.
+"""Reflection synthesis and reflection-staleness contracts.
 
-Periodically reviews recent observations to distil higher-order insights:
-summaries, recurring themes, and stable facts about the user. Runs on the slow
-path and writes its conclusions back into long-term memory.
-
-ISSUE-007: Reflection.
+Ownership: Jerry.
+Related issue: ISSUE-106.
+Architecture area: slow path.
 """
 
-from __future__ import annotations
 
-
-def reflect(observation_ids: list[str]) -> list[str]:
-    """Distil higher-order insights from a batch of observations.
-
-    Args:
-        observation_ids: Observations to reflect over.
-
-    Returns:
-        Identifiers of the insight records produced by reflection.
-    """
+def synthesize_reflection(memory_ids: list[str]) -> dict[str, object]:
+    """Synthesize a future reflection from confirmed durable memories."""
     raise NotImplementedError
 
 
-def should_reflect(pending_count: int) -> bool:
-    """Decide whether enough has accumulated to warrant a reflection pass.
-
-    Args:
-        pending_count: Number of observations awaiting reflection.
-
-    Returns:
-        ``True`` if a reflection pass should be triggered.
-    """
+def mark_reflection_stale(reflection_id: str, reason: str) -> None:
+    """Mark a reflection stale when supporting memory changes."""
     raise NotImplementedError

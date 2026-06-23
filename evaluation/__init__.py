@@ -1,7 +1,6 @@
-"""Evaluation harness for MIRA.
+"""Evaluation package boundary for MIRA quality studies.
 
-Measures memory and response quality, primarily via an LLM-as-judge scorer.
-Owned by Sarah.
-
-ISSUE-021: Evaluation bootstrap.
+Ownership: Sarah.
+Related issue: ISSUE-800.
+Architecture area: evaluation.
 """

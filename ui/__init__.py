@@ -1,7 +1,6 @@
-"""User-facing UI for MIRA.
+"""User-interface package boundary for MIRA's future operator experience.
 
-Chat front-end plus a live visualisation of the knowledge graph and detected
-communities. Owned by Sarah.
-
-ISSUE-016: UI bootstrap.
+Ownership: Sarah.
+Related issue: ISSUE-600.
+Architecture area: UI.
 """

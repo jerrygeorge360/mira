@@ -1,7 +1,6 @@
-"""Retrieval layer for MIRA.
+"""Quick, Deep, Relational, and Auto retrieval package boundary.
 
-Provides two complementary retrieval strategies — formal (graph/symbolic) and
-vector (semantic) — behind a router that picks or blends them per query.
-
-ISSUE-011: Retrieval layer bootstrap.
+Ownership: Jerry.
+Related issue: ISSUE-300.
+Architecture area: retrieval.
 """
