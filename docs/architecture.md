@@ -55,6 +55,11 @@ A structured sufficiency check permits one retry.
 Confirmed memory may move among cold, warm, and hot tiers. SQLite is the source of truth.
 ChromaDB is a rebuildable vector index only. NetworkX will provide an in-process view and
 algorithms for the single typed temporal graph, not another source of truth.
+Chroma collections store embeddings and SQLite record pointers only; deleting a collection must
+never delete canonical memory records.
+Collection rebuilds derive deterministic canonical index text from SQLite records before calling
+an external embedder; observations index `content`, reflections index `content`, and community
+summaries index `title + summary`.
 
 ## Provisional and confirmed memory
 
