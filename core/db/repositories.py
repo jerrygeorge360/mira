@@ -1,7 +1,7 @@
 """Typed repository functions for MIRA's durable source of truth.
 
 Ownership: Kelechi.
-Related issue: ISSUE-006.
+Related issue: ISSUE-005, ISSUE-006.
 Architecture area: slow path.
 """
 
