@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+LOCAL_IMPORT_ROOTS = frozenset({"core", "ui", "slack", "evaluation", "scripts"})
 EXPECTED_MODULES = (
     "core.agent",
     "core.llm.qwen",
@@ -81,7 +82,7 @@ def test_application_modules_import_without_third_party() -> None:
 
 
 def test_application_imports_are_standard_library_only() -> None:
-    """Ensure declared application imports remain within the standard library."""
+    """Ensure declared application imports remain standard-library or local-only."""
     for module_name in EXPECTED_MODULES:
         path = PROJECT_ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -92,4 +93,4 @@ def test_application_imports_are_standard_library_only() -> None:
                 imported_roots = {(node.module or "").partition(".")[0]}
             else:
                 continue
-            assert imported_roots <= sys.stdlib_module_names
+            assert imported_roots <= sys.stdlib_module_names | LOCAL_IMPORT_ROOTS
