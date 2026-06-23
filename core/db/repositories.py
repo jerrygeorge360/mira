@@ -1,7 +1,7 @@
-"""Repository helpers needed by the Session Working Set runtime store.
+"""Repository helpers and enum validation for MIRA's durable source of truth.
 
 Ownership: Kelechi.
-Related issue: ISSUE-006.
+Related issue: ISSUE-005, ISSUE-006.
 Architecture area: slow path.
 """
 
@@ -26,6 +26,7 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     "session_record_status": frozenset({"active", "ended", "archived"}),
     "observation_role": frozenset({"user", "assistant", "system", "tool"}),
     "observation_source": frozenset({"chat", "slack", "mcp", "seed", "import"}),
+    "slow_path_queue_status": frozenset({"pending", "processing", "done", "failed", "dead_letter"}),
     "session_item_type": frozenset(
         {
             "current_goal",
@@ -54,6 +55,40 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
             "ambiguous",
         }
     ),
+    "fact_status": frozenset({"active", "superseded", "contradicted", "expired", "rejected"}),
+    "graph_node_type": frozenset(
+        {"observation", "entity", "reflection", "community", "foresight", "atomic_fact"}
+    ),
+    "graph_edge_type": frozenset(
+        {
+            "MENTIONS",
+            "DERIVED_FROM",
+            "PREFERS",
+            "DISLIKES",
+            "WORKS_ON",
+            "IS_EXPERT_IN",
+            "SUPERSEDED_BY",
+            "CONTRADICTS",
+            "CAUSED_BY",
+            "LEADS_TO",
+            "PART_OF_COMMUNITY",
+        }
+    ),
+    "reflection_type": frozenset({"user_knowledge", "world_knowledge", "self_knowledge"}),
+    "reflection_status": frozenset({"active", "stale", "invalidated", "superseded"}),
+    "foresight_status": frozenset({"pending", "active", "resolved", "expired", "cancelled"}),
+    "working_memory_type": frozenset(
+        {
+            "project_constraint",
+            "user_preference",
+            "behavioral_instruction",
+            "active_goal",
+            "active_foresight",
+            "confirmed_correction",
+        }
+    ),
+    "working_memory_status": frozenset({"active", "demoted", "expired", "superseded"}),
+    "retrieval_mode": frozenset({"quick", "deep", "relational", "auto"}),
 }
 
 
