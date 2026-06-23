@@ -1,7 +1,23 @@
-.PHONY: install run test lint format type security check fix precommit clean
+.PHONY: help install run test lint format type security check fix precommit clean
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts
+
+help:
+	@printf '%s\n' \
+		'Available targets:' \
+		'  help       Show this help message' \
+		'  install    Install development and production requirements' \
+		'  run        Run the UI entry point' \
+		'  test       Run the test suite' \
+		'  lint       Run Ruff checks and formatting check' \
+		'  format     Format the codebase with Ruff' \
+		'  type       Run mypy over application sources' \
+		'  security   Run Bandit over application sources' \
+		'  check      Run lint, type, security, and tests' \
+		'  fix        Apply Ruff fixes and formatting' \
+		'  precommit  Run all pre-commit hooks' \
+		'  clean      Remove generated caches and reports'
 
 install:
 	$(PYTHON) -m pip install -r requirements-dev.txt
