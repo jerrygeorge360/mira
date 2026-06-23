@@ -1,4 +1,4 @@
-# Session Working Set
+# ADR-0001 — Session Working Set is Separate from Durable Hot Memory
 
 ## Status
 
@@ -15,4 +15,3 @@ The Session Working Set is a temporary runtime store separate from durable hot m
 ## Consequences
 
 Prompt construction may prioritize provisional state while durable tiers remain evidence-controlled.
-

@@ -1,4 +1,4 @@
-# Provisional and Confirmed Memory
+# ADR-0005 — Provisional vs Confirmed Memory
 
 ## Status
 
@@ -15,4 +15,3 @@ Session items are provisional; durable memory requires slow-path confirmation.
 ## Consequences
 
 Promotions are evidence-gated, rejections do not rewrite observations, and corrections apply forward.
-

@@ -71,6 +71,21 @@ make check
 `feature/issue-XXX-short-description` merge into `dev` first. Pull requests must link
 their issue and pass `make check`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Architecture decision records
+
+Major architecture decisions are tracked in [docs/adr](docs/adr):
+
+- [ADR-0001 — Session Working Set is Separate from Durable Hot Memory](docs/adr/0001-session-working-set.md)
+- [ADR-0002 — Single Typed Graph Instead of Disconnected Graph Stores](docs/adr/0002-single-typed-graph.md)
+- [ADR-0003 — SQLite Source of Truth and ChromaDB Vector Index](docs/adr/0003-sqlite-source-of-truth.md)
+- [ADR-0004 — Quick, Deep, Relational, and Auto Retrieval Modes](docs/adr/0004-retrieval-modes.md)
+- [ADR-0005 — Provisional vs Confirmed Memory](docs/adr/0005-provisional-confirmed-memory.md)
+- [ADR-0006 — Session Micro-Path vs Cross-Session Slow Path](docs/adr/0006-session-micro-path-slow-path.md)
+- [ADR-0007 — Prompt Builder as Integration Point](docs/adr/0007-prompt-builder-integration-point.md)
+- [ADR-0008 — Foresight Lifecycle](docs/adr/0008-foresight-lifecycle.md)
+- [ADR-0009 — Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
+- [ADR-0010 — Sensa-Style Ambient Context as Prompt Signal, Not Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
+
 ## Team ownership
 
 - **Jerry:** architecture, core memory, retrieval, and LLM integration.
