@@ -6,7 +6,7 @@
 
 - Protected.
 - No direct pushes.
-- Release-ready branch.
+- Release-ready changes only.
 
 `dev`
 
@@ -24,8 +24,26 @@ release-ready integration changes to `main` through a separate reviewed pull req
 
 ## Commit convention
 
-Use `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, or `chore:`. Keep commits
-focused and reference the issue where useful.
+Start every commit subject with one of these prefixes:
+
+- `feat:` for a new capability.
+- `fix:` for a defect correction.
+- `docs:` for documentation-only changes.
+- `test:` for test additions or corrections.
+- `refactor:` for behavior-preserving code restructuring.
+- `chore:` for tooling, maintenance, or repository administration.
+
+Keep commits focused and reference the related issue where useful.
+
+## Team ownership
+
+- **Jerry:** architecture, core memory, retrieval, context, and LLM integration.
+- **Kelechi:** database, queues, deployment, infrastructure, and CI hardening.
+- **Sarah:** UI, graph visualization, evaluation, and demo tooling.
+
+Ownership identifies the first reviewer and coordinator; it does not prevent
+cross-team contribution. Changes spanning ownership areas should involve every affected
+owner before merge.
 
 ## Code quality expectations
 
@@ -37,11 +55,14 @@ focused and reference the issue where useful.
 
 ## Pull request checklist
 
-- [ ] The pull request links its issue and is narrowly scoped.
-- [ ] Interfaces and documentation are updated.
-- [ ] Tests are added or scaffold-only status is explained.
+- [ ] The related issue is linked and the pull request is narrowly scoped.
+- [ ] Tests are added or updated for the change.
 - [ ] `make check` passes.
-- [ ] No secrets, databases, caches, or indexes are committed.
+- [ ] Documentation is updated if the architecture or public contract changed.
+- [ ] An ADR is added or superseded if a major architectural decision changed.
+- [ ] No secrets are committed.
+- [ ] The relevant owner has reviewed the change; architecture changes require Jerry's
+      manual review.
 - [ ] Review feedback is resolved.
 
 ## Architecture decisions
