@@ -1,4 +1,4 @@
-# Retrieval Modes
+# ADR-0004 — Quick, Deep, Relational, and Auto Retrieval Modes
 
 ## Status
 
@@ -15,4 +15,3 @@ Quick, Deep, Relational, and Auto are separate retrieval modes.
 ## Consequences
 
 The public router stays explicit, and Auto classification does not erase mode-specific contracts.
-

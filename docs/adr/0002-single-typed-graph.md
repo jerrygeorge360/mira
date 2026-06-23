@@ -1,4 +1,4 @@
-# Single Typed Graph
+# ADR-0002 — Single Typed Graph Instead of Disconnected Graph Stores
 
 ## Status
 
@@ -15,4 +15,3 @@ MIRA uses one typed temporal graph instead of multiple disconnected graphs.
 ## Consequences
 
 All relationships share a traversal model; types and validity metadata must preserve semantics.
-
