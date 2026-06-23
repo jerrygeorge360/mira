@@ -395,42 +395,127 @@ def enqueue_observation(observation_id: str) -> str:
 
 
 def claim_slow_path_batch(limit: int) -> list[str]:
-    """Claim pending slow-path queue records and return their identifiers."""
+    """Claim queue records and return identifiers for compatibility callers."""
+    return [str(record["id"]) for record in claim_pending_batch(limit)]
+
+
+def claim_pending_batch(limit: int) -> list[RepositoryRecord]:
+    """Claim pending or failed slow-path jobs for durable asynchronous processing."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
     now = _now()
     with _connect() as connection:
         rows = connection.execute(
             """
-            SELECT id FROM slow_path_queue
-            WHERE status = ?
+            SELECT *
+            FROM slow_path_queue
+            WHERE status IN (?, ?)
             ORDER BY created_at ASC
             LIMIT ?
             """,
-            ("pending", limit),
+            ("pending", "failed", limit),
         ).fetchall()
         queue_ids = [str(row["id"]) for row in rows]
+        if not queue_ids:
+            return []
         connection.executemany(
             """
             UPDATE slow_path_queue
-            SET status = ?, attempt_count = attempt_count + 1, updated_at = ?
+            SET status = ?,
+                attempt_count = attempt_count + 1,
+                last_error = NULL,
+                updated_at = ?
             WHERE id = ?
             """,
             [("processing", now, queue_id) for queue_id in queue_ids],
         )
-        return queue_ids
+        claimed_rows = connection.execute(
+            f"""
+            SELECT *
+            FROM slow_path_queue
+            WHERE id IN ({", ".join("?" for _ in queue_ids)})
+            ORDER BY created_at ASC
+            """,  # nosec B608
+            tuple(queue_ids),
+        ).fetchall()
+    return [_row_to_record(row) for row in claimed_rows]
+
+
+def mark_processing(queue_id: str) -> None:
+    """Move a pending or failed queue job into processing and count an attempt."""
+    now = _now()
+    _execute_write(
+        """
+        UPDATE slow_path_queue
+        SET status = ?,
+            attempt_count = attempt_count + 1,
+            last_error = NULL,
+            updated_at = ?
+        WHERE id = ? AND status IN (?, ?)
+        """,
+        ("processing", now, queue_id, "pending", "failed"),
+        missing_message=f"Queue item not found or not claimable: {queue_id}",
+    )
 
 
 def mark_queue_done(queue_id: str) -> None:
     """Mark a slow-path queue item as processed."""
-    _update_queue_status(queue_id, "done", None)
+    mark_done(queue_id)
 
 
 def mark_queue_failed(queue_id: str, error: str) -> None:
     """Mark a slow-path queue item as failed with a clear error message."""
+    mark_failed(queue_id, error)
+
+
+def mark_done(queue_id: str) -> None:
+    """Move a processing queue job to done."""
+    _transition_queue_status(
+        queue_id,
+        from_statuses={"processing"},
+        to_status="done",
+        error=None,
+    )
+
+
+def mark_failed(queue_id: str, error: str) -> None:
+    """Move a processing queue job to failed with a retryable error."""
     if not error:
         raise ValueError("error must not be empty")
-    _update_queue_status(queue_id, "failed", error)
+    _transition_queue_status(
+        queue_id,
+        from_statuses={"processing"},
+        to_status="failed",
+        error=error,
+    )
+
+
+def move_to_dead_letter(queue_id: str, error: str) -> None:
+    """Move a failed queue job to dead-letter with its terminal error."""
+    if not error:
+        raise ValueError("error must not be empty")
+    _transition_queue_status(
+        queue_id,
+        from_statuses={"failed"},
+        to_status="dead_letter",
+        error=error,
+    )
+
+
+def list_failed_jobs(limit: int) -> list[RepositoryRecord]:
+    """List retryable failed slow-path jobs for debugging or repair."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    return _fetch_all(
+        """
+        SELECT *
+        FROM slow_path_queue
+        WHERE status = ?
+        ORDER BY updated_at ASC
+        LIMIT ?
+        """,
+        ("failed", limit),
+    )
 
 
 def create_session_item(item: RepositoryRecord) -> str:
@@ -703,16 +788,25 @@ def _fetch_all(statement: str, parameters: tuple[object, ...]) -> list[Repositor
     return [_row_to_record(row) for row in rows]
 
 
-def _update_queue_status(queue_id: str, status: str, error: str | None) -> None:
-    validate_enum_value("slow_path_queue_status", status)
+def _transition_queue_status(
+    queue_id: str,
+    *,
+    from_statuses: set[str],
+    to_status: str,
+    error: str | None,
+) -> None:
+    validate_enum_value("slow_path_queue_status", to_status)
+    for status in from_statuses:
+        validate_enum_value("slow_path_queue_status", status)
+    placeholders = ", ".join("?" for _ in from_statuses)
     _execute_write(
-        """
+        f"""
         UPDATE slow_path_queue
         SET status = ?, last_error = ?, updated_at = ?
-        WHERE id = ?
-        """,
-        (status, error, _now(), queue_id),
-        missing_message=f"Queue item not found: {queue_id}",
+        WHERE id = ? AND status IN ({placeholders})
+        """,  # nosec B608
+        (to_status, error, _now(), queue_id, *sorted(from_statuses)),
+        missing_message=f"Invalid queue transition for item: {queue_id}",
     )
 
 
