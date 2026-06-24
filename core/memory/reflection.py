@@ -15,17 +15,22 @@ every reflection can be traced back to the observations that justify it.
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from core.db.repositories import (
     create_reflection,
     link_reflection_evidence,
     repository_connection,
+    validate_enum_value,
 )
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
 from core.memory.graph import create_graph_edge, create_graph_node
 
 Reflection = dict[str, object]
+
+ACTIVE_FACT_STATUS = "active"
+TERMINAL_REFLECTION_STATUSES = frozenset({"invalidated", "superseded"})
 
 LOGGER = logging.getLogger(__name__)
 
@@ -144,9 +149,135 @@ def store_reflection_with_evidence(
     return reflection_id
 
 
+def find_reflections_derived_from(observation_id: str) -> list[str]:
+    """Return ids of reflections whose evidence includes this observation."""
+    if not observation_id:
+        return []
+    rows = _fetch_rows(
+        "SELECT DISTINCT reflection_id FROM reflection_evidence WHERE observation_id = ?",
+        (observation_id,),
+    )
+    return [str(row["reflection_id"]) for row in rows]
+
+
 def mark_reflection_stale(reflection_id: str, reason: str) -> None:
-    """Mark a reflection stale when supporting memory changes (see ISSUE-029)."""
-    raise NotImplementedError
+    """Mark a reflection stale when supporting evidence changes (no history deleted).
+
+    A stale reflection is retained but excluded from hot-tier eligibility. A
+    reflection already invalidated or superseded is left at its more severe status.
+    """
+    if not reason:
+        raise ValueError("reason must not be empty")
+    status = _reflection_status(reflection_id)
+    if status in TERMINAL_REFLECTION_STATUSES:
+        return
+    _set_reflection_status(reflection_id, "stale", reason)
+    LOGGER.info("Marked reflection %s stale: %s", reflection_id, reason)
+
+
+def recompute_reflection_confidence(reflection_id: str) -> float:
+    """Recompute confidence from the fraction of evidence that is still valid."""
+    total, valid = _evidence_counts(reflection_id)
+    current = _reflection_confidence(reflection_id)
+    if total == 0:
+        return current
+    new_confidence = round(current * (valid / total), 6)
+    _update_reflection_confidence(reflection_id, new_confidence)
+    return new_confidence
+
+
+def invalidate_reflection_if_unsupported(reflection_id: str) -> None:
+    """Stale or invalidate a reflection based on how much evidence still holds.
+
+    No remaining valid evidence -> invalidated for future use; partial evidence
+    loss -> stale with reduced confidence; fully supported -> unchanged. History
+    is never deleted and prior answers are never rewritten.
+    """
+    total, valid = _evidence_counts(reflection_id)
+    if total == 0:
+        return
+    if valid == 0:
+        _set_reflection_status(reflection_id, "invalidated", "all supporting evidence collapsed")
+        LOGGER.info("Invalidated reflection %s: evidence collapsed", reflection_id)
+        return
+    if valid < total:
+        recompute_reflection_confidence(reflection_id)
+        mark_reflection_stale(
+            reflection_id,
+            f"{total - valid} of {total} evidence observations superseded or contradicted",
+        )
+
+
+def _evidence_counts(reflection_id: str) -> tuple[int, int]:
+    observation_ids = [
+        str(row["observation_id"])
+        for row in _fetch_rows(
+            "SELECT observation_id FROM reflection_evidence WHERE reflection_id = ?",
+            (reflection_id,),
+        )
+    ]
+    valid = sum(
+        1 for observation_id in observation_ids if _evidence_observation_valid(observation_id)
+    )
+    return len(observation_ids), valid
+
+
+def _evidence_observation_valid(observation_id: str) -> bool:
+    statuses = [
+        str(row["status"])
+        for row in _fetch_rows(
+            "SELECT status FROM atomic_facts WHERE source_observation_id = ?",
+            (observation_id,),
+        )
+    ]
+    if not statuses:
+        return True
+    return any(status == ACTIVE_FACT_STATUS for status in statuses)
+
+
+def _reflection_status(reflection_id: str) -> str:
+    rows = _fetch_rows("SELECT status FROM reflections WHERE id = ?", (reflection_id,))
+    if not rows:
+        raise ValueError(f"Reflection not found: {reflection_id}")
+    return str(rows[0]["status"])
+
+
+def _reflection_confidence(reflection_id: str) -> float:
+    rows = _fetch_rows("SELECT confidence FROM reflections WHERE id = ?", (reflection_id,))
+    if not rows:
+        raise ValueError(f"Reflection not found: {reflection_id}")
+    return _score(rows[0]["confidence"])
+
+
+def _set_reflection_status(reflection_id: str, status: str, reason: str) -> None:
+    validate_enum_value("reflection_status", status)
+    with repository_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE reflections SET status = ?, stale_reason = ?, updated_at = ? WHERE id = ?",
+            (status, reason, _now(), reflection_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Reflection not found: {reflection_id}")
+
+
+def _update_reflection_confidence(reflection_id: str, confidence: float) -> None:
+    with repository_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE reflections SET confidence = ?, updated_at = ? WHERE id = ?",
+            (confidence, _now(), reflection_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Reflection not found: {reflection_id}")
+
+
+def _fetch_rows(statement: str, parameters: tuple[object, ...]) -> list[dict[str, object]]:
+    with repository_connection() as connection:
+        rows = connection.execute(statement, parameters).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
 def _normalize_reflection(
