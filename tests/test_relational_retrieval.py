@@ -1,7 +1,7 @@
-"""Verify ISSUE-303 Relational Mode graph-traversal retrieval.
+"""Verify ISSUE-035 Relational Mode graph-traversal retrieval.
 
 Ownership: MIRA contributors.
-Related issue: ISSUE-303.
+Related issue: ISSUE-035.
 Architecture area: retrieval.
 """
 

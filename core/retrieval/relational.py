@@ -1,7 +1,7 @@
 """Relational Mode retrieval over the single typed temporal graph.
 
 Ownership: Jerry.
-Related issue: ISSUE-303.
+Related issue: ISSUE-035.
 Architecture area: retrieval.
 
 Relational Mode answers relationship questions -- "what changed", "what
