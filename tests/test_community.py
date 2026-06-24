@@ -85,6 +85,24 @@ def test_detection_groups_connected_nodes(database_path: Path) -> None:
     assert member_sets == [sorted([a, b, c]), sorted([d, e])]
 
 
+def test_detection_falls_back_to_connected_components(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Detection still groups connected nodes when Leiden is unavailable."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "Fallback path nodes.")
+    a, b, c = _node("Alpha"), _node("Beta"), _node("Gamma")
+    _edge(a, b, observation_id)
+    _edge(b, c, observation_id)
+    monkeypatch.setattr(community, "_leiden_partitions", lambda edges: None)
+
+    communities = detect_graph_communities()
+
+    assert len(communities) == 1
+    assert sorted(communities[0]["member_node_ids"]) == sorted([a, b, c])
+
+
 def test_fake_graph_creates_community_summary(
     database_path: Path,
     monkeypatch: pytest.MonkeyPatch,

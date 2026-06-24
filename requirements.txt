@@ -4,3 +4,8 @@
 # Jerry   -> core/agent.py, core/memory/, core/retrieval/, core/context/, core/llm/
 # Kelechi -> core/db/, deployment, CI hardening
 # Sarah   -> ui/, evaluation/, demo scripts
+
+# Jerry: background Leiden community detection over the typed graph
+# (core/memory/community.py). Lazy-imported, with a connected-components fallback.
+leidenalg>=0.10
+igraph>=0.11

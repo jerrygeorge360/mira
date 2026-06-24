@@ -15,6 +15,7 @@ cached summaries -- no live community detection runs during answer generation.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import logging
 import math
 import re
@@ -33,29 +34,77 @@ LOGGER = logging.getLogger(__name__)
 MIN_COMMUNITY_SIZE = 2
 EMBEDDING_DIMENSIONS = 8
 INDEX_COLLECTION = "community_summaries"
+# Fixed seed so background Leiden detection is reproducible for the slow path.
+LEIDEN_SEED = 0
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 STOPWORDS = frozenset({"a", "an", "the", "is", "are", "of", "to", "and", "for", "in", "on"})
 
 
 def detect_graph_communities() -> list[Community]:
-    """Detect communities over active typed-graph edges (background work)."""
-    parent: dict[str, str] = {}
-    for source_node_id, target_node_id in _active_edges():
-        _union(parent, source_node_id, target_node_id)
+    """Detect communities over active typed-graph edges (background work).
 
-    groups: dict[str, list[str]] = {}
-    for node_id in parent:
-        groups.setdefault(_find(parent, node_id), []).append(node_id)
+    Uses Leiden (via igraph) for modularity-based communities, seeded for
+    reproducibility. Falls back to connected components if the optional graph
+    libraries are unavailable, so the slow path degrades gracefully.
+    """
+    edges = _undirected_edges(_active_edges())
+    if not edges:
+        return []
+
+    partitions = _leiden_partitions(edges)
+    if partitions is None:
+        partitions = _connected_component_partitions(edges)
 
     communities: list[Community] = []
-    for member_node_ids in groups.values():
+    for member_node_ids in partitions:
         if len(member_node_ids) < MIN_COMMUNITY_SIZE:
             continue
         members = sorted(member_node_ids)
         communities.append({"community_id": _community_id(members), "member_node_ids": members})
     communities.sort(key=lambda community: str(community["community_id"]))
     return communities
+
+
+def _leiden_partitions(edges: list[tuple[str, str]]) -> list[list[str]] | None:
+    """Partition the graph with Leiden modularity, or None if igraph is missing."""
+    try:
+        leidenalg = importlib.import_module("leidenalg")
+        igraph = importlib.import_module("igraph")
+    except ModuleNotFoundError:
+        LOGGER.warning("leidenalg/igraph unavailable; falling back to connected components")
+        return None
+
+    nodes = sorted({node_id for edge in edges for node_id in edge})
+    index = {node_id: position for position, node_id in enumerate(nodes)}
+    graph = igraph.Graph(
+        n=len(nodes),
+        edges=[(index[source], index[target]) for source, target in edges],
+        directed=False,
+    )
+    partition = leidenalg.find_partition(
+        graph, leidenalg.ModularityVertexPartition, seed=LEIDEN_SEED
+    )
+    return [[nodes[position] for position in community] for community in partition]
+
+
+def _connected_component_partitions(edges: list[tuple[str, str]]) -> list[list[str]]:
+    parent: dict[str, str] = {}
+    for source_node_id, target_node_id in edges:
+        _union(parent, source_node_id, target_node_id)
+    groups: dict[str, list[str]] = {}
+    for node_id in parent:
+        groups.setdefault(_find(parent, node_id), []).append(node_id)
+    return list(groups.values())
+
+
+def _undirected_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    unique: set[tuple[str, str]] = set()
+    for source_node_id, target_node_id in edges:
+        if source_node_id == target_node_id:
+            continue
+        unique.add((min(source_node_id, target_node_id), max(source_node_id, target_node_id)))
+    return sorted(unique)
 
 
 def summarize_community(community_id: str, member_node_ids: list[str]) -> CommunitySummary:
