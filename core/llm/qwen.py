@@ -15,6 +15,13 @@ import urllib.request
 from collections.abc import Callable
 from typing import Any
 
+from core.llm.json_helpers import (
+    StructuredJsonError,
+    coerce_or_reject_json,
+    validate_required_keys,
+)
+from core.llm.prompts import get_output_schema
+
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DASHSCOPE_ENDPOINT_ENV = "DASHSCOPE_CHAT_ENDPOINT"
 DEFAULT_QWEN_MODEL = "qwen-plus"
@@ -68,9 +75,18 @@ def call_qwen_json(
     response = call_qwen_chat(messages, timeout_s=timeout_s)
     content = str(response["content"])
     try:
-        parsed_json = json.loads(content)
-    except json.JSONDecodeError as error:
+        parsed_json = coerce_or_reject_json(content)
+    except StructuredJsonError as error:
         raise QwenResponseError(f"Qwen response for {schema_name} was not valid JSON") from error
+    required_keys = _required_keys_for_schema(schema_name)
+    expected_object = _schema_expects_object(schema_name)
+    if required_keys:
+        if not isinstance(parsed_json, dict):
+            raise QwenResponseError(f"Qwen response for {schema_name} must be a JSON object")
+        if not validate_required_keys(parsed_json, required_keys):
+            raise QwenResponseError(f"Qwen response for {schema_name} was missing required keys")
+    elif expected_object and not isinstance(parsed_json, dict):
+        raise QwenResponseError(f"Qwen response for {schema_name} must be a JSON object")
     response["schema_name"] = schema_name
     response["json"] = parsed_json
     return response
@@ -184,3 +200,24 @@ def _validate_messages(messages: list[Message]) -> None:
 def _validate_timeout(timeout_s: int) -> None:
     if timeout_s < 1:
         raise ValueError("timeout_s must be a positive integer")
+
+
+def _required_keys_for_schema(schema_name: str) -> set[str]:
+    try:
+        schema = get_output_schema(schema_name)
+    except KeyError:
+        return set()
+    if not isinstance(schema, dict):
+        return set()
+    required = schema.get("required")
+    if not isinstance(required, list):
+        return set()
+    return {str(key) for key in required if isinstance(key, str)}
+
+
+def _schema_expects_object(schema_name: str) -> bool:
+    try:
+        schema = get_output_schema(schema_name)
+    except KeyError:
+        return False
+    return isinstance(schema, dict) and schema.get("type") == "object"
