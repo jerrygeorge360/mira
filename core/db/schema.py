@@ -212,6 +212,30 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         FOREIGN KEY (user_observation_id) REFERENCES observations (id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS answer_traces (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL,
+        user_observation_id TEXT NOT NULL,
+        assistant_observation_id TEXT NOT NULL,
+        retrieval_mode TEXT NOT NULL,
+        retrieved_observation_ids_json TEXT,
+        retrieved_fact_ids_json TEXT,
+        session_item_ids_json TEXT,
+        hot_memory_ids_json TEXT,
+        graph_path_ids_json TEXT,
+        community_summary_ids_json TEXT,
+        sufficiency_json TEXT,
+        prompt_sections_json TEXT,
+        hydration_ids_json TEXT,
+        retrieval_log_id TEXT,
+        prompt_log_id TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (session_id) REFERENCES sessions (id),
+        FOREIGN KEY (user_observation_id) REFERENCES observations (id),
+        FOREIGN KEY (assistant_observation_id) REFERENCES observations (id)
+    )
+    """,
 )
 
 _INDEX_STATEMENTS: tuple[str, ...] = (
@@ -225,6 +249,8 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_session_working_set_status ON session_working_set (status)",
     "CREATE INDEX IF NOT EXISTS idx_session_working_set_scope ON session_working_set (scope)",
     "CREATE INDEX IF NOT EXISTS idx_session_working_set_priority ON session_working_set (priority)",
+    "CREATE INDEX IF NOT EXISTS idx_answer_traces_sid ON answer_traces (session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_answer_traces_uid ON answer_traces (user_observation_id)",
 )
 
 
