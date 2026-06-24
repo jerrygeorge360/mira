@@ -139,3 +139,54 @@ def test_invalid_json_response_raises_clear_error(monkeypatch: pytest.MonkeyPatc
 
     with pytest.raises(qwen.QwenResponseError, match="test_schema"):
         qwen.call_qwen_json([{"role": "user", "content": "json please"}], "test_schema")
+
+
+def test_markdown_wrapped_json_is_accepted_for_prompt_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured prompt outputs can be fenced in Markdown without breaking parsing."""
+
+    def fake_post_json(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_s: int,
+    ) -> dict[str, object]:
+        return _chat_response(
+            """```json
+            {"facts": []}
+            ```"""
+        )
+
+    monkeypatch.setenv(qwen.DASHSCOPE_API_KEY_ENV, "test-key")
+    monkeypatch.setattr(qwen, "_post_json", fake_post_json)
+
+    response = qwen.call_qwen_json(
+        [{"role": "user", "content": "extract facts"}],
+        "atomic_fact_extraction",
+    )
+
+    assert response["json"] == {"facts": []}
+
+
+def test_missing_required_keys_are_rejected_for_prompt_schemas(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prompt-specific required keys are validated after parsing."""
+
+    def fake_post_json(
+        endpoint: str,
+        headers: dict[str, str],
+        payload: dict[str, object],
+        timeout_s: int,
+    ) -> dict[str, object]:
+        return _chat_response('{"answer": "yes"}')
+
+    monkeypatch.setenv(qwen.DASHSCOPE_API_KEY_ENV, "test-key")
+    monkeypatch.setattr(qwen, "_post_json", fake_post_json)
+
+    with pytest.raises(qwen.QwenResponseError, match="missing required keys"):
+        qwen.call_qwen_json(
+            [{"role": "user", "content": "extract facts"}],
+            "atomic_fact_extraction",
+        )
