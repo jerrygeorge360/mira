@@ -27,6 +27,8 @@ from core.db.repositories import (
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
 from core.memory.observation import persist_turn_fast_path
+from core.memory.tiers import list_hot_memory_for_context
+from core.memory.trace import TraceBuilder
 from core.retrieval.auto import route_retrieval
 from core.retrieval.deep import retrieve_deep
 from core.retrieval.quick import retrieve_quick
@@ -47,6 +49,7 @@ RECENT_TURNS = 6
 RETRIEVAL_LIMIT = 8
 SESSION_ITEMS_MAX = 12
 HYDRATION_MAX = 8
+HOT_MEMORY_LIMIT = 8
 PROMPT_TOKEN_BUDGET = 4000
 
 CONTINUE_MARKERS = (
@@ -77,29 +80,41 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
     # Fast path: persist and queue the raw user turn (no model calls).
     user_observation_id = persist_turn_fast_path(session_id, "user", user_message)
 
+    # Initialise the trace builder for this turn.
+    trace = TraceBuilder(session_id, user_observation_id)
+
     # Session micro-path: provisional Session Working Set updates for this turn.
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
 
     # Bring durable memory back into a new or continuing session.
     if _should_hydrate(prior_observations, user_message):
-        hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
+        hydrated_ids = hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
+        trace.record_hydration(hydrated_ids)
 
     # Routed retrieval of cross-session memory.
     decision = route_retrieval(user_message, session_id)
     retrieval_mode = str(decision["mode"])
     retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
+    trace.record_retrieval(retrieval_mode, retrieved)
+
+    # Hot memory: pull active working-memory items for prompt context.
+    session_items = export_prompt_ready_session_items(session_id, SESSION_ITEMS_MAX)
+    trace.record_session_items(session_items)
+
+    hot_memory_items = list_hot_memory_for_context(session_id, user_message, HOT_MEMORY_LIMIT)
+    trace.record_hot_memory(hot_memory_items)
 
     # Context pack + prompt.
-    session_items = export_prompt_ready_session_items(session_id, SESSION_ITEMS_MAX)
     ambient_context = build_ambient_context(session_id)
     context_pack = merge_context_sources(
         current_message=user_message,
         recent_turns=recent_turns,
         session_items=session_items,
-        durable_memory_items=[],
+        durable_memory_items=hot_memory_items,
         ambient_context=ambient_context,
         retrieved_items=retrieved,
     )
+    trace.record_prompt_sections(context_pack)
     prompt = render_prompt(
         "answer_generation",
         {"user_message": user_message, "prompt_context": _render_context(context_pack)},
@@ -110,10 +125,11 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
 
     # Persist and queue the assistant turn.
     assistant_observation_id = persist_turn_fast_path(session_id, "assistant", answer)
+    trace.assistant_observation_id = assistant_observation_id
 
     used_session_items = [str(item["id"]) for item in session_items if item.get("id")]
     used_memory_items = _memory_ids(retrieved)
-    _log_traces(
+    retrieval_log_id, prompt_log_id = _log_traces(
         session_id=session_id,
         user_observation_id=user_observation_id,
         query=user_message,
@@ -124,6 +140,11 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
         recent_turns=recent_turns,
         prompt=prompt,
     )
+    trace.link_retrieval_log(retrieval_log_id)
+    trace.link_prompt_log(prompt_log_id)
+
+    # Persist the complete answer trace and return its identifier.
+    trace_id = trace.build()
 
     return {
         "answer": answer,
@@ -133,6 +154,7 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
         "retrieval_mode": retrieval_mode,
         "used_session_items": used_session_items,
         "used_memory_items": used_memory_items,
+        "trace_id": trace_id,
     }
 
 
@@ -262,8 +284,8 @@ def _log_traces(
     used_memory_items: list[str],
     recent_turns: list[dict[str, object]],
     prompt: str,
-) -> None:
-    create_retrieval_log(
+) -> tuple[str, str]:
+    retrieval_log_id = create_retrieval_log(
         {
             "session_id": session_id,
             "query": query,
@@ -274,7 +296,7 @@ def _log_traces(
             ],
         }
     )
-    create_prompt_log(
+    prompt_log_id = create_prompt_log(
         {
             "session_id": session_id,
             "user_observation_id": user_observation_id,
@@ -287,6 +309,7 @@ def _log_traces(
             },
         }
     )
+    return retrieval_log_id, prompt_log_id
 
 
 def _tokens(value: str) -> set[str]:

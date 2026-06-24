@@ -104,6 +104,14 @@ JSON_COLUMNS: frozenset[str] = frozenset(
         "included_memory_items_json",
         "included_recent_turns_json",
         "token_budget_json",
+        "retrieved_observation_ids_json",
+        "retrieved_fact_ids_json",
+        "session_item_ids_json",
+        "hot_memory_ids_json",
+        "graph_path_ids_json",
+        "community_summary_ids_json",
+        "prompt_sections_json",
+        "hydration_ids_json",
     }
 )
 
@@ -275,6 +283,27 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "included_memory_items_json",
             "included_recent_turns_json",
             "token_budget_json",
+            "created_at",
+        }
+    ),
+    "answer_traces": frozenset(
+        {
+            "id",
+            "session_id",
+            "user_observation_id",
+            "assistant_observation_id",
+            "retrieval_mode",
+            "retrieved_observation_ids_json",
+            "retrieved_fact_ids_json",
+            "session_item_ids_json",
+            "hot_memory_ids_json",
+            "graph_path_ids_json",
+            "community_summary_ids_json",
+            "sufficiency_json",
+            "prompt_sections_json",
+            "hydration_ids_json",
+            "retrieval_log_id",
+            "prompt_log_id",
             "created_at",
         }
     ),
@@ -719,6 +748,60 @@ def create_prompt_log(log: RepositoryRecord) -> str:
     record = _prepare_record(log)
     _require_fields("prompt_logs", record, {"session_id", "user_observation_id"})
     return _insert_with_generated_id("prompt_logs", record)
+
+
+def create_answer_trace(trace: RepositoryRecord) -> str:
+    """Create an answer trace and return its identifier."""
+    record = _prepare_record(trace)
+    _require_fields(
+        "answer_traces",
+        record,
+        {
+            "session_id",
+            "user_observation_id",
+            "assistant_observation_id",
+            "retrieval_mode",
+        },
+    )
+    return _insert_with_generated_id("answer_traces", record)
+
+
+def get_answer_trace(trace_id: str) -> RepositoryRecord | None:
+    """Fetch a single answer trace by its identifier."""
+    rows = _fetch_all(
+        "SELECT * FROM answer_traces WHERE id = ?",
+        (trace_id,),
+    )
+    return rows[0] if rows else None
+
+
+def list_answer_traces_by_session(session_id: str, limit: int = 20) -> list[RepositoryRecord]:
+    """List answer traces for a session in reverse chronological order."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    return _fetch_all(
+        """
+        SELECT * FROM answer_traces
+        WHERE session_id = ?
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,
+        (session_id, limit),
+    )
+
+
+def list_answer_traces_by_observation(
+    user_observation_id: str,
+) -> list[RepositoryRecord]:
+    """List answer traces that reference a specific user observation."""
+    return _fetch_all(
+        """
+        SELECT * FROM answer_traces
+        WHERE user_observation_id = ?
+        ORDER BY created_at DESC
+        """,
+        (user_observation_id,),
+    )
 
 
 def _configured_database_path() -> Path:
