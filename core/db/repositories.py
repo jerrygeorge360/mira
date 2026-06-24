@@ -691,6 +691,17 @@ def create_working_memory_item(item: RepositoryRecord) -> str:
     return _insert_with_generated_id("working_memory", record)
 
 
+def create_community_summary(summary: RepositoryRecord) -> str:
+    """Create a graph-derived community summary and return its identifier."""
+    record = _prepare_record(summary)
+    _require_fields(
+        "community_summaries",
+        record,
+        {"community_id", "title", "summary", "member_nodes_json"},
+    )
+    return _insert_with_generated_id("community_summaries", record)
+
+
 def create_retrieval_log(log: RepositoryRecord) -> str:
     """Create a retrieval log and return its identifier."""
     record = _prepare_record(log)
