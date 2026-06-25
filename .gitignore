@@ -11,6 +11,7 @@ env/
 *.pickle
 *.pkl
 chroma_db/
+.docker-data/
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
