@@ -1,51 +1,95 @@
-# MIRA
+# MIRA — Memory-Integrated Reasoning Architecture
 
-MIRA is a cognitive memory framework for persistent AI agents. Its session-aware
-architecture immediately preserves raw observations, maintains lightweight provisional
-state for the current session, synthesizes durable cross-session memory asynchronously,
-and builds prompts from recent, ambient, session, and retrieved context.
+MIRA is a session-aware, cross-session memory framework for persistent personalized LLM
+agents. It treats the model's context window as a temporary execution buffer rather than a
+memory store: every turn is persisted immediately, a lightweight **Session Working Set**
+keeps the current conversation's corrections and constraints usable on the very next reply,
+an asynchronous slow path consolidates durable cross-session memory (atomic facts, a typed
+temporal graph, reflections, foresight, and community summaries), and a retrieval-gated
+prompt builder merges session and cross-session memory under a strict token budget before
+each model call. The design and its terminology are described in the
+[MIRA paper](docs/mira-paper.md) and the [architecture overview](docs/architecture.md).
 
-> **Warning:** this repository is a scaffold only. No business logic or model integration
-> is implemented yet.
+## Session memory vs. cross-session memory
 
-## Architecture overview
+MIRA separates two consolidation timelines that operate on different clocks. This split is
+the architecture's central idea.
+
+| | Session continuity (fast) | Cross-session learning (slow) |
+| --- | --- | --- |
+| **Question it answers** | What matters *now* in this chat? | What should persist for next time? |
+| **Mechanism** | Session micro-path → Session Working Set | Asynchronous slow path |
+| **Holds** | Current goal, corrections, active constraints, decisions, open questions | Atomic facts, typed graph edges, reflections, foresight, community summaries, tiers |
+| **Latency** | Immediate (no model call on the fast path) | Deferred, batchable |
+| **Status** | Provisional until confirmed | Confirmed, durable |
+| **Prompt priority** | High (hot-level), but not durable | High when retrieved within budget |
+
+A correction like *"Use 2026, not 2025"* is extracted by the session micro-path and shapes
+the **next** response immediately — before the slow path has synthesized anything. The slow
+path later confirms, downgrades, expires, or rejects that provisional item, and records
+durable updates with `SUPERSEDED_BY` or `CONTRADICTS` edges. Corrections apply forward
+only; prior turns are never rewritten.
+
+## Architecture flow
 
 ```text
-new turn -> fast-path persistence and queueing
-         -> session extraction -> validation -> temporary Session Working Set
-         -> budgeted prompt construction
-         -> later slow-path confirmation and durable enrichment
+user turn
+  └─ fast path: persist observation + enqueue        (no model call)
+  └─ session micro-path: extract → validate → Session Working Set
+  └─ hydrate durable memory (new session / "continue …")
+  └─ route retrieval (Auto → Quick | Deep | Relational) + sufficiency check
+  └─ merge context (recent turns · session items · hot memory · retrieved · ambient)
+  └─ build prompt under token budget → call Qwen
+  └─ persist assistant turn + enqueue → structured response + trace
+
+asynchronous slow path (per queued observation)
+  └─ embeddings · atomic facts · entities · typed graph edges
+  └─ contradiction vs. supersession · reflections · foresight
+  └─ community detection/summaries · tier promotion/demotion
+  └─ confirm / expire / reject Session Working Set candidates
 ```
 
-The fast path never calls a model. The Session Working Set is temporary runtime state,
-not a cold/warm/hot tier, though it receives hot-level prompt priority. The slow path
-produces confirmed facts, graph edges, foresight, reflections, community summaries, and
-tier changes. Retrieval offers Quick, Deep, Relational, and Auto modes. See
-[docs/architecture.md](docs/architecture.md).
+The Session Working Set has hot-level prompt priority but is **not** a cold/warm/hot tier.
+Retrieval offers **Quick**, **Deep**, **Relational**, and **Auto** modes; the prompt
+builder is the integration point between session and cross-session memory. See the
+[ADRs](docs/adr) for the reasoning behind each decision.
 
-## Folder structure
+## Setup
 
-```text
-core/
-  memory/      raw observation and durable cross-session memory contracts
-  session/     session micro-path and Session Working Set contracts
-  retrieval/   Quick, Deep, Relational, and Auto retrieval
-  context/     prompt budgeting, merging, and ambient context
-  llm/         future model integration
-  db/          SQLite truth and ChromaDB indexing
-ui/            app and graph visualization
-slack/         bot and MCP server
-evaluation/    judge, LongMemEval, and ablation
-tests/         test scaffold
-docs/          architecture, issues, and ADRs
-scripts/       integration and demo-seeding stubs
+Python 3.11 is required.
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+make install
+cp .env.example .env      # add your DASHSCOPE_API_KEY
+make check
 ```
 
-## Demo mode
+`.env` is documented in [.env.example](.env.example). The DashScope key must match its
+region: MIRA defaults the endpoint to the international host
+(`DASHSCOPE_CHAT_ENDPOINT=https://dashscope-intl.aliyuncs.com/...`).
 
-The judge/user walkthrough is documented in [docs/demo-script.md](docs/demo-script.md).
-Seed deterministic data with `python -m scripts.seed_demo --reset`, then run the UI
-with `make run`.
+## Demo
+
+Seed deterministic data, then run the Streamlit app:
+
+```bash
+python -m scripts.seed_demo --reset
+make run
+```
+
+The judge/user walkthrough is in [docs/demo-script.md](docs/demo-script.md). You can also
+drive the runtime directly:
+
+```python
+from core.db.repositories import configure_database, create_session
+from core.agent import handle_user_message
+
+configure_database("mira.db")
+session = create_session("jerry")
+print(handle_user_message(session, "Use 2026, not 2025, for all dates."))
+```
 
 ## Docker local development
 
@@ -71,43 +115,79 @@ To run checks inside the container:
 docker compose run --rm app make check
 ```
 
-Environment variables are documented in [.env.example](.env.example). Docker Compose
-uses safe defaults for local paths and reads secrets such as `DASHSCOPE_API_KEY` from
-your shell or `.env`; secrets are not baked into the image.
-
-## Development setup
-
-Python 3.11 is required.
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-make install
-cp .env.example .env
-make check
-```
+Environment variables are documented in [.env.example](.env.example). Docker Compose uses
+safe defaults for local paths and reads secrets such as `DASHSCOPE_API_KEY` from your shell
+or `.env`; secrets are not baked into the image.
 
 ## Makefile commands
 
-- `install`: install requirements.
-- `run`: invoke the UI stub.
-- `test`: run pytest and core coverage.
-- `lint`, `format`, `fix`: check or format with Ruff.
-- `type`: run strict mypy.
-- `security`: run Bandit.
-- `check`: run lint, type, security, and tests.
-- `precommit`: run all hooks.
-- `clean`: remove generated caches and reports.
+- `install` — install requirements.
+- `run` — launch the Streamlit UI (`ui/app.py`).
+- `test` — run pytest.
+- `lint`, `format`, `fix` — check or format with Ruff.
+- `type` — run strict mypy.
+- `security` — run Bandit.
+- `check` — run lint, type, security, and tests.
+- `precommit` — run all pre-commit hooks.
+- `clean` — remove generated caches and reports.
 
-## Branch workflow
+## Repository layout
 
-`main` is protected and release-ready. Feature branches named
-`feature/issue-XXX-short-description` merge into `dev` first. Pull requests must link
-their issue and pass `make check`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+```text
+core/
+  agent.py     runtime loop: user message -> answer (handle_user_message)
+  observability.py   structured logging and secret redaction
+  memory/      observations, atomic facts, typed graph, reflections, foresight, tiers, community
+  session/     session micro-path, Session Working Set, confirmation, hydration
+  retrieval/   Quick, Deep, Relational, Auto router, sufficiency
+  context/     prompt builder, budget, merger, ambient context
+  llm/         Qwen client, prompts, JSON parsing
+  db/          SQLite source of truth, ChromaDB index, schema, repositories
+ui/            Streamlit app and graph visualization
+slack/         Slack bot and MCP memory server
+evaluation/    cases harness, LongMemEval/LoCoMo adapter, ablations, judge
+docs/          paper, architecture, ADRs, demo script, issues
+scripts/       demo seeding and integration scripts
+tests/         test suite
+```
+
+## Implementation status
+
+This reflects the repository honestly — implemented behavior vs. work that is still a
+typed stub. (Run `make check` to validate everything marked implemented.)
+
+| Area | Status |
+| --- | --- |
+| Fast path: observation persistence + queueing | ✅ Implemented |
+| Session micro-path, Session Working Set, confirmation, hydration | ✅ Implemented |
+| Atomic facts, entities, single typed temporal graph | ✅ Implemented |
+| Contradiction vs. supersession (`CONTRADICTS` / `SUPERSEDED_BY`) | ✅ Implemented |
+| Reflection synthesis + evidence-based staleness/invalidation | ✅ Implemented |
+| Foresight records + lifecycle | ✅ Implemented |
+| Community detection (Leiden, with fallback) + summaries | ✅ Implemented |
+| Tier policy (cold/warm/hot promotion & demotion) | ✅ Implemented |
+| Retrieval: Quick, Deep, Relational, Auto router, sufficiency check | ✅ Implemented |
+| Context merge, token budget, ambient context | ✅ Implemented |
+| Agent runtime (`handle_user_message`) + answer trace | ✅ Implemented |
+| Structured logging / secret redaction | ✅ Implemented |
+| Evaluation: cases harness, LongMemEval/LoCoMo adapter, ablations | ✅ Implemented |
+| MCP memory server skeleton, Slack bot, Docker setup | ✅ Implemented |
+| Cross-session slow-path **step** functions | ✅ Implemented |
+| Async slow-path **orchestrator** (`run_slow_path` batch runner) | 🟡 Stub — steps exist; chaining pending |
+| Public retrieval **dispatcher** (`router.route_retrieval`) | 🟡 Stub — classifier done in `retrieval/auto.py` |
+| Durable hot working-memory pool (`memory/working.py`) | 🟡 Stub |
+| LLM judge, vector helper, function-calling helper, memory-inspector UI | 🟡 Stub |
+| Full procedural memory, multimodal, multi-user | ⛔ Out of scope (future work) |
+
+## Team ownership
+
+- **Jerry** — architecture, core memory, retrieval, context, and LLM integration.
+- **Kelechi** — database, deployment, infrastructure, and Slack/MCP.
+- **Sarah** — UI, graph visualization, evaluation, and demo mode.
 
 ## Architecture decision records
 
-Major architecture decisions are tracked in [docs/adr](docs/adr):
+Major decisions are tracked in [docs/adr](docs/adr):
 
 - [ADR-0001 — Session Working Set is Separate from Durable Hot Memory](docs/adr/0001-session-working-set.md)
 - [ADR-0002 — Single Typed Graph Instead of Disconnected Graph Stores](docs/adr/0002-single-typed-graph.md)
@@ -120,16 +200,11 @@ Major architecture decisions are tracked in [docs/adr](docs/adr):
 - [ADR-0009 — Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
 - [ADR-0010 — Sensa-Style Ambient Context as Prompt Signal, Not Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
 
-## Team ownership
+## Further reading
 
-- **Jerry:** architecture, core memory, retrieval, and LLM integration.
-- **Kelechi:** database, deployment, and infrastructure.
-- **Sarah:** UI, graph visualization, evaluation, and demo mode.
-
-## Current implementation status
-
-Scaffold only. The repository defines architecture boundaries and typed interfaces, but
-contains no business logic, persistence behavior, retrieval algorithms, or model calls.
+- [MIRA paper](docs/mira-paper.md) — abstract, contributions, and architecture summary.
+- [Architecture overview](docs/architecture.md).
+- [Contributing guide](CONTRIBUTING.md) — branch-per-issue workflow; PRs link their issue and must pass `make check`.
 
 ## License
 
