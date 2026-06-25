@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
+from ui.session_view import render_session_working_set
 
 APP_TITLE = "MIRA — Memory, Inspectable"
 
@@ -37,15 +38,6 @@ class Page:
 
 # --- Mock data (placeholder only; replaced by real backend wiring per page) ---
 
-_MOCK_SESSION_ITEMS = [
-    {"type": "correction", "scope": "project", "status": "provisional", "content": "Use 2026."},
-    {
-        "type": "active_constraint",
-        "scope": "project",
-        "status": "confirmed",
-        "content": "Run make check.",
-    },
-]
 _MOCK_MEMORY = [
     {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
     {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
@@ -76,10 +68,7 @@ def _render_chat(st: Any) -> None:
 
 
 def _render_session_working_set(st: Any) -> None:
-    st.title("🧠 Session Working Set")
-    st.caption("Provisional current-session items, hot-prioritized for the prompt.")
-    st.dataframe(_MOCK_SESSION_ITEMS)
-    st.info(_PLACEHOLDER)
+    render_session_working_set(DEFAULT_SESSION_ID, st)
 
 
 def _render_memory_inspector(st: Any) -> None:
