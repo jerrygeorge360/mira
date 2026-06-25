@@ -21,6 +21,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
+
 APP_TITLE = "MIRA — Memory, Inspectable"
 
 
@@ -35,10 +37,6 @@ class Page:
 
 # --- Mock data (placeholder only; replaced by real backend wiring per page) ---
 
-_MOCK_CHAT = [
-    {"role": "user", "content": "Use 2026, not 2025, for all dates."},
-    {"role": "assistant", "content": "Got it — I'll use 2026 going forward."},
-]
 _MOCK_SESSION_ITEMS = [
     {"type": "correction", "scope": "project", "status": "provisional", "content": "Use 2026."},
     {
@@ -74,11 +72,7 @@ _PLACEHOLDER = "Placeholder page with mock data — backend wiring is a follow-u
 
 
 def _render_chat(st: Any) -> None:
-    st.title("💬 Chat")
-    st.caption("Talk to MIRA and watch memory update.")
-    for turn in _MOCK_CHAT:
-        st.markdown(f"**{turn['role']}:** {turn['content']}")
-    st.info(_PLACEHOLDER)
+    render_chat(DEFAULT_SESSION_ID, st, MockChatAgent())
 
 
 def _render_session_working_set(st: Any) -> None:
