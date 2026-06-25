@@ -349,7 +349,7 @@ def _reset_demo(session_id: str) -> None:
                 str(row["reflection_id"])
                 for row in connection.execute(
                     "SELECT DISTINCT reflection_id FROM reflection_evidence "
-                    f"WHERE observation_id IN ({_placeholders(observation_ids)})",  # noqa: S608
+                    f"WHERE observation_id IN ({_placeholders(observation_ids)})",  # noqa: S608  # nosec B608
                     tuple(observation_ids),
                 ).fetchall()
             ]
@@ -371,18 +371,18 @@ def _reset_demo(session_id: str) -> None:
             )
         if node_ids:
             connection.execute(
-                f"DELETE FROM graph_nodes WHERE id IN ({_placeholders(node_ids)})",  # noqa: S608
+                f"DELETE FROM graph_nodes WHERE id IN ({_placeholders(node_ids)})",  # noqa: S608  # nosec B608
                 tuple(node_ids),
             )
 
         if reflection_ids:
             placeholders = _placeholders(reflection_ids)
             connection.execute(
-                f"DELETE FROM reflection_evidence WHERE reflection_id IN ({placeholders})",  # noqa: S608
+                f"DELETE FROM reflection_evidence WHERE reflection_id IN ({placeholders})",  # noqa: S608  # nosec B608
                 tuple(reflection_ids),
             )
             connection.execute(
-                f"DELETE FROM reflections WHERE id IN ({placeholders})",  # noqa: S608
+                f"DELETE FROM reflections WHERE id IN ({placeholders})",  # noqa: S608  # nosec B608
                 tuple(reflection_ids),
             )
         if observation_ids:
@@ -393,7 +393,7 @@ def _reset_demo(session_id: str) -> None:
                 ("slow_path_queue", "observation_id"),
             ):
                 connection.execute(
-                    f"DELETE FROM {table} WHERE {column} IN ({placeholders})",  # noqa: S608
+                    f"DELETE FROM {table} WHERE {column} IN ({placeholders})",  # noqa: S608  # nosec B608
                     tuple(observation_ids),
                 )
         connection.execute(
@@ -401,7 +401,7 @@ def _reset_demo(session_id: str) -> None:
             (f"{DEMO_COMMUNITY_PREFIX}%",),
         )
         for table in ("session_working_set", "retrieval_logs", "prompt_logs", "answer_traces"):
-            connection.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))  # noqa: S608
+            connection.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))  # noqa: S608  # nosec B608
         connection.execute("DELETE FROM observations WHERE session_id = ?", (session_id,))
         connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
 
