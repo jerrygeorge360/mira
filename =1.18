@@ -1,0 +1,6 @@
+Collecting slack-bolt
+  Using cached slack_bolt-1.28.0-py2.py3-none-any.whl.metadata (11 kB)
+Requirement already satisfied: slack_sdk<4,>=3.38.0 in ./venv/lib/python3.12/site-packages (from slack-bolt) (3.42.0)
+Using cached slack_bolt-1.28.0-py2.py3-none-any.whl (234 kB)
+Installing collected packages: slack-bolt
+Successfully installed slack-bolt-1.28.0

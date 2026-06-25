@@ -1,4 +1,4 @@
-.PHONY: help install run test lint format type security check fix precommit clean
+.PHONY: help install run slack test test-slack lint format type security check fix precommit clean
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts
@@ -9,7 +9,9 @@ help:
 		'  help       Show this help message' \
 		'  install    Install development and production requirements' \
 		'  run        Run the UI entry point' \
+		'  slack      Run the Slack bot entry point' \
 		'  test       Run the test suite' \
+		'  test-slack Run only the Slack bot tests' \
 		'  lint       Run Ruff checks and formatting check' \
 		'  format     Format the codebase with Ruff' \
 		'  type       Run mypy over application sources' \
@@ -26,8 +28,14 @@ install:
 run:
 	$(PYTHON) -m ui.app
 
+slack:
+	$(PYTHON) -m slack.bot
+
 test:
 	$(PYTHON) -m pytest --no-cov || [ $$? -eq 5 ]
+
+test-slack:
+	$(PYTHON) -m pytest tests/test_slack_bot.py --no-cov -v
 
 lint:
 	$(PYTHON) -m ruff check .

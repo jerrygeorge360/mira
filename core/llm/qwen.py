@@ -25,7 +25,9 @@ from core.llm.prompts import get_output_schema
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DASHSCOPE_ENDPOINT_ENV = "DASHSCOPE_CHAT_ENDPOINT"
 DEFAULT_QWEN_MODEL = "qwen-plus"
-DEFAULT_DASHSCOPE_ENDPOINT = "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions"
+DEFAULT_DASHSCOPE_ENDPOINT = (
+    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions"
+)
 MAX_ATTEMPTS = 3
 RETRY_BACKOFF_S = 0.25
 
