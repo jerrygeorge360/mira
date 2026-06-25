@@ -29,6 +29,12 @@ from core.llm.qwen import call_qwen_json
 from core.memory.observation import persist_turn_fast_path
 from core.memory.tiers import list_hot_memory_for_context
 from core.memory.trace import TraceBuilder
+from core.observability import (
+    log_observation_saved,
+    log_qwen_error,
+    log_retrieval_route,
+    log_session_hydration,
+)
 from core.retrieval.auto import route_retrieval
 from core.retrieval.deep import retrieve_deep
 from core.retrieval.quick import retrieve_quick
@@ -79,6 +85,7 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
 
     # Fast path: persist and queue the raw user turn (no model calls).
     user_observation_id = persist_turn_fast_path(session_id, "user", user_message)
+    log_observation_saved(session_id, user_observation_id, "user")
 
     # Initialise the trace builder for this turn.
     trace = TraceBuilder(session_id, user_observation_id)
@@ -90,10 +97,12 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
     if _should_hydrate(prior_observations, user_message):
         hydrated_ids = hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
         trace.record_hydration(hydrated_ids)
+        log_session_hydration(session_id, hydrated_ids)
 
     # Routed retrieval of cross-session memory.
     decision = route_retrieval(user_message, session_id)
     retrieval_mode = str(decision["mode"])
+    log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
     retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
     trace.record_retrieval(retrieval_mode, retrieved)
 
@@ -121,7 +130,11 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
     )
 
     # Generation.
-    answer = _generate_answer(prompt)
+    try:
+        answer = _generate_answer(prompt)
+    except Exception as error:
+        log_qwen_error(error, session_id=session_id, observation_id=user_observation_id)
+        raise
 
     # Persist and queue the assistant turn.
     assistant_observation_id = persist_turn_fast_path(session_id, "assistant", answer)
