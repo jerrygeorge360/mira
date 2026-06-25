@@ -41,6 +41,12 @@ docs/          architecture, issues, and ADRs
 scripts/       integration and demo-seeding stubs
 ```
 
+## Demo mode
+
+The judge/user walkthrough is documented in [docs/demo-script.md](docs/demo-script.md).
+Seed deterministic data with `python -m scripts.seed_demo --reset`, then run the UI
+with `make run`.
+
 ## Development setup
 
 Python 3.11 is required.
