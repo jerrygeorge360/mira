@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
+from ui.foresight_view import render_foresight_timeline
 from ui.graph_viz import render_graph
 from ui.retrieval_trace import render_retrieval_trace
 from ui.session_view import render_session_working_set
@@ -43,10 +44,6 @@ class Page:
 _MOCK_MEMORY = [
     {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
     {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
-]
-_MOCK_FORESIGHT = [
-    {"content": "Hackathon submission due 2026-07-01.", "status": "active", "until": "2026-07-01"},
-    {"content": "Run make check before PR.", "status": "active", "always_inject": True},
 ]
 _MOCK_EVAL = [
     {"category": "direct_fact_recall", "passed": 1, "total": 1},
@@ -80,10 +77,7 @@ def _render_retrieval_trace(st: Any) -> None:
 
 
 def _render_foresight_timeline(st: Any) -> None:
-    st.title("⏳ Foresight Timeline")
-    st.caption("Time-sensitive constraints and their lifecycle.")
-    st.dataframe(_MOCK_FORESIGHT)
-    st.info(_PLACEHOLDER)
+    render_foresight_timeline(st=st)
 
 
 def _render_evaluation_dashboard(st: Any) -> None:
