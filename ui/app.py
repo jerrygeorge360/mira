@@ -23,6 +23,7 @@ from typing import Any
 
 from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
 from ui.graph_viz import render_graph
+from ui.retrieval_trace import render_retrieval_trace
 from ui.session_view import render_session_working_set
 
 APP_TITLE = "MIRA — Memory, Inspectable"
@@ -42,11 +43,6 @@ class Page:
 _MOCK_MEMORY = [
     {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
     {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
-]
-_MOCK_TRACE = [
-    {"step": "route", "detail": "relational (entity-centered change)"},
-    {"step": "retrieve", "detail": "3 records"},
-    {"step": "sufficiency", "detail": "sufficient"},
 ]
 _MOCK_FORESIGHT = [
     {"content": "Hackathon submission due 2026-07-01.", "status": "active", "until": "2026-07-01"},
@@ -80,10 +76,7 @@ def _render_graph_viewer(st: Any) -> None:
 
 
 def _render_retrieval_trace(st: Any) -> None:
-    st.title("🔎 Retrieval Trace")
-    st.caption("How a query was routed, retrieved, and checked for sufficiency.")
-    st.dataframe(_MOCK_TRACE)
-    st.info(_PLACEHOLDER)
+    render_retrieval_trace(st=st)
 
 
 def _render_foresight_timeline(st: Any) -> None:
