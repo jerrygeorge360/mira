@@ -13,3 +13,6 @@ igraph>=0.11
 # Kelechi: Slack bot with Socket Mode (slack/bot.py)
 slack-bolt>=1.18
 python-dotenv>=1.0
+
+# Sarah: Streamlit demo UI shell (ui/app.py)
+streamlit>=1.36

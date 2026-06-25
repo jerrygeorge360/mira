@@ -47,6 +47,34 @@ The judge/user walkthrough is documented in [docs/demo-script.md](docs/demo-scri
 Seed deterministic data with `python -m scripts.seed_demo --reset`, then run the UI
 with `make run`.
 
+## Docker local development
+
+Docker is optional, but it gives the team a repeatable clean-clone environment.
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose run --rm app python -m scripts.seed_demo --reset
+docker compose up app
+```
+
+Then open <http://localhost:8501>.
+
+The Compose app service mounts durable local data into `.docker-data/`:
+
+- SQLite: `.docker-data/sqlite/mira.db` mounted as `MIRA_DB_PATH=/data/sqlite/mira.db`
+- Chroma: `.docker-data/chroma` mounted as `CHROMA_DB_PATH=/data/chroma`
+
+To run checks inside the container:
+
+```bash
+docker compose run --rm app make check
+```
+
+Environment variables are documented in [.env.example](.env.example). Docker Compose
+uses safe defaults for local paths and reads secrets such as `DASHSCOPE_API_KEY` from
+your shell or `.env`; secrets are not baked into the image.
+
 ## Development setup
 
 Python 3.11 is required.
