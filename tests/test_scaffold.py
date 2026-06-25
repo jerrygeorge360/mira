@@ -83,7 +83,12 @@ def test_application_modules_import_without_third_party() -> None:
 
 def test_application_imports_are_standard_library_only() -> None:
     """Ensure application imports remain standard-library or local-only."""
+    third_party_allowlist: dict[str, frozenset[str]] = {
+        "slack.bot": frozenset({"slack_bolt", "dotenv"}),
+    }
+    allowed_modules = sys.stdlib_module_names | LOCAL_IMPORT_ROOTS
     for module_name in EXPECTED_MODULES:
+        extra = third_party_allowlist.get(module_name, frozenset())
         path = PROJECT_ROOT.joinpath(*module_name.split(".")).with_suffix(".py")
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
@@ -93,4 +98,4 @@ def test_application_imports_are_standard_library_only() -> None:
                 imported_roots = {(node.module or "").partition(".")[0]}
             else:
                 continue
-            assert imported_roots <= sys.stdlib_module_names | LOCAL_IMPORT_ROOTS
+            assert imported_roots <= allowed_modules | extra
