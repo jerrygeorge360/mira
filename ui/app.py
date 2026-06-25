@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
+from ui.graph_viz import render_graph
 from ui.session_view import render_session_working_set
 
 APP_TITLE = "MIRA — Memory, Inspectable"
@@ -42,10 +43,6 @@ _MOCK_MEMORY = [
     {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
     {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
 ]
-_MOCK_GRAPH = {
-    "nodes": [{"id": "n1", "label": "MIRA"}, {"id": "n2", "label": "PostgreSQL"}],
-    "edges": [{"source": "n1", "target": "n2", "type": "WORKS_ON"}],
-}
 _MOCK_TRACE = [
     {"step": "route", "detail": "relational (entity-centered change)"},
     {"step": "retrieve", "detail": "3 records"},
@@ -79,11 +76,7 @@ def _render_memory_inspector(st: Any) -> None:
 
 
 def _render_graph_viewer(st: Any) -> None:
-    st.title("🕸️ Graph Viewer")
-    st.caption("Typed temporal graph of entities and relations.")
-    st.dataframe(_MOCK_GRAPH["edges"])
-    st.markdown(f"Nodes: {', '.join(node['label'] for node in _MOCK_GRAPH['nodes'])}")
-    st.info(_PLACEHOLDER)
+    render_graph(st)
 
 
 def _render_retrieval_trace(st: Any) -> None:
