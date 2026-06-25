@@ -1,0 +1,75 @@
+{
+  "name": "MIRA local memory evaluation suite",
+  "cases": [
+    {
+      "id": "fact-recall-deadline",
+      "category": "direct_fact_recall",
+      "interactions": [
+        {"message": "My project deadline is Friday."},
+        {"message": "What is my deadline?"}
+      ],
+      "expect": {"retrieval_mode": "quick", "answer_contains": ["Friday"]}
+    },
+    {
+      "id": "session-correction-year",
+      "category": "session_correction_handling",
+      "interactions": [
+        {"message": "Use 2026, not 2025, for all dates."}
+      ],
+      "expect": {"used_session_items_nonempty": true}
+    },
+    {
+      "id": "cross-session-continue",
+      "category": "cross_session_recall",
+      "interactions": [
+        {"message": "We must keep MIRA session memory separate from durable tiers."},
+        {"message": "Continue from where we stopped on MIRA memory.", "reset_session": true}
+      ],
+      "expect": {"answer_contains": ["MIRA"]}
+    },
+    {
+      "id": "contradiction-preferences",
+      "category": "contradiction_handling",
+      "interactions": [
+        {"message": "I prefer Python."},
+        {"message": "Actually I prefer Rust."},
+        {"message": "What do I prefer?"}
+      ],
+      "expect": {"answer_contains": ["Rust"]}
+    },
+    {
+      "id": "supersession-migration",
+      "category": "supersession_handling",
+      "interactions": [
+        {"message": "I switched from MongoDB to PostgreSQL for storage."},
+        {"message": "What database do I use now?"}
+      ],
+      "expect": {"retrieval_mode": "relational", "answer_contains": ["PostgreSQL"]}
+    },
+    {
+      "id": "foresight-hackathon",
+      "category": "foresight_activation",
+      "interactions": [
+        {"message": "The hackathon submission is due next Friday."},
+        {"message": "Anything time-sensitive I should remember?"}
+      ],
+      "expect": {"answer_contains": ["hackathon"]}
+    },
+    {
+      "id": "deep-developer-identity",
+      "category": "deep_mode_synthesis",
+      "interactions": [
+        {"message": "What kind of developer am I?"}
+      ],
+      "expect": {"retrieval_mode": "deep"}
+    },
+    {
+      "id": "sufficiency-unknown-entity",
+      "category": "retrieval_sufficiency",
+      "interactions": [
+        {"message": "What did I decide about Kubernetes?"}
+      ],
+      "expect": {"answer_contains": ["Kubernetes"]}
+    }
+  ]
+}
