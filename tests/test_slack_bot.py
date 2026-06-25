@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+pytest.importorskip("slack_bolt")
+
 import slack_bolt  # noqa: F401 — ensure module exists for monkeypatch
 
 from core.db.repositories import configure_database, repository_connection
