@@ -126,7 +126,7 @@ def run_bot() -> None:
 
     app = App(token=bot_token)
 
-    @app.message("")
+    @app.message("")  # type: ignore[untyped-decorator, unused-ignore]
     def on_message(message: dict[str, object], say: Callable[..., Any]) -> None:
         subtype = message.get("subtype", "")
         if subtype in ("message_deleted", "message_changed"):
@@ -162,7 +162,7 @@ def run_bot() -> None:
 
     handler = SocketModeHandler(app, app_token)
     LOGGER.info("Starting MIRA Slack bot in Socket Mode")
-    handler.start()  # type: ignore[no-untyped-call]
+    handler.start()  # type: ignore[no-untyped-call, unused-ignore]
 
 
 if __name__ == "__main__":
