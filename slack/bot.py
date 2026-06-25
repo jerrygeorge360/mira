@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from core.agent import handle_user_message as agent_handle_message
@@ -32,7 +32,7 @@ def build_session_id(channel_id: str, thread_ts: str | None, user_id: str) -> st
 
 def _ensure_session(session_id: str, user_id: str) -> str:
     """Create the MIRA session if it doesn't already exist."""
-    now = datetime.now(UTC).isoformat()
+    now = datetime.now(timezone.utc).isoformat()  # noqa: UP017
     with repository_connection() as connection:
         existing = connection.execute(
             "SELECT id FROM sessions WHERE id = ?", (session_id,)
