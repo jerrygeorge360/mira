@@ -17,10 +17,10 @@ complete loop with a mocked LLM (no live model in CI):
   9-10. the user asks and MIRA answers 2030 (cross-session memory)
   11. the graph records the 2025 -> 2030 supersession
 
-Because the asynchronous slow-path *orchestrator* (core/memory/slow_path.py) is still a
-stub, the slow-path *steps* are driven here with the real implemented functions
-(confirmation, promotion, atomic facts, graph edges) -- exactly what the orchestrator will
-chain once built.
+The slow path now runs through the real orchestrator entry point
+(``run_slow_path_for_observation``, ISSUE-121) rather than manually wiring the
+individual memory steps. Only the LLM-dependent extraction is mocked, per the
+no-live-LLM-in-CI rule.
 """
 
 from __future__ import annotations
@@ -34,16 +34,15 @@ from core import agent
 from core.agent import handle_user_message
 from core.db.repositories import (
     configure_database,
-    create_atomic_fact,
     create_session,
     repository_connection,
 )
-from core.memory.graph import create_graph_edge, create_graph_node, find_edges_by_type
-from core.session.confirmation import (
-    confirm_session_item,
-    promote_session_item_to_durable_candidate,
-)
+from core.memory import slow_path
+from core.memory.graph import find_edges_by_type
+from core.memory.slow_path import run_slow_path_for_observation
 from core.session.working_set import list_active_session_items
+
+CORRECTION_MESSAGE = "Correction: use 2030 instead of 2025 for the project year."
 
 
 @pytest.fixture
@@ -59,17 +58,36 @@ def year_aware_qwen(monkeypatch: pytest.MonkeyPatch) -> None:
     """Mock Qwen to answer with whichever project year reached the prompt context.
 
     This makes "uses 2030" a real assertion: the answer reflects what the memory
-    pipeline actually injected, not a canned string.
+    pipeline actually injected, not a canned string. 2030 (not the ambient/current
+    year) is used so the answer cannot be satisfied by the injected ambient date.
     """
 
     def _call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
-        # 2030 is used as the corrected year (not the ambient/current year) so the
-        # answer can only be satisfied by the memory pipeline, not the ambient date.
         prompt = messages[0]["content"]
         year = "2030" if "2030" in prompt else "2025" if "2025" in prompt else "unknown"
         return {"json": {"answer": f"The project year is {year}.", "used_memory_ids": []}}
 
     monkeypatch.setattr(agent, "call_qwen_json", _call)
+
+
+@pytest.fixture
+def slow_path_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock the slow path's LLM-dependent extraction (atomic facts and entities)."""
+
+    def _facts(observation_id: str, content: str) -> list[dict[str, object]]:
+        year = "2030" if "2030" in content else "2025"
+        return [
+            {
+                "subject": "project year",
+                "predicate": "IS",
+                "object": year,
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            }
+        ]
+
+    monkeypatch.setattr(slow_path, "extract_atomic_facts", _facts)
+    monkeypatch.setattr(slow_path, "extract_entities", lambda text: [])
 
 
 def _correction_item(session_id: str) -> dict[str, object]:
@@ -78,70 +96,23 @@ def _correction_item(session_id: str) -> dict[str, object]:
     return items[0]
 
 
-def _consolidate_correction_slow_path(
-    correction_item_id: str,
-    old_observation_id: str,
-    new_observation_id: str,
-) -> str:
-    """Drive the slow-path steps the orchestrator will eventually chain."""
-    # 5. confirm the provisional session correction.
-    confirm_session_item(correction_item_id, "slow_path")
-    # 6. promote it into durable cross-session (hot) memory.
-    candidate_id = promote_session_item_to_durable_candidate(correction_item_id)
-    # Durable atomic facts: old superseded, new active.
-    old_fact = create_atomic_fact(
-        {
-            "subject": "MIRA project",
-            "predicate": "HAS_YEAR",
-            "object": "2025",
-            "confidence": 0.9,
-            "status": "superseded",
-            "source_observation_id": old_observation_id,
-        }
-    )
-    new_fact = create_atomic_fact(
-        {
-            "subject": "MIRA project",
-            "predicate": "HAS_YEAR",
-            "object": "2030",
-            "confidence": 0.95,
-            "status": "active",
-            "source_observation_id": new_observation_id,
-        }
-    )
-    # 11. graph supersession edge 2025 -> 2030.
-    old_node = create_graph_node(
-        node_type="atomic_fact",
-        label="MIRA project HAS_YEAR 2025",
-        source_table="atomic_facts",
-        source_id=old_fact,
-    )
-    new_node = create_graph_node(
-        node_type="atomic_fact",
-        label="MIRA project HAS_YEAR 2030",
-        source_table="atomic_facts",
-        source_id=new_fact,
-    )
-    create_graph_edge(old_node, new_node, "SUPERSEDED_BY", 0.95, [new_observation_id])
-    return candidate_id
-
-
-def _count(query: str, parameter: str) -> int:
+def _count(query: str, *params: object) -> int:
     with repository_connection() as connection:
-        row = connection.execute(query, (parameter,)).fetchone()
+        row = connection.execute(query, params).fetchone()
     return int(row[0])
 
 
 def test_full_loop_session_correction_to_cross_session_recall(
-    database_path: Path, year_aware_qwen: None
+    database_path: Path, year_aware_qwen: None, slow_path_extraction: None
 ) -> None:
-    """The complete correction-to-recall loop is green end to end."""
+    """The complete correction-to-recall loop is green end to end via the orchestrator."""
     # --- Session 1: original value, then correction -------------------------
     session_one = create_session("jerry")
     original = handle_user_message(session_one, "The project year is 2025.")
     assert "2025" in str(original["answer"])  # original value before correction
+    run_slow_path_for_observation(str(original["user_observation_id"]))  # durable 2025 fact
 
-    corrected = handle_user_message(session_one, "Correction: the project year is 2030, not 2025.")
+    corrected = handle_user_message(session_one, CORRECTION_MESSAGE)
     # 3 + 4: Session Working Set updated immediately and the same response uses 2030.
     assert corrected["used_session_items"], "session correction must enter the working set"
     assert "2030" in str(corrected["answer"])
@@ -151,27 +122,22 @@ def test_full_loop_session_correction_to_cross_session_recall(
     assert "2030" in str(follow_up["answer"])
 
     correction = _correction_item(session_one)
-    correction_id = str(correction["id"])
-    new_observation_id = str(correction["source_observations"][0])
+    correction_observation_id = str(correction["source_observations"][0])
 
-    # --- Slow path: confirm + store durable cross-session memory -------------
-    candidate_id = _consolidate_correction_slow_path(
-        correction_id,
-        old_observation_id=str(original["user_observation_id"]),
-        new_observation_id=new_observation_id,
-    )
+    # --- Slow path: one orchestrator call confirms + stores durable memory ---
+    result = run_slow_path_for_observation(correction_observation_id)
+    assert result["succeeded"] is True
 
-    # 6: cross-session memory now holds a durable confirmed-correction fact.
+    # 6: cross-session memory now holds a durable confirmed-correction item.
     assert (
         _count(
-            "SELECT COUNT(*) FROM working_memory WHERE id = ? AND status = 'active'", candidate_id
+            "SELECT COUNT(*) FROM working_memory WHERE source_record_type = 'session_working_set'"
         )
-        == 1
+        >= 1
     )
-    # 11: the graph records the 2025 -> 2030 supersession.
-    supersession_edges = find_edges_by_type("SUPERSEDED_BY")
-    assert len(supersession_edges) == 1
-    assert supersession_edges[0]["source_observations"] == [new_observation_id]
+    # 11: the graph records the 2025 -> 2030 supersession; the old fact is kept.
+    assert len(find_edges_by_type("SUPERSEDED_BY")) == 1
+    assert _count("SELECT COUNT(*) FROM atomic_facts WHERE object = '2025'") == 1
 
     # --- Session 2: new session, hydration, recall --------------------------
     session_two = create_session("jerry")
@@ -190,7 +156,7 @@ def test_full_loop_session_correction_to_cross_session_recall(
 def test_evidence_trace_exists(database_path: Path, year_aware_qwen: None) -> None:
     """Each turn produces an inspectable evidence trace."""
     session_id = create_session("jerry")
-    response = handle_user_message(session_id, "Correction: the project year is 2030, not 2025.")
+    response = handle_user_message(session_id, CORRECTION_MESSAGE)
 
     trace_id = str(response["trace_id"])
     assert trace_id
@@ -206,27 +172,26 @@ def test_evidence_trace_exists(database_path: Path, year_aware_qwen: None) -> No
 
 
 def test_session_and_cross_session_memory_both_participate(
-    database_path: Path, year_aware_qwen: None
+    database_path: Path, year_aware_qwen: None, slow_path_extraction: None
 ) -> None:
     """Both the Session Working Set and durable memory take part in the loop."""
     session_one = create_session("jerry")
-    original = handle_user_message(session_one, "The project year is 2025.")
-    corrected = handle_user_message(session_one, "Correction: the project year is 2030, not 2025.")
+    corrected = handle_user_message(session_one, CORRECTION_MESSAGE)
     correction = _correction_item(session_one)
 
     # Session memory participated this turn.
     assert correction["id"] in corrected["used_session_items"]
 
-    candidate_id = _consolidate_correction_slow_path(
-        str(correction["id"]),
-        old_observation_id=str(original["user_observation_id"]),
-        new_observation_id=str(correction["source_observations"][0]),
-    )
-    # Cross-session memory participated: durable candidate links back to the session item.
+    # Cross-session memory participates through the orchestrator (no manual wiring).
+    run_slow_path_for_observation(str(correction["source_observations"][0]))
     with repository_connection() as connection:
         row = connection.execute(
-            "SELECT source_record_type, source_record_id FROM working_memory WHERE id = ?",
-            (candidate_id,),
+            """
+            SELECT source_record_type, source_record_id FROM working_memory
+            WHERE source_record_id = ?
+            """,
+            (str(correction["id"]),),
         ).fetchone()
+    assert row is not None
     assert row["source_record_type"] == "session_working_set"
     assert row["source_record_id"] == str(correction["id"])
