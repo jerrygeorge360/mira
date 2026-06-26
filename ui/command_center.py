@@ -1,3 +1,4 @@
+# ruff: noqa: E501
 """Premium Streamlit Memory Command Center renderer for MIRA.
 
 Ownership: Sarah.
@@ -8,6 +9,7 @@ Architecture area: UI.
 from __future__ import annotations
 
 from html import escape
+from textwrap import dedent
 from typing import Any
 
 from ui.command_center_data import (
@@ -24,345 +26,341 @@ from ui.command_center_data import (
 )
 from ui.command_center_styles import command_center_css
 
+TABS = ("Graph", "Working Set", "Trace", "Reflections", "Community")
+TIMELINE_TABS = ("All", "Memories", "Events", "Tasks", "Milestones")
+
 
 def render_command_center(st: Any) -> None:
-    """Render the production-quality Memory Command Center UI."""
+    """Render the one-screen, clickable Memory Command Center UI.
+
+    Layout is built from native Streamlit columns/containers so every control is
+    a real, clickable widget; cards are keyed containers (``st.container(key=...)``
+    emits a ``st-key-<key>`` class) so the glass chrome in the CSS layer actually
+    wraps the widgets inside it instead of rendering as an empty box.
+    """
     _init_state(st)
     theme = _theme_control(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
-    st.markdown(_html(_shell_html(theme)), unsafe_allow_html=True)
+
+    sidebar, workspace = st.columns([0.22, 0.78], gap="large")
+    with sidebar:
+        _render_sidebar(st)
+    with workspace:
+        _render_topbar(st, theme)
+        main, intelligence = st.columns([0.58, 0.42], gap="large")
+        with main:
+            _render_chat_workspace(st)
+        with intelligence:
+            _render_tabbed_intelligence(st)
+        _render_timeline(st)
 
 
-def _html(markup: str) -> str:
-    """Strip template indentation so Streamlit Markdown never renders HTML as code."""
-    return "\n".join(line.strip() for line in markup.splitlines() if line.strip())
+def _unsafe(st: Any, markup: str) -> None:
+    """Render small HTML fragments without Markdown treating indentation as code."""
+    st.markdown(dedent(markup).strip(), unsafe_allow_html=True)
 
 
 def _init_state(st: Any) -> None:
     state = st.session_state
     state.setdefault("mira_theme", "dark")
     state.setdefault("mira_nav", "Command Center")
-    state.setdefault("mira_chat_draft", "")
+    state.setdefault("mira_timeline_filter", "All")
+    state.setdefault("mira_last_action", "Ready")
 
 
 def _theme_control(st: Any) -> str:
     state = st.session_state
-    current_theme = str(state.get("mira_theme", "dark"))
-    dark_mode = current_theme != "light"
+    dark_mode = str(state.get("mira_theme", "dark")) != "light"
     toggle = st.toggle("Dark mode", value=dark_mode, key="mira_theme_toggle")
     state["mira_theme"] = "dark" if toggle else "light"
     return str(state["mira_theme"])
 
 
-def _shell_html(theme: str) -> str:
-    return f"""
-<div class="mira-shell" data-theme="{escape(theme)}">
-  <div class="mira-grid">
-    {_sidebar_html()}
-    {_topbar_html(theme)}
-    {_chat_panel_html()}
-    <div class="right-stack">
-      {_memory_graph_html()}
-      {_session_working_set_html()}
-      {_retrieval_trace_html()}
-      {_reflections_html()}
-      {_communities_html()}
-    </div>
-    {_timeline_html()}
-  </div>
-</div>
-"""
+def _render_sidebar(st: Any) -> None:
+    with st.container(key="cc_sidebar"):
+        _unsafe(
+            st,
+            """
+            <div class="brand">
+              <div class="logo-mark">M</div>
+              <div><h1>MIRA</h1><p>Memory Command Center</p></div>
+            </div>
+            """,
+        )
+        for item in NAV_ITEMS:
+            label = f"{item['icon']}  {item['label']}"
+            if st.button(label, key=f"nav_{item['label']}", use_container_width=True):
+                st.session_state["mira_nav"] = item["label"]
+
+        _unsafe(
+            st,
+            """
+            <div class="status-card">
+              <div class="status-online"><span class="pulse"></span>MIRA ONLINE</div>
+              <div class="metric-grid" style="margin-top:12px;">
+                <div class="metric-tile"><small>Memories</small><strong>12.8k</strong></div>
+                <div class="metric-tile"><small>Context</small><strong>72%</strong></div>
+              </div>
+            </div>
+            """,
+        )
+        if st.button("⚡  Optimize Memory", key="optimize_memory", use_container_width=True):
+            st.session_state["mira_last_action"] = "Memory optimization queued"
+        st.caption(f"Action · {st.session_state['mira_last_action']}")
 
 
-def _sidebar_html() -> str:
-    nav = "\n".join(
-        f"""
-        <div class="nav-item {'active' if item['label'] == 'Command Center' else ''}">
-          <span class="nav-icon">{escape(item['icon'])}</span>
-          <span>{escape(item['label'])}</span>
-        </div>
-        """
-        for item in NAV_ITEMS
-    )
-    return f"""
-<aside class="sidebar glass">
-  <div class="brand">
-    <div class="logo-mark">M</div>
-    <div>
-      <h1>MIRA</h1>
-      <p>Memory Command Center</p>
-    </div>
-  </div>
-  <nav class="nav-stack">{nav}</nav>
-  <div class="sidebar-bottom">
-    <div class="status-card">
-      <div class="status-online"><span class="pulse"></span>MIRA ONLINE</div>
-      <div class="metric-grid" style="margin-top:12px;">
-        <div class="metric-tile"><small>Memories</small><strong>12.8k</strong></div>
-        <div class="metric-tile"><small>Context</small><strong>72%</strong></div>
-      </div>
-    </div>
-    <div class="primary-btn">Optimize Memory</div>
-  </div>
-</aside>
-"""
+def _render_topbar(st: Any, theme: str) -> None:
+    with st.container(key="cc_topbar"):
+        left, center, right = st.columns([0.38, 0.38, 0.24], gap="small")
+        with left:
+            _unsafe(
+                st,
+                '<div class="top-pill">● MIRA 3.1 PRO&nbsp;&nbsp;·&nbsp;&nbsp;Personal OS</div>',
+            )
+        with center:
+            st.text_input(
+                "Search memories",
+                placeholder="Search memories, people, projects...",
+                label_visibility="collapsed",
+                key="mira_search",
+            )
+        with right:
+            _unsafe(
+                st,
+                f"""
+                <div class="profile-row">
+                  <span class="chip">Theme · <strong>{escape(theme.title())}</strong></span>
+                  <span class="avatar">JG</span>
+                </div>
+                """,
+            )
 
 
-def _topbar_html(theme: str) -> str:
-    theme_label = "Dark" if theme == "dark" else "Light"
-    return f"""
-<header class="topbar glass">
-  <div class="toolbar-left">
-    <div class="model-chip">● MIRA 3.1 PRO</div>
-    <div class="chip">Workspace: <strong>&nbsp;Personal OS</strong></div>
-    <div class="search-box">⌕ Search memories, people, projects...</div>
-  </div>
-  <div class="toolbar-right">
-    <div class="chip">Theme: <strong>&nbsp;{escape(theme_label)}</strong></div>
-    <div class="icon-btn">🔔</div>
-    <div class="profile-chip"><span class="avatar">JG</span><span>Jerry</span></div>
-  </div>
-</header>
-"""
+def _render_chat_workspace(st: Any) -> None:
+    with st.container(key="cc_chat"):
+        _unsafe(
+            st,
+            """
+            <div class="chat-title">
+              <div><h2>MIRA <span class="badge">PRO</span></h2>
+              <p class="muted">Your Memory. Your Advantage.</p></div>
+              <span class="badge">94% context certainty</span>
+            </div>
+            """,
+        )
+        for message in CHAT_MESSAGES:
+            _render_message(st, message["role"], message["content"])
+        _render_brief(st)
+        action_cols = st.columns(len(ACTION_CHIPS))
+        for index, chip in enumerate(ACTION_CHIPS):
+            with action_cols[index]:
+                if st.button(chip, key=f"action_{chip}", use_container_width=True):
+                    st.session_state["mira_last_action"] = chip
+        composer, send = st.columns([0.86, 0.14], gap="small")
+        with composer:
+            st.text_input(
+                "Message",
+                placeholder="Ask MIRA anything about your memory...",
+                label_visibility="collapsed",
+                key="mira_chat_input",
+            )
+        with send:
+            if st.button("➜", key="send_message", use_container_width=True):
+                st.session_state["mira_last_action"] = "Message sent"
 
 
-def _chat_panel_html() -> str:
-    messages = "\n".join(_chat_message_html(message) for message in CHAT_MESSAGES)
-    return f"""
-<main class="chat-panel command-card glass">
-  <div class="chat-title">
-    <div>
-      <div style="display:flex; gap:10px; align-items:center;">
-        <h2>MIRA</h2><span class="badge">PRO</span>
-      </div>
-      <p class="muted">Your Memory. Your Advantage.</p>
-    </div>
-    <span class="badge">94% context certainty</span>
-  </div>
-  <section class="chat-stream">
-    {messages}
-    {_brief_card_html()}
-    {_action_chips_html()}
-  </section>
-  <div class="composer">
-    <div class="icon-btn">＋</div>
-    <div class="composer-input">Ask MIRA anything about your memory...</div>
-    <div class="icon-btn">🎙</div>
-    <div class="send-btn">➜</div>
-  </div>
-</main>
-"""
-
-
-def _chat_message_html(message: dict[str, str]) -> str:
-    role = escape(message["role"])
-    content = escape(message["content"])
+def _render_message(st: Any, role: str, content: str) -> None:
     label = "You" if role == "user" else "MIRA"
-    return f"""
-<div class="bubble {role}">
-  <small class="muted">{label}</small>
-  <div>{content}</div>
-</div>
-"""
-
-
-def _brief_card_html() -> str:
-    details = "\n".join(
+    _unsafe(
+        st,
         f"""
-        <div class="brief-item">
-          <small>{escape(item['label'])}</small>
-          <strong>{escape(item['value'])}</strong>
+        <div class="bubble {escape(role)}">
+          <small class="muted">{label}</small>
+          <div>{escape(content)}</div>
         </div>
-        """
-        for item in BRIEF_DETAILS
+        """,
     )
-    return f"""
-<article class="brief-card">
-  <div class="row-top" style="margin-bottom:14px;">
-    <div>
-      <h3 style="margin:0;">NovaDynamics Meeting Brief</h3>
-      <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p>
+
+
+def _render_brief(st: Any) -> None:
+    with st.container(key="cc_brief"):
+        _unsafe(
+            st,
+            """
+            <div class="brief-head">
+              <div><h3>NovaDynamics Meeting Brief</h3>
+              <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p></div>
+              <span class="badge">27 sources</span>
+            </div>
+            """,
+        )
+        rows = [BRIEF_DETAILS[:4], BRIEF_DETAILS[4:]]
+        for row in rows:
+            if not row:
+                continue
+            cols = st.columns(len(row))
+            for col, item in zip(cols, row, strict=False):
+                with col:
+                    _unsafe(
+                        st,
+                        f"""
+                        <div class="metric-tile">
+                          <small>{escape(item["label"])}</small>
+                          <strong>{escape(item["value"])}</strong>
+                        </div>
+                        """,
+                    )
+
+
+def _render_tabbed_intelligence(st: Any) -> None:
+    tabs = st.tabs(list(TABS))
+    with tabs[0]:
+        _render_memory_graph(st)
+    with tabs[1]:
+        _render_session_working_set(st)
+    with tabs[2]:
+        _render_retrieval_trace(st)
+    with tabs[3]:
+        _render_reflections(st)
+    with tabs[4]:
+        _render_communities(st)
+
+
+def _render_memory_graph(st: Any) -> None:
+    with st.container(key="cc_panel_graph"):
+        _panel_title(st, "Memory Graph", "Graph topology mock")
+        _unsafe(st, _graph_mock_html())
+        cols = st.columns(len(GRAPH_METRICS))
+        for col, metric in zip(cols, GRAPH_METRICS, strict=False):
+            with col:
+                st.metric(metric["label"], metric["value"])
+
+
+def _graph_mock_html() -> str:
+    return """
+    <div class="graph-stage">
+      <div class="edge e1"></div><div class="edge e2"></div>
+      <div class="edge e3"></div><div class="edge e4"></div>
+      <div class="node main">MIRA</div>
+      <div class="node n1">You</div><div class="node n2">Docs</div>
+      <div class="node n3">Tasks</div><div class="node n4">Graph</div>
     </div>
-    <span class="badge">27 sources</span>
-  </div>
-  <div class="brief-grid">{details}</div>
-</article>
-"""
+    """
 
 
-def _action_chips_html() -> str:
-    chips = "".join(f'<span class="chip">{escape(chip)}</span>' for chip in ACTION_CHIPS)
-    return f'<div class="chip-row">{chips}</div>'
+def _render_session_working_set(st: Any) -> None:
+    with st.container(key="cc_panel_working"):
+        _panel_title(st, "Session Working Set", "5 active items · 72% context usage")
+        st.progress(72)
+        for item in SESSION_ITEMS:
+            _unsafe(
+                st,
+                f"""
+                <div class="memory-row">
+                  <div class="row-top">
+                    <strong>{escape(item["title"])}</strong><span class="badge">{escape(item["type"])}</span>
+                  </div>
+                  <small class="muted">{escape(item["scope"])} · {escape(item["priority"])} priority</small>
+                </div>
+                """,
+            )
 
 
-def _memory_graph_html() -> str:
-    metrics = "".join(
-        f'<div class="metric-tile"><small>{escape(item["label"])}</small>'
-        f'<strong>{escape(item["value"])}</strong></div>'
-        for item in GRAPH_METRICS
-    )
-    return f"""
-<section class="command-card glass memory-graph">
-  {_panel_title("Memory Graph", "Live topology mock")}
-  <div class="graph-stage">
-    <div class="edge e1"></div><div class="edge e2"></div>
-    <div class="edge e3"></div><div class="edge e4"></div>
-    <div class="node main">MIRA</div>
-    <div class="node n1">You</div>
-    <div class="node n2">Docs</div>
-    <div class="node n3">Tasks</div>
-    <div class="node n4">Graph</div>
-  </div>
-  <div class="metric-grid" style="margin-top:12px;">{metrics}</div>
-</section>
-"""
+def _render_retrieval_trace(st: Any) -> None:
+    with st.container(key="cc_panel_trace"):
+        _panel_title(st, "Retrieval Trace", "Evidence & reasoning")
+        metric_cols = st.columns(2)
+        metric_cols[0].metric("Retrieved", "27")
+        metric_cols[1].metric("Confidence", "94%")
+        for item in EVIDENCE_ITEMS:
+            _unsafe(
+                st,
+                f"""
+                <div class="evidence-row">
+                  <div class="row-top"><span class="badge">{escape(item["rank"])}</span>
+                  <small class="muted">score {escape(item["score"])}</small></div>
+                  <strong>{escape(item["title"])}</strong>
+                  <div class="muted">{escape(item["source"])}</div>
+                </div>
+                """,
+            )
+        if st.button("View full trace", key="view_trace", use_container_width=True):
+            st.session_state["mira_last_action"] = "Opening full trace"
 
 
-def _session_working_set_html() -> str:
-    def _priority(item: dict[str, str]) -> str:
-        priority = escape(item["priority"])
-        priority_class = escape(item["priority"].lower())
-        return f'<small class="priority-{priority_class}">{priority}</small>'
-
-    rows = "".join(
-        f"""
-        <div class="memory-row">
-          <div class="row-top">
-            <strong>{escape(item['title'])}</strong>
-            <span class="badge">{escape(item['type'])}</span>
-          </div>
-          <div class="row-top" style="margin-top:8px;">
-            <small class="muted">{escape(item['scope'])}</small>
-            {_priority(item)}
-          </div>
-        </div>
-        """
-        for item in SESSION_ITEMS
-    )
-    return f"""
-<section class="command-card glass">
-  {_panel_title("Session Working Set", "5 active items")}
-  <div class="row-top"><small class="muted">Context limit</small><small>72%</small></div>
-  <div class="progress-track"><div class="progress-bar"></div></div>
-  <div class="list-stack">{rows}</div>
-</section>
-"""
+def _render_reflections(st: Any) -> None:
+    with st.container(key="cc_panel_reflections"):
+        _panel_title(st, "Reflections", "Synthesized insights")
+        for item in REFLECTIONS:
+            tag_values = item["tags"] if isinstance(item["tags"], list) else []
+            tags = " ".join(f'<span class="chip">{escape(str(tag))}</span>' for tag in tag_values)
+            _unsafe(
+                st,
+                f"""
+                <div class="reflection-card">
+                  <small class="muted">{escape(str(item["time"]))}</small>
+                  <p>{escape(str(item["insight"]))}</p>
+                  <div class="chip-row">{tags}</div>
+                </div>
+                """,
+            )
 
 
-def _retrieval_trace_html() -> str:
-    rows = "".join(
-        f"""
-        <div class="evidence-row">
-          <div class="row-top">
-            <span class="badge">{escape(item['rank'])}</span>
-            <small class="muted">score {escape(item['score'])}</small>
-          </div>
-          <strong>{escape(item['title'])}</strong>
-          <div class="muted">{escape(item['source'])}</div>
-        </div>
-        """
-        for item in EVIDENCE_ITEMS
-    )
-    return f"""
-<section class="command-card glass">
-  {_panel_title("Retrieval Trace", "Evidence & Reasoning")}
-  <div class="brief-item">
-    <small>User query</small>
-    <strong>Prepare me for NovaDynamics.</strong>
-  </div>
-  <div class="metric-grid" style="margin:10px 0;">
-    <div class="metric-tile"><small>Retrieved</small><strong>27</strong></div>
-    <div class="metric-tile"><small>Confidence</small><strong>94%</strong></div>
-  </div>
-  <div class="list-stack">{rows}</div>
-  <div class="chip-row"><span class="chip">View full trace →</span></div>
-</section>
-"""
+def _render_communities(st: Any) -> None:
+    with st.container(key="cc_panel_community"):
+        _panel_title(st, "Community Summaries", "Trending clusters")
+        for item in COMMUNITIES:
+            _unsafe(
+                st,
+                f"""
+                <div class="community-row">
+                  <div class="row-top"><strong>{escape(item["title"])}</strong>
+                  <span class="badge">{escape(item["delta"])}</span></div>
+                  <small class="muted">{escape(item["people"])} people · {escape(item["insights"])} insights</small>
+                </div>
+                """,
+            )
 
 
-def _reflections_html() -> str:
-    cards = "".join(
-        f"""
-        <div class="reflection-card">
-          <small class="muted">{escape(str(item['time']))}</small>
-          <p style="margin:.35rem 0 .55rem;">{escape(str(item['insight']))}</p>
-          <div class="chip-row" style="margin-top:0;">{_tags_html(item['tags'])}</div>
-        </div>
-        """
-        for item in REFLECTIONS
-    )
-    return f"""
-<section class="command-card glass">
-  {_panel_title("Reflections", "Synthesized insights")}
-  <div class="list-stack">{cards}</div>
-</section>
-"""
+def _render_timeline(st: Any) -> None:
+    with st.container(key="cc_timeline"):
+        _panel_title(st, "Timeline", "Past · Today · Future")
+        timeline_tabs = st.tabs(list(TIMELINE_TABS))
+        for index, tab in enumerate(TIMELINE_TABS):
+            with timeline_tabs[index]:
+                _render_timeline_cards(st, tab)
 
 
-def _communities_html() -> str:
-    def _summary(item: dict[str, str]) -> str:
-        people = escape(item["people"])
-        insights = escape(item["insights"])
-        return f'<small class="muted">{people} people · {insights} insights</small>'
-
-    rows = "".join(
-        f"""
-        <div class="community-row">
-          <div class="row-top">
-            <strong>{escape(item['title'])}</strong>
-            <span class="badge">{escape(item['delta'])}</span>
-          </div>
-          {_summary(item)}
-        </div>
-        """
-        for item in COMMUNITIES
-    )
-    return f"""
-<section class="command-card glass">
-  {_panel_title("Community Summaries", "Trending clusters")}
-  <div class="list-stack">{rows}</div>
-</section>
-"""
-
-
-def _timeline_html() -> str:
-    tabs = "".join(
-        f'<span class="chip {"active" if tab == "All" else ""}">{tab}</span>'
-        for tab in ("All", "Memories", "Events", "Tasks", "Milestones")
-    )
-    cards = "".join(
-        f"""
-        <div class="timeline-card">
-          <div class="timeline-body">
-            <small class="muted">{escape(item['when'])} · {escape(item['kind'])}</small>
-            <h4 style="margin:.45rem 0 0;">{escape(item['title'])}</h4>
-          </div>
-        </div>
-        """
+def _render_timeline_cards(st: Any, selected: str) -> None:
+    items = [
+        item
         for item in TIMELINE
+        if selected == "All" or item["kind"].casefold() == selected.removesuffix("s").casefold()
+    ]
+    if not items:
+        st.caption("No items in this lane yet.")
+        return
+    cols = st.columns(min(4, len(items)))
+    for index, item in enumerate(items[:4]):
+        with cols[index % len(cols)]:
+            _unsafe(
+                st,
+                f"""
+                <div class="timeline-card">
+                  <small class="muted">{escape(item["when"])} · {escape(item["kind"])}</small>
+                  <h4>{escape(item["title"])}</h4>
+                </div>
+                """,
+            )
+
+
+def _panel_title(st: Any, title: str, subtitle: str) -> None:
+    _unsafe(
+        st,
+        f"""
+        <div class="panel-title">
+          <div><h3>{escape(title)}</h3><p class="muted">{escape(subtitle)}</p></div>
+          <span class="badge">LIVE</span>
+        </div>
+        """,
     )
-    return f"""
-<section class="timeline glass">
-  {_panel_title("Timeline", "Past · Today · Future")}
-  <div class="timeline-tabs">{tabs}</div>
-  <div class="timeline-strip">{cards}</div>
-</section>
-"""
-
-
-def _panel_title(title: str, subtitle: str) -> str:
-    return f"""
-<div class="panel-title">
-  <div>
-    <h3>{escape(title)}</h3>
-    <p class="muted">{escape(subtitle)}</p>
-  </div>
-  <span class="badge">LIVE</span>
-</div>
-"""
-
-
-def _tags_html(tags: object) -> str:
-    if not isinstance(tags, list):
-        return ""
-    return "".join(f'<span class="chip">{escape(str(tag))}</span>' for tag in tags)

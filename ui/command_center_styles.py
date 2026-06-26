@@ -4,6 +4,12 @@
 Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
+
+The renderer (``ui/command_center.py``) builds the layout from native Streamlit
+columns/containers, so this stylesheet themes two things: the keyed card
+containers (``.st-key-cc_*``) and the native widgets (buttons, tabs, inputs,
+metrics) that live inside them. Theme variables are attached to a global scope
+so they cascade onto native widgets, not just the hand-written HTML fragments.
 """
 
 from __future__ import annotations
@@ -14,40 +20,37 @@ def command_center_css(theme: str) -> str:
     safe_theme = "light" if theme == "light" else "dark"
     return f"""
 <style>
-:root {{
-  --radius-xl: 28px;
-  --radius-lg: 22px;
-  --radius-md: 16px;
-  --radius-sm: 12px;
+:root, [data-testid="stAppViewContainer"] {{
+  --radius-xl: 26px;
+  --radius-lg: 20px;
+  --radius-md: 15px;
+  --radius-sm: 11px;
   --ease: cubic-bezier(.2,.8,.2,1);
-}}
-
-.mira-shell[data-theme="{safe_theme}"] {{
-  --bg: {'#eef3fb' if safe_theme == 'light' else '#050812'};
-  --bg-2: {'#f8fbff' if safe_theme == 'light' else '#09111f'};
-  --panel: {'rgba(255,255,255,.78)' if safe_theme == 'light' else 'rgba(13, 22, 38, .78)'};
-  --panel-strong: {'rgba(255,255,255,.94)' if safe_theme == 'light' else 'rgba(18, 30, 52, .94)'};
-  --panel-soft: {'rgba(239,246,255,.84)' if safe_theme == 'light' else 'rgba(10, 18, 32, .62)'};
-  --text: {'#111827' if safe_theme == 'light' else '#ecf7ff'};
-  --muted: {'#5e6b82' if safe_theme == 'light' else '#8fa3bf'};
-  --faint: {'#8290a8' if safe_theme == 'light' else '#61748f'};
-  --border: {'rgba(98, 119, 154, .20)' if safe_theme == 'light' else 'rgba(139, 226, 255, .14)'};
-  --border-strong: {'rgba(60, 95, 190, .24)' if safe_theme == 'light' else 'rgba(101, 229, 255, .28)'};
-  --shadow: {'0 22px 70px rgba(46, 76, 140, .18)' if safe_theme == 'light' else '0 22px 90px rgba(0, 0, 0, .42)'};
-  --glow: {'0 0 36px rgba(92, 116, 255, .18)' if safe_theme == 'light' else '0 0 44px rgba(39, 226, 255, .18)'};
+  --bg: {"#eef3fb" if safe_theme == "light" else "#050812"};
+  --bg-2: {"#f8fbff" if safe_theme == "light" else "#09111f"};
+  --panel: {"rgba(255,255,255,.78)" if safe_theme == "light" else "rgba(13, 22, 38, .80)"};
+  --panel-strong: {"rgba(255,255,255,.94)" if safe_theme == "light" else "rgba(18, 30, 52, .94)"};
+  --panel-soft: {"rgba(239,246,255,.84)" if safe_theme == "light" else "rgba(10, 18, 32, .60)"};
+  --text: {"#111827" if safe_theme == "light" else "#ecf7ff"};
+  --muted: {"#5e6b82" if safe_theme == "light" else "#8fa3bf"};
+  --faint: {"#8290a8" if safe_theme == "light" else "#61748f"};
+  --border: {"rgba(98, 119, 154, .20)" if safe_theme == "light" else "rgba(139, 226, 255, .14)"};
+  --border-strong: {"rgba(60, 95, 190, .24)" if safe_theme == "light" else "rgba(101, 229, 255, .28)"};
+  --shadow: {"0 22px 70px rgba(46, 76, 140, .18)" if safe_theme == "light" else "0 22px 90px rgba(0, 0, 0, .42)"};
+  --glow: {"0 0 36px rgba(92, 116, 255, .18)" if safe_theme == "light" else "0 0 44px rgba(39, 226, 255, .18)"};
   --accent: #23d5ff;
   --accent-2: #8b5cf6;
   --accent-3: #21e6a8;
   --warning: #fbbf24;
   --danger: #fb7185;
-  --success: #22c55e;
-  color: var(--text);
 }}
 
 html, body, [data-testid="stAppViewContainer"] {{
+  color: var(--text) !important;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at top left, {'rgba(82, 111, 255, .18)' if safe_theme == 'light' else 'rgba(16, 185, 255, .16)'}, transparent 32rem),
-    radial-gradient(circle at 82% 8%, {'rgba(139, 92, 246, .14)' if safe_theme == 'light' else 'rgba(139, 92, 246, .16)'}, transparent 28rem),
+    radial-gradient(circle at top left, {"rgba(82, 111, 255, .18)" if safe_theme == "light" else "rgba(16, 185, 255, .16)"}, transparent 32rem),
+    radial-gradient(circle at 82% 8%, rgba(139, 92, 246, .15), transparent 28rem),
     linear-gradient(135deg, var(--bg), var(--bg-2)) !important;
 }}
 
@@ -57,28 +60,28 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 .block-container {{
   max-width: 100% !important;
-  padding: 1.2rem 1.4rem 1.6rem !important;
+  padding: 1.1rem 1.4rem 1.6rem !important;
 }}
 
-.mira-shell * {{
-  box-sizing: border-box;
+/* The dark-mode toggle sits flush in the top-right corner. */
+.st-key-mira_theme_toggle {{
+  position: absolute;
+  top: .2rem;
+  right: .6rem;
+  z-index: 5;
 }}
 
-.mira-shell {{
+/* ---- Card containers (keyed st.container -> .st-key-cc_*) ---------------- */
+
+.st-key-cc_sidebar,
+.st-key-cc_topbar,
+.st-key-cc_chat,
+.st-key-cc_brief,
+[class*="st-key-cc_panel"],
+.st-key-cc_timeline {{
   position: relative;
-  min-height: 100vh;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-}}
-
-.mira-grid {{
-  display: grid;
-  grid-template-columns: 280px minmax(420px, 1.25fr) minmax(330px, .85fr);
-  grid-template-rows: auto minmax(640px, auto) auto;
-  gap: 18px;
-  align-items: stretch;
-}}
-
-.glass {{
+  border-radius: var(--radius-xl);
+  padding: 20px;
   background:
     linear-gradient(145deg, rgba(255,255,255,.09), rgba(255,255,255,.02)),
     var(--panel);
@@ -88,37 +91,43 @@ html, body, [data-testid="stAppViewContainer"] {{
   -webkit-backdrop-filter: blur(22px);
 }}
 
-.sidebar {{
-  grid-row: 1 / span 3;
-  min-height: calc(100vh - 2.8rem);
-  border-radius: var(--radius-xl);
-  padding: 22px;
-  position: sticky;
-  top: 1.2rem;
-  overflow: hidden;
+.st-key-cc_sidebar {{
+  min-height: calc(100vh - 2.6rem);
 }}
 
-.sidebar::before, .command-card::before, .memory-graph::before {{
-  content: "";
-  position: absolute;
-  inset: -2px;
-  pointer-events: none;
-  background: radial-gradient(circle at 20% 0%, rgba(35, 213, 255, .22), transparent 28rem);
-  opacity: .75;
+.st-key-cc_topbar {{
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
 }}
+
+[class*="st-key-cc_panel"] {{
+  min-height: 460px;
+}}
+
+.st-key-cc_brief {{
+  margin: 12px 0;
+  background: linear-gradient(135deg, rgba(35, 213, 255, .10), rgba(139, 92, 246, .08));
+  border: 1px solid var(--border-strong);
+}}
+
+.st-key-cc_timeline {{
+  margin-top: 16px;
+}}
+
+/* ---- Branding & sidebar ------------------------------------------------- */
 
 .brand {{
-  position: relative;
   display: flex;
   gap: 13px;
   align-items: center;
-  margin-bottom: 28px;
+  margin-bottom: 18px;
 }}
 
 .logo-mark {{
-  width: 48px;
-  height: 48px;
-  border-radius: 17px;
+  width: 46px;
+  height: 46px;
+  border-radius: 16px;
   display: grid;
   place-items: center;
   font-weight: 900;
@@ -128,67 +137,13 @@ html, body, [data-testid="stAppViewContainer"] {{
   box-shadow: 0 0 30px rgba(35, 213, 255, .34);
 }}
 
-.brand h1, .panel-title h3, .chat-title h2 {{
-  margin: 0;
-  letter-spacing: -.04em;
-}}
-
-.brand h1 {{
-  font-size: 1.55rem;
-}}
-
-.brand p, .muted {{
-  margin: 0;
-  color: var(--muted);
-  font-size: .82rem;
-}}
-
-.nav-stack {{
-  position: relative;
-  display: grid;
-  gap: 8px;
-}}
-
-.nav-item {{
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px 14px;
-  border-radius: 16px;
-  color: var(--muted);
-  border: 1px solid transparent;
-  transition: transform .2s var(--ease), border .2s var(--ease), background .2s var(--ease);
-}}
-
-.nav-item.active, .nav-item:hover {{
-  color: var(--text);
-  transform: translateX(2px);
-  border-color: var(--border-strong);
-  background: linear-gradient(135deg, rgba(35, 213, 255, .13), rgba(139, 92, 246, .12));
-}}
-
-.nav-icon {{
-  width: 30px;
-  height: 30px;
-  display: grid;
-  place-items: center;
-  border-radius: 11px;
-  background: var(--panel-soft);
-  color: var(--accent);
-}}
-
-.sidebar-bottom {{
-  position: absolute;
-  left: 22px;
-  right: 22px;
-  bottom: 22px;
-  display: grid;
-  gap: 12px;
-}}
+.brand h1 {{ margin: 0; font-size: 1.45rem; letter-spacing: -.04em; }}
+.brand p, .muted {{ margin: 0; color: var(--muted); font-size: .82rem; }}
 
 .status-card {{
-  border-radius: 20px;
-  padding: 15px;
+  border-radius: 18px;
+  padding: 14px;
+  margin: 14px 0 10px;
   background: var(--panel-soft);
   border: 1px solid var(--border);
 }}
@@ -197,7 +152,7 @@ html, body, [data-testid="stAppViewContainer"] {{
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: .75rem;
+  font-size: .74rem;
   font-weight: 800;
   color: var(--accent-3);
   letter-spacing: .08em;
@@ -211,117 +166,163 @@ html, body, [data-testid="stAppViewContainer"] {{
   box-shadow: 0 0 18px var(--accent-3);
 }}
 
-.primary-btn {{
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  border-radius: 16px;
-  padding: 13px 16px;
-  color: #04111f;
-  font-weight: 850;
-  background: linear-gradient(135deg, var(--accent), var(--accent-3));
-  box-shadow: 0 16px 38px rgba(35, 213, 255, .25);
-}}
+/* ---- Native buttons ----------------------------------------------------- */
 
-.topbar {{
-  grid-column: 2 / span 2;
-  border-radius: var(--radius-xl);
-  padding: 16px 18px;
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: center;
-}}
-
-.toolbar-left, .toolbar-right, .profile-chip, .model-chip {{
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-wrap: wrap;
-}}
-
-.chip, .model-chip, .search-box, .profile-chip, .icon-btn, .badge {{
+.stButton > button {{
+  width: 100%;
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 650;
+  color: var(--text);
   border: 1px solid var(--border);
   background: var(--panel-soft);
-  border-radius: 999px;
+  transition: transform .18s var(--ease), border-color .18s var(--ease), background .18s var(--ease);
 }}
 
-.model-chip, .search-box, .profile-chip {{
-  padding: 10px 13px;
+.stButton > button:hover {{
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
+  color: var(--text);
 }}
 
-.model-chip {{
-  color: var(--accent);
-  font-weight: 850;
-  letter-spacing: .04em;
-}}
-
-.search-box {{
-  min-width: 250px;
+/* Sidebar nav buttons read as a left-aligned nav stack. */
+[class*="st-key-nav_"] .stButton > button {{
+  justify-content: flex-start;
+  text-align: left;
   color: var(--muted);
 }}
 
-.icon-btn {{
-  width: 42px;
-  height: 42px;
-  display: grid;
-  place-items: center;
+/* Accent call-to-action buttons. */
+.st-key-optimize_memory .stButton > button,
+.st-key-send_message .stButton > button {{
+  color: #04111f;
+  font-weight: 850;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-3));
+  box-shadow: 0 14px 34px rgba(35, 213, 255, .24);
+}}
+
+[class*="st-key-action_"] .stButton > button {{
+  border-radius: 999px;
+  font-size: .82rem;
+  color: var(--muted);
+}}
+
+/* ---- Native tabs -------------------------------------------------------- */
+
+.stTabs [data-baseweb="tab-list"] {{
+  gap: 6px;
+  border-bottom: 1px solid var(--border);
+}}
+
+.stTabs [data-baseweb="tab"] {{
+  border-radius: 12px 12px 0 0;
+  padding: 6px 12px;
+  color: var(--muted);
+  font-weight: 600;
+}}
+
+.stTabs [aria-selected="true"] {{
+  color: var(--text);
+  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
+}}
+
+.stTabs [data-baseweb="tab-highlight"] {{ background: var(--accent); }}
+
+/* ---- Native inputs, metrics, progress, captions ------------------------- */
+
+.stTextInput input {{
+  border-radius: 14px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--panel-soft) !important;
+  color: var(--text) !important;
+}}
+
+.stTextInput input::placeholder {{ color: var(--faint) !important; }}
+
+[data-testid="stMetric"] {{
+  border-radius: 15px;
+  padding: 12px 14px;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+}}
+
+[data-testid="stMetricLabel"] p {{ color: var(--faint) !important; font-size: .76rem; }}
+[data-testid="stMetricValue"] {{ color: var(--text) !important; font-size: 1.3rem; }}
+
+.stProgress > div > div > div {{
+  background: linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
+}}
+
+[data-testid="stCaptionContainer"], .stCaption {{ color: var(--muted) !important; }}
+
+.stToggle label, .stToggle p {{ color: var(--muted) !important; }}
+
+h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
+
+/* ---- Hand-written inner fragments --------------------------------------- */
+
+.panel-title, .chat-title, .brief-head {{
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: start;
+  margin-bottom: 12px;
+}}
+
+.panel-title h3, .brief-head h3 {{ margin: 0; font-size: 1.02rem; letter-spacing: -.03em; }}
+.chat-title h2 {{ margin: 0; font-size: 1.7rem; letter-spacing: -.04em; }}
+
+.badge {{
+  color: var(--accent);
+  font-size: .7rem;
+  font-weight: 850;
+  padding: 5px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  letter-spacing: .07em;
+}}
+
+.top-pill {{
+  display: inline-flex;
+  align-items: center;
+  height: 100%;
+  padding: 8px 14px;
+  border-radius: 999px;
+  color: var(--accent);
+  font-weight: 800;
+  letter-spacing: .04em;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}}
+
+.profile-row {{
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: flex-end;
+  height: 100%;
 }}
 
 .avatar {{
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   display: grid;
   place-items: center;
   border-radius: 50%;
   color: white;
   background: linear-gradient(135deg, var(--accent-2), var(--accent));
-  font-size: .78rem;
+  font-size: .76rem;
   font-weight: 900;
 }}
 
-.command-card {{
-  position: relative;
-  overflow: hidden;
-  border-radius: var(--radius-xl);
-  padding: 22px;
-}}
-
-.chat-panel {{
-  grid-column: 2;
-  min-height: 660px;
-}}
-
-.chat-title {{
-  position: relative;
-  display: flex;
-  justify-content: space-between;
-  align-items: start;
-  margin-bottom: 18px;
-}}
-
-.chat-title h2 {{
-  font-size: 2rem;
-}}
-
-.badge {{
-  color: var(--accent);
-  font-size: .72rem;
-  font-weight: 850;
-  padding: 5px 9px;
-  letter-spacing: .08em;
-}}
-
-.chat-stream {{
-  position: relative;
-  display: grid;
-  gap: 14px;
-}}
-
 .bubble {{
-  border-radius: 22px;
-  padding: 14px 16px;
-  max-width: 82%;
+  border-radius: 20px;
+  padding: 13px 15px;
+  margin: 8px 0;
+  max-width: 88%;
   line-height: 1.55;
   border: 1px solid var(--border);
 }}
@@ -331,109 +332,47 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: linear-gradient(135deg, rgba(35, 213, 255, .18), rgba(139, 92, 246, .18));
 }}
 
-.bubble.assistant {{
-  background: var(--panel-soft);
-}}
+.bubble.assistant {{ background: var(--panel-soft); }}
 
-.brief-card {{
-  margin: 14px 0 8px;
-  border-radius: 24px;
-  padding: 18px;
-  background: linear-gradient(135deg, rgba(35, 213, 255, .10), rgba(139, 92, 246, .08));
-  border: 1px solid var(--border-strong);
-}}
-
-.brief-grid, .metric-grid {{
+.metric-grid {{
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }}
 
-.brief-item, .metric-tile {{
-  padding: 12px;
-  border-radius: 16px;
-  background: rgba(255,255,255,.045);
+.metric-tile {{
+  padding: 11px;
+  border-radius: 15px;
+  background: rgba(127, 145, 172, .08);
   border: 1px solid var(--border);
 }}
 
-.brief-item small, .metric-tile small {{
-  display: block;
-  color: var(--faint);
-  margin-bottom: 4px;
-}}
-
-.brief-item strong, .metric-tile strong {{
-  font-size: .92rem;
-}}
+.metric-tile small {{ display: block; color: var(--faint); margin-bottom: 4px; font-size: .74rem; }}
+.metric-tile strong {{ font-size: .92rem; }}
 
 .chip-row {{
   display: flex;
   flex-wrap: wrap;
-  gap: 9px;
-  margin-top: 14px;
+  gap: 8px;
+  margin-top: 10px;
 }}
 
 .chip {{
   display: inline-flex;
-  color: var(--muted);
-  padding: 8px 11px;
-  font-size: .8rem;
-}}
-
-.composer {{
-  margin-top: 18px;
-  border-radius: 22px;
-  padding: 12px;
-  display: flex;
-  gap: 10px;
   align-items: center;
-  background: var(--panel-soft);
-  border: 1px solid var(--border-strong);
-}}
-
-.composer-input {{
-  flex: 1;
   color: var(--muted);
-}}
-
-.send-btn {{
-  width: 44px;
-  height: 44px;
-  display: grid;
-  place-items: center;
-  border-radius: 15px;
-  color: #04111f;
-  background: linear-gradient(135deg, var(--accent), var(--accent-3));
-  font-weight: 900;
-}}
-
-.right-stack {{
-  grid-column: 3;
-  display: grid;
-  gap: 18px;
-}}
-
-.panel-title {{
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: start;
-  margin-bottom: 14px;
-}}
-
-.panel-title h3 {{
-  font-size: 1.04rem;
-}}
-
-.memory-graph {{
-  position: relative;
-  overflow: hidden;
+  padding: 7px 11px;
+  font-size: .78rem;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
 }}
 
 .graph-stage {{
-  height: 220px;
+  height: 210px;
   position: relative;
-  border-radius: 22px;
+  border-radius: 20px;
+  margin-bottom: 12px;
   background:
     radial-gradient(circle at 50% 50%, rgba(35, 213, 255, .18), transparent 8rem),
     linear-gradient(135deg, rgba(255,255,255,.035), transparent);
@@ -450,13 +389,14 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: var(--panel-strong);
   color: var(--text);
   font-weight: 850;
+  font-size: .82rem;
 }}
 
-.node.main {{ width: 82px; height: 82px; left: calc(50% - 41px); top: 66px; }}
-.node.n1 {{ width: 52px; height: 52px; left: 28px; top: 34px; color: var(--accent); }}
-.node.n2 {{ width: 48px; height: 48px; right: 34px; top: 36px; color: var(--accent-2); }}
-.node.n3 {{ width: 46px; height: 46px; left: 58px; bottom: 30px; color: var(--accent-3); }}
-.node.n4 {{ width: 56px; height: 56px; right: 50px; bottom: 22px; color: var(--warning); }}
+.node.main {{ width: 78px; height: 78px; left: calc(50% - 39px); top: 64px; }}
+.node.n1 {{ width: 50px; height: 50px; left: 26px; top: 32px; color: var(--accent); }}
+.node.n2 {{ width: 46px; height: 46px; right: 32px; top: 34px; color: var(--accent-2); }}
+.node.n3 {{ width: 44px; height: 44px; left: 56px; bottom: 28px; color: var(--accent-3); }}
+.node.n4 {{ width: 54px; height: 54px; right: 48px; bottom: 20px; color: var(--warning); }}
 
 .edge {{
   position: absolute;
@@ -465,22 +405,22 @@ html, body, [data-testid="stAppViewContainer"] {{
   opacity: .55;
   transform-origin: left center;
 }}
-.edge.e1 {{ width: 145px; left: 76px; top: 76px; transform: rotate(22deg); }}
-.edge.e2 {{ width: 132px; right: 78px; top: 82px; transform: rotate(-20deg); }}
-.edge.e3 {{ width: 120px; left: 94px; bottom: 72px; transform: rotate(-18deg); }}
-.edge.e4 {{ width: 122px; right: 96px; bottom: 72px; transform: rotate(19deg); }}
-
-.list-stack {{
-  display: grid;
-  gap: 10px;
-}}
+.edge.e1 {{ width: 145px; left: 76px; top: 74px; transform: rotate(22deg); }}
+.edge.e2 {{ width: 132px; right: 78px; top: 80px; transform: rotate(-20deg); }}
+.edge.e3 {{ width: 120px; left: 94px; bottom: 70px; transform: rotate(-18deg); }}
+.edge.e4 {{ width: 122px; right: 96px; bottom: 70px; transform: rotate(19deg); }}
 
 .memory-row, .evidence-row, .reflection-card, .community-row, .timeline-card {{
-  border-radius: 17px;
+  border-radius: 15px;
   padding: 12px;
+  margin: 8px 0;
   background: var(--panel-soft);
   border: 1px solid var(--border);
 }}
+
+.memory-row strong, .evidence-row strong, .community-row strong {{ font-size: .92rem; }}
+.reflection-card p {{ margin: .35rem 0 .5rem; font-size: .9rem; line-height: 1.5; }}
+.evidence-row .muted, .community-row .muted, .memory-row .muted {{ font-size: .78rem; }}
 
 .row-top {{
   display: flex;
@@ -489,109 +429,12 @@ html, body, [data-testid="stAppViewContainer"] {{
   align-items: center;
 }}
 
-.priority-high {{ color: var(--danger); }}
-.priority-medium {{ color: var(--warning); }}
-.priority-low {{ color: var(--accent-3); }}
-
-.progress-track {{
-  height: 9px;
-  overflow: hidden;
-  border-radius: 999px;
-  background: rgba(127, 145, 172, .18);
-  margin: 12px 0 14px;
-}}
-
-.progress-bar {{
-  height: 100%;
-  width: 72%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 20px rgba(35, 213, 255, .26);
-}}
-
-.timeline {{
-  grid-column: 2 / span 2;
-  border-radius: var(--radius-xl);
-  padding: 18px;
-}}
-
-.timeline-tabs {{
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 14px;
-}}
-
-.timeline-strip {{
-  display: grid;
-  grid-template-columns: repeat(6, minmax(160px, 1fr));
-  gap: 12px;
-  overflow-x: auto;
-  padding-bottom: 4px;
-}}
-
-.timeline-card {{
-  min-height: 112px;
-  position: relative;
-}}
-
-.timeline-card::before {{
-  content: "";
-  position: absolute;
-  left: 14px;
-  top: 14px;
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--accent);
-  box-shadow: 0 0 18px var(--accent);
-}}
-
-.timeline-card .timeline-body {{
-  padding-left: 20px;
-}}
+.timeline-card {{ min-height: 96px; }}
+.timeline-card h4 {{ margin: .4rem 0 0; font-size: .94rem; }}
 
 @media (max-width: 1180px) {{
-  .mira-grid {{
-    grid-template-columns: 250px 1fr;
-  }}
-  .topbar, .timeline {{
-    grid-column: 2;
-  }}
-  .right-stack {{
-    grid-column: 2;
-  }}
-}}
-
-@media (max-width: 820px) {{
-  .mira-grid {{
-    display: block;
-  }}
-  .sidebar {{
-    position: relative;
-    top: 0;
-    min-height: auto;
-    margin-bottom: 16px;
-  }}
-  .sidebar-bottom {{
-    position: relative;
-    left: auto;
-    right: auto;
-    bottom: auto;
-    margin-top: 20px;
-  }}
-  .topbar, .chat-panel, .right-stack, .timeline {{
-    margin-bottom: 16px;
-  }}
-  .search-box {{
-    min-width: 100%;
-  }}
-  .brief-grid, .metric-grid {{
-    grid-template-columns: 1fr;
-  }}
-  .timeline-strip {{
-    grid-template-columns: repeat(6, 220px);
-  }}
+  [class*="st-key-cc_panel"] {{ min-height: auto; }}
+  .st-key-cc_sidebar {{ min-height: auto; }}
 }}
 </style>
 """
