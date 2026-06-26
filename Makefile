@@ -1,4 +1,4 @@
-.PHONY: help install run slack test test-slack lint format type security check fix precommit clean
+.PHONY: help install run slack test test-slack lint format type security check fix precommit clean ablation
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts
@@ -19,6 +19,7 @@ help:
 		'  check      Run lint, type, security, and tests' \
 		'  fix        Apply Ruff fixes and formatting' \
 		'  precommit  Run all pre-commit hooks' \
+		'  ablation   Run the ablation study and write results' \
 		'  clean      Remove generated caches and reports'
 
 install:
@@ -58,6 +59,9 @@ fix:
 
 precommit:
 	$(PYTHON) -m pre_commit run --all-files
+
+ablation:
+	$(PYTHON) -m scripts.run_ablation --stub --out evaluation/results
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov

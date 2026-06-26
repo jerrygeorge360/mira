@@ -24,3 +24,7 @@ build/
 .vscode/
 .DS_Store
 *.pdf
+
+# Generated ablation/evaluation outputs
+evaluation/results/
+*.results.json
