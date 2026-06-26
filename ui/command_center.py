@@ -44,10 +44,22 @@ TABS = (
 def render_command_center(st: Any) -> None:
     """Render the Claude-style, single-column Memory Command Center UI."""
     _init_state(st)
-    theme = _theme_control(st)
-    st.markdown(command_center_css(theme), unsafe_allow_html=True)
 
-    _render_header(st)
+    brand, control = st.columns([0.74, 0.26], vertical_alignment="center")
+    with brand:
+        _unsafe(
+            st,
+            """
+            <div class="brand">
+              <span class="spark">✻</span>
+              <span class="wordmark">MIRA</span>
+              <span class="muted">Memory Command Center</span>
+            </div>
+            """,
+        )
+    with control:
+        theme = _theme_control(st)
+    st.markdown(command_center_css(theme), unsafe_allow_html=True)
 
     tabs = st.tabs(list(TABS))
     with tabs[0]:
@@ -85,22 +97,6 @@ def _theme_control(st: Any) -> str:
     return str(state["mira_theme"])
 
 
-def _render_header(st: Any) -> None:
-    _unsafe(
-        st,
-        """
-        <div class="cc-header">
-          <div class="brand">
-            <span class="spark">✻</span>
-            <span class="wordmark">MIRA</span>
-            <span class="muted">· Memory</span>
-          </div>
-          <span class="status-online"><span class="pulse"></span>Online</span>
-        </div>
-        """,
-    )
-
-
 def _section_title(st: Any, title: str, subtitle: str) -> None:
     _unsafe(
         st,
@@ -130,9 +126,15 @@ def _render_chat(st: Any) -> None:
         _render_message(st, message["role"], message["content"])
     _render_brief(st)
 
-    st.write("")
+    _unsafe(st, '<p class="suggest-label">Suggested follow-ups</p>')
+    chip_cols = st.columns(len(ACTION_CHIPS))
+    for index, chip in enumerate(ACTION_CHIPS):
+        with chip_cols[index]:
+            if st.button(chip, key=f"action_{chip}", use_container_width=True):
+                st.session_state["mira_last_action"] = chip
+
     with st.container(key="cc_composer"):
-        field, send = st.columns([0.9, 0.1], gap="small")
+        field, send = st.columns([0.9, 0.1], gap="small", vertical_alignment="center")
         with field:
             st.text_input(
                 "Message",
@@ -141,14 +143,8 @@ def _render_chat(st: Any) -> None:
                 key="mira_chat_input",
             )
         with send:
-            if st.button("↑", key="send_message", use_container_width=True):
+            if st.button("↑", key="send_message"):
                 st.session_state["mira_last_action"] = "Message sent"
-
-    chip_cols = st.columns(len(ACTION_CHIPS))
-    for index, chip in enumerate(ACTION_CHIPS):
-        with chip_cols[index]:
-            if st.button(chip, key=f"action_{chip}", use_container_width=True):
-                st.session_state["mira_last_action"] = chip
     st.caption(f"Last action · {st.session_state['mira_last_action']}")
 
 

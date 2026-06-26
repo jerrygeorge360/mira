@@ -48,44 +48,16 @@ html, body, [data-testid="stAppViewContainer"] {{
   padding: 1rem 1.25rem 3rem !important;
 }}
 
-/* Dark-mode toggle pinned top-right. */
-.st-key-mira_theme_toggle {{
-  position: absolute;
-  top: .3rem;
-  right: .6rem;
-  z-index: 6;
-}}
+/* Theme toggle sits at the right end of the header row. */
+.st-key-mira_theme_toggle {{ display: flex; justify-content: flex-end; }}
 
 /* ---- Header ------------------------------------------------------------- */
 
-.cc-header {{
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  margin: .1rem 0 1.4rem;
-}}
-
-.brand {{ display: flex; gap: 9px; align-items: baseline; }}
+.brand {{ display: flex; gap: 9px; align-items: baseline; padding: .2rem 0 .4rem; }}
 .spark {{ color: var(--accent); font-size: 1.05rem; line-height: 1; }}
 .spark-lg {{ color: var(--accent); font-size: 1.6rem; line-height: 1; }}
 .wordmark {{ font-weight: 700; font-size: 1.2rem; letter-spacing: -.01em; }}
 .muted {{ margin: 0; color: var(--muted); font-size: .85rem; }}
-
-.status-online {{
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: .76rem;
-  color: var(--muted);
-}}
-.pulse {{
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: #6cbf73;
-  box-shadow: 0 0 10px rgba(108, 191, 115, .6);
-}}
 
 /* ---- Tabs (understated text nav) ---------------------------------------- */
 
@@ -139,12 +111,22 @@ html, body, [data-testid="stAppViewContainer"] {{
   max-width: 92%;
 }}
 
-/* ---- Composer ----------------------------------------------------------- */
+/* ---- Suggested follow-ups + composer ------------------------------------ */
+
+.suggest-label {{
+  margin: 1.6rem 0 .5rem;
+  color: var(--faint);
+  font-size: .76rem;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}}
 
 .st-key-cc_composer {{
+  margin-top: 1rem;
   border: 1px solid var(--border-strong);
-  border-radius: 22px;
-  padding: 6px 6px 6px 8px;
+  border-radius: 26px;
+  padding: 4px 6px 4px 10px;
   background: var(--surface);
   box-shadow: var(--shadow);
 }}
@@ -155,21 +137,27 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: transparent !important;
   color: var(--text) !important;
   font-size: .98rem !important;
-  padding: 10px 8px !important;
+  padding: 11px 8px !important;
 }}
 .st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
 
+/* Round coral send button, centered in its narrow column. */
+.st-key-send_message {{ display: flex; justify-content: center; }}
 .st-key-send_message .stButton > button {{
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
   border-radius: 50%;
-  aspect-ratio: 1;
   padding: 0;
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   font-weight: 700;
+  line-height: 1;
   color: #ffffff;
   border: none;
   background: var(--accent);
 }}
 .st-key-send_message .stButton > button:hover {{
+  color: #ffffff;
   background: var(--accent);
   filter: brightness(1.05);
   transform: none;
