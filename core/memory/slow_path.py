@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import uuid4
 
@@ -23,11 +23,24 @@ from core.db.repositories import (
 )
 from core.memory.atomic_fact import extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
+from core.memory.community import (
+    detect_graph_communities,
+    store_community_summary,
+    summarize_community,
+)
+from core.memory.foresight import create_foresight, detect_foresight
 from core.memory.graph import (
     create_graph_edge,
     create_graph_node,
     extract_entities,
     link_entity_mention,
+)
+from core.memory.reflection import (
+    find_reflections_derived_from,
+    invalidate_reflection_if_unsupported,
+    should_reflect,
+    store_reflection_with_evidence,
+    synthesize_reflections,
 )
 from core.memory.tiers import evaluate_promotion_candidate, promote_to_hot_memory
 from core.observability import log_event
@@ -50,6 +63,9 @@ CREATED_RECORD_BUCKETS = (
     "graph_nodes",
     "graph_edges",
     "working_memory",
+    "foresight_records",
+    "reflections",
+    "community_summaries",
 )
 DURABLE_SCOPES = frozenset({"project", "cross_session"})
 
@@ -86,6 +102,25 @@ class SlowPathStepResult:
     created_record_ids: list[str]
     failed_observation_ids: list[str]
     error_message: str | None
+    updated_record_ids: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class SlowPathSemanticConfig:
+    """Cost/safety knobs for semantic slow-path memory steps."""
+
+    enable_foresight: bool = True
+    enable_reflection: bool = True
+    enable_reflection_invalidation: bool = True
+    enable_community_summaries: bool = True
+    reflection_min_importance: float = 0.6
+    reflection_min_observations: int = 5
+    reflection_cooldown_observations: int = 10
+    community_refresh_every_observations: int = 50
+    community_refresh_every_minutes: int = 30
+    max_foresight_records_per_observation: int = 3
+    max_reflections_per_run: int = 3
+    max_community_summaries_per_run: int = 5
 
 
 class SlowPathStep(Protocol):
@@ -211,7 +246,10 @@ async def run_slow_path(batch_size: int = 20) -> None:
 # --- Automatic slow-path orchestrator chain (ISSUE-121) ---------------------
 
 
-def run_slow_path_for_observation(observation_id: str) -> OrchestratorResult:
+def run_slow_path_for_observation(
+    observation_id: str,
+    config: SlowPathSemanticConfig | None = None,
+) -> OrchestratorResult:
     """Chain the implemented slow-path memory steps for one observation.
 
     Confirms session items, promotes durable candidates, extracts atomic facts,
@@ -233,6 +271,7 @@ def run_slow_path_for_observation(observation_id: str) -> OrchestratorResult:
     session_id = observation.get("session_id")
     session_id = str(session_id) if isinstance(session_id, str) else None
     context: dict[str, list[str]] = {"fact_ids": []}
+    semantic_config = config or SlowPathSemanticConfig()
 
     steps: tuple[tuple[str, Callable[[], dict[str, list[str]]]], ...] = (
         ("session_confirmation", lambda: _step_session_confirmation(observation_id, session_id)),
@@ -240,7 +279,12 @@ def run_slow_path_for_observation(observation_id: str) -> OrchestratorResult:
         ("atomic_fact_extraction", lambda: _step_atomic_facts(observation_id, content, context)),
         ("graph_update", lambda: _step_entities(observation_id, content)),
         ("contradiction_supersession", lambda: _step_changes(context)),
+        (
+            "reflection_invalidation",
+            lambda: _step_reflection_invalidation(observation_id, semantic_config),
+        ),
         ("tier_update", lambda: _step_tiers(context)),
+        ("foresight_detection", lambda: _step_foresight(observation_id, content, semantic_config)),
     )
     for step_name, step in steps:
         try:
@@ -260,7 +304,10 @@ def run_slow_path_for_observation(observation_id: str) -> OrchestratorResult:
     return result
 
 
-def run_slow_path_batch(batch_size: int) -> list[OrchestratorResult]:
+def run_slow_path_batch(
+    batch_size: int,
+    config: SlowPathSemanticConfig | None = None,
+) -> list[OrchestratorResult]:
     """Claim pending queue items and orchestrate each through the chain."""
     if batch_size < 1:
         raise ValueError("batch_size must be a positive integer")
@@ -269,7 +316,7 @@ def run_slow_path_batch(batch_size: int) -> list[OrchestratorResult]:
     for record in queue_records:
         observation_id = str(record["observation_id"])
         queue_id = str(record["id"])
-        result = run_slow_path_for_observation(observation_id)
+        result = run_slow_path_for_observation(observation_id, config=config)
         if result["succeeded"]:
             mark_done(queue_id)
         else:
@@ -293,6 +340,7 @@ def run_worker(
     once: bool = False,
     max_iterations: int | None = None,
     worker_id: str = "slow-path-worker",
+    semantic_config: SlowPathSemanticConfig | None = None,
 ) -> dict[str, int]:
     """Drain the slow-path queue continuously via the orchestrator-backed batch.
 
@@ -306,6 +354,7 @@ def run_worker(
     if poll_interval_s < 0:
         raise ValueError("poll_interval_s must not be negative")
 
+    config = semantic_config or SlowPathSemanticConfig()
     log_event(
         "worker_started",
         "slow-path worker started",
@@ -321,7 +370,7 @@ def run_worker(
             iterations += 1
             batch_id = uuid4().hex
             started = time.monotonic()
-            results = run_slow_path_batch(batch_size)
+            results = run_slow_path_batch(batch_size, config=config)
             duration_ms = int((time.monotonic() - started) * 1000)
 
             if not results:
@@ -381,6 +430,24 @@ def run_worker(
                 failed=batch_failed,
                 duration_ms=duration_ms,
             )
+            processed_observation_ids = [
+                str(result["observation_id"]) for result in results if result["succeeded"]
+            ]
+            semantic_results = [
+                *maybe_run_reflection_pass(processed_observation_ids, config),
+                *maybe_run_community_refresh(processed, config),
+            ]
+            for semantic_result in semantic_results:
+                if semantic_result.created_record_ids or semantic_result.updated_record_ids:
+                    log_event(
+                        "semantic_step_completed",
+                        "semantic slow-path step completed",
+                        worker_id=worker_id,
+                        step_name=semantic_result.step_name,
+                        created_record_ids=semantic_result.created_record_ids,
+                        updated_record_ids=semantic_result.updated_record_ids,
+                        succeeded=semantic_result.succeeded,
+                    )
             if once or _reached(max_iterations, iterations):
                 break
     except KeyboardInterrupt:
@@ -510,6 +577,144 @@ def _step_tiers(context: dict[str, list[str]]) -> dict[str, list[str]]:
     return {"working_memory": promoted}
 
 
+def run_foresight_step_for_observation(
+    observation_id: str,
+    config: SlowPathSemanticConfig | None = None,
+) -> SlowPathStepResult:
+    """Run the per-observation foresight step with structured reporting."""
+    semantic_config = config or SlowPathSemanticConfig()
+    observation = _load_observation(observation_id)
+    if observation is None:
+        return _semantic_result(
+            "foresight_detection",
+            succeeded=False,
+            failed_observation_ids=[observation_id],
+            error_message="observation not found",
+        )
+    try:
+        created = _step_foresight(
+            observation_id,
+            str(observation["content"]),
+            semantic_config,
+        ).get("foresight_records", [])
+    except Exception as error:  # noqa: BLE001 - semantic failures should be reported, not hidden
+        return _semantic_result(
+            "foresight_detection",
+            succeeded=False,
+            failed_observation_ids=[observation_id],
+            error_message=str(error) or error.__class__.__name__,
+        )
+    return _semantic_result("foresight_detection", created_record_ids=created)
+
+
+def maybe_run_reflection_pass(
+    observation_ids: list[str],
+    config: SlowPathSemanticConfig | None = None,
+) -> list[SlowPathStepResult]:
+    """Run gated reflection synthesis when enough important evidence has accumulated."""
+    semantic_config = config or SlowPathSemanticConfig()
+    if not semantic_config.enable_reflection:
+        return [_semantic_result("reflection_check")]
+    evidence_ids = _recent_unreflected_observation_ids(observation_ids, semantic_config)
+    importance = {
+        observation_id: _importance_score(str(row["content"]))
+        for observation_id, row in _observations_by_id(evidence_ids).items()
+    }
+    if len(evidence_ids) < semantic_config.reflection_min_observations:
+        return [_semantic_result("reflection_check")]
+    if not _passes_reflection_gate(evidence_ids, importance, semantic_config):
+        return [_semantic_result("reflection_check")]
+
+    created: list[str] = []
+    try:
+        for reflection in synthesize_reflections(evidence_ids)[
+            : semantic_config.max_reflections_per_run
+        ]:
+            content = str(reflection.get("content", "")).strip()
+            evidence = _json_string_list(reflection.get("evidence_ids")) or evidence_ids
+            if not content or _active_reflection_exists(content):
+                continue
+            created.append(store_reflection_with_evidence(reflection, evidence))
+    except Exception as error:  # noqa: BLE001 - reflection failures should not break factual memory
+        return [
+            _semantic_result(
+                "reflection_check",
+                succeeded=False,
+                failed_observation_ids=list(evidence_ids),
+                error_message=str(error) or error.__class__.__name__,
+            )
+        ]
+    return [_semantic_result("reflection_check", created_record_ids=created)]
+
+
+def maybe_run_community_refresh(
+    processed_observations: int,
+    config: SlowPathSemanticConfig | None = None,
+) -> list[SlowPathStepResult]:
+    """Run periodic graph community detection and summary refresh when due."""
+    semantic_config = config or SlowPathSemanticConfig()
+    if not semantic_config.enable_community_summaries:
+        return [_semantic_result("community_update")]
+    if processed_observations < semantic_config.community_refresh_every_observations:
+        return [_semantic_result("community_update")]
+
+    created: list[str] = []
+    try:
+        communities = detect_graph_communities()
+        for community in communities[: semantic_config.max_community_summaries_per_run]:
+            community_id = str(community.get("community_id", ""))
+            if not community_id or _community_summary_exists(community_id):
+                continue
+            member_node_ids = _json_string_list(community.get("member_node_ids"))
+            if not member_node_ids:
+                continue
+            summary = summarize_community(community_id, member_node_ids)
+            created.append(store_community_summary(summary))
+    except Exception as error:  # noqa: BLE001 - community work is periodic and recoverable
+        return [
+            _semantic_result(
+                "community_update",
+                succeeded=False,
+                error_message=str(error) or error.__class__.__name__,
+            )
+        ]
+    return [_semantic_result("community_update", created_record_ids=created)]
+
+
+def _step_foresight(
+    observation_id: str,
+    content: str,
+    config: SlowPathSemanticConfig,
+) -> dict[str, list[str]]:
+    if not config.enable_foresight:
+        return {}
+    ambient_context: dict[str, object] = {"current_time": _now()}
+    created: list[str] = []
+    records = detect_foresight(observation_id, content, ambient_context)
+    for record in records[: config.max_foresight_records_per_observation]:
+        foresight_content = str(record.get("content", "")).strip()
+        if not foresight_content or _foresight_exists(observation_id, foresight_content):
+            continue
+        created.append(create_foresight(record))
+    return {"foresight_records": created}
+
+
+def _step_reflection_invalidation(
+    observation_id: str,
+    config: SlowPathSemanticConfig,
+) -> dict[str, list[str]]:
+    if not config.enable_reflection_invalidation:
+        return {}
+    updated: list[str] = []
+    for reflection_id in find_reflections_derived_from(observation_id):
+        before = _reflection_status(reflection_id)
+        invalidate_reflection_if_unsupported(reflection_id)
+        after = _reflection_status(reflection_id)
+        if after != before:
+            updated.append(reflection_id)
+    return {"reflections": updated}
+
+
 def _new_result(observation_id: str) -> OrchestratorResult:
     return {
         "observation_id": observation_id,
@@ -541,6 +746,7 @@ def _add_step(
                 "step_name": step_name,
                 "succeeded": succeeded,
                 "created_record_ids": list(created),
+                "updated_record_ids": [],
                 "failed_record_ids": [],
                 "error_message": error_message,
             }
@@ -745,6 +951,7 @@ def _result_record(batch: SlowPathBatch, result: SlowPathStepResult) -> WorkerRu
         "step_name": result.step_name,
         "succeeded": result.succeeded,
         "created_record_ids": list(result.created_record_ids),
+        "updated_record_ids": list(result.updated_record_ids),
         "failed_observation_ids": list(result.failed_observation_ids),
         "error_message": result.error_message,
     }
@@ -769,3 +976,134 @@ def _failure_message(run_records: list[WorkerRunRecord]) -> str | None:
             if isinstance(error, str) and error:
                 return error
     return None
+
+
+def _semantic_result(
+    step_name: str,
+    *,
+    succeeded: bool = True,
+    created_record_ids: list[str] | None = None,
+    updated_record_ids: list[str] | None = None,
+    failed_observation_ids: list[str] | None = None,
+    error_message: str | None = None,
+) -> SlowPathStepResult:
+    return SlowPathStepResult(
+        step_name=step_name,
+        succeeded=succeeded,
+        created_record_ids=created_record_ids or [],
+        updated_record_ids=updated_record_ids or [],
+        failed_observation_ids=failed_observation_ids or [],
+        error_message=error_message,
+    )
+
+
+def _foresight_exists(observation_id: str, content: str) -> bool:
+    with repository_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM foresight_records
+            WHERE source_observation_id = ? AND lower(content) = lower(?)
+            LIMIT 1
+            """,
+            (observation_id, content),
+        ).fetchone()
+    return row is not None
+
+
+def _active_reflection_exists(content: str) -> bool:
+    with repository_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM reflections
+            WHERE status = 'active' AND lower(content) = lower(?)
+            LIMIT 1
+            """,
+            (content,),
+        ).fetchone()
+    return row is not None
+
+
+def _community_summary_exists(community_id: str) -> bool:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT 1 FROM community_summaries WHERE community_id = ? LIMIT 1",
+            (community_id,),
+        ).fetchone()
+    return row is not None
+
+
+def _recent_unreflected_observation_ids(
+    observation_ids: list[str],
+    config: SlowPathSemanticConfig,
+) -> list[str]:
+    unique_ids = list(dict.fromkeys(observation_ids))
+    if not unique_ids:
+        return []
+    unreflected: list[str] = []
+    for observation_id in unique_ids:
+        if find_reflections_derived_from(observation_id):
+            continue
+        unreflected.append(observation_id)
+    if not unreflected:
+        return []
+    limit = max(config.reflection_min_observations, config.reflection_cooldown_observations)
+    return unreflected[-limit:]
+
+
+def _observations_by_id(observation_ids: list[str]) -> dict[str, dict[str, object]]:
+    observations: dict[str, dict[str, object]] = {}
+    for observation_id in observation_ids:
+        observation = _load_observation(observation_id)
+        if observation is not None:
+            observations[observation_id] = observation
+    return observations
+
+
+def _passes_reflection_gate(
+    observation_ids: list[str],
+    importance_scores: dict[str, float],
+    config: SlowPathSemanticConfig,
+) -> bool:
+    if not observation_ids:
+        return False
+    important = [
+        observation_id
+        for observation_id in observation_ids
+        if importance_scores.get(observation_id, 0.0) >= config.reflection_min_importance
+    ]
+    if not important:
+        return False
+    # should_reflect (ISSUE-028) provides the count/importance threshold logic;
+    # the gate above only requires at least one sufficiently important observation.
+    return should_reflect(observation_ids, importance_scores)
+
+
+def _importance_score(content: str) -> float:
+    normalized = content.casefold()
+    markers = (
+        "must",
+        "need",
+        "important",
+        "deadline",
+        "official",
+        "benchmark",
+        "correction",
+        "changed",
+        "now",
+        "not ",
+        "remember",
+        "decided",
+    )
+    hits = sum(1 for marker in markers if marker in normalized)
+    return min(1.0, 0.35 + hits * 0.18)
+
+
+def _reflection_status(reflection_id: str) -> str:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM reflections WHERE id = ?",
+            (reflection_id,),
+        ).fetchone()
+    if row is None:
+        return ""
+    return str(row["status"])
