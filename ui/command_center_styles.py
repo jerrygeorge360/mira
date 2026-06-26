@@ -44,38 +44,50 @@ html, body, [data-testid="stAppViewContainer"] {{
 [data-testid="stHeader"], [data-testid="stToolbar"], footer {{ display: none !important; }}
 
 .block-container {{
-  max-width: 760px !important;
-  padding: 1rem 1.25rem 3rem !important;
+  max-width: 880px !important;
+  padding: 2rem 1.5rem 3rem !important;
 }}
 
-/* Theme toggle sits at the right end of the header row. */
-.st-key-mira_theme_toggle {{ display: flex; justify-content: flex-end; }}
+/* ---- Sidebar rail (view navigation) ------------------------------------- */
 
-/* ---- Header ------------------------------------------------------------- */
+[data-testid="stSidebar"] {{
+  background: {"#ebe9e0" if safe_theme == "light" else "#1f1e1d"} !important;
+  border-right: 1px solid var(--border);
+}}
+[data-testid="stSidebar"] > div {{ padding-top: 1.4rem; }}
 
-.brand {{ display: flex; gap: 9px; align-items: baseline; padding: .2rem 0 .4rem; }}
+.brand {{ display: flex; gap: 9px; align-items: baseline; padding: 0 .25rem; }}
 .spark {{ color: var(--accent); font-size: 1.05rem; line-height: 1; }}
 .spark-lg {{ color: var(--accent); font-size: 1.6rem; line-height: 1; }}
-.wordmark {{ font-weight: 700; font-size: 1.2rem; letter-spacing: -.01em; }}
+.wordmark {{ font-weight: 700; font-size: 1.25rem; letter-spacing: -.01em; }}
 .muted {{ margin: 0; color: var(--muted); font-size: .85rem; }}
+.sb-tagline {{ margin: .15rem .25rem 1.2rem; color: var(--faint); font-size: .76rem; }}
+.sb-divider {{ height: 1px; background: var(--border); margin: 1rem .25rem; }}
 
-/* ---- Tabs (understated text nav) ---------------------------------------- */
-
-.stTabs [data-baseweb="tab-list"] {{
-  gap: 2px;
+/* Sidebar nav buttons read as a quiet list; the active one is coral-tinted. */
+[data-testid="stSidebar"] .stButton > button {{
+  justify-content: flex-start;
+  text-align: left;
+  border: none;
   background: transparent;
-  border-bottom: 1px solid var(--border);
-}}
-.stTabs [data-baseweb="tab"] {{
-  padding: 7px 14px;
   color: var(--muted);
   font-weight: 500;
-  font-size: .92rem;
+  border-radius: 10px;
+  padding: 9px 12px;
 }}
-.stTabs [data-baseweb="tab"]:hover {{ color: var(--text); }}
-.stTabs [aria-selected="true"] {{ color: var(--text) !important; }}
-.stTabs [data-baseweb="tab-highlight"] {{ background: var(--accent) !important; height: 2px; }}
-.stTabs [data-baseweb="tab-panel"] {{ padding-top: 1.6rem; }}
+[data-testid="stSidebar"] .stButton > button:hover {{
+  background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"};
+  color: var(--text);
+}}
+[data-testid="stSidebar"] .stButton > button[kind="primary"],
+[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {{
+  background: var(--accent-soft);
+  color: var(--text);
+  font-weight: 600;
+}}
+
+/* Theme toggle sits in the sidebar footer. */
+.st-key-mira_theme_toggle {{ padding: 0 .25rem; }}
 
 /* ---- Chat --------------------------------------------------------------- */
 

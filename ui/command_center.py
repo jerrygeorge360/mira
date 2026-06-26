@@ -30,52 +30,62 @@ from ui.command_center_data import (
 )
 from ui.command_center_styles import command_center_css
 
-TABS = (
-    "Chat",
-    "Graph",
-    "Working Set",
-    "Retrieval",
-    "Reflections",
-    "Communities",
-    "Timeline",
+VIEWS: tuple[tuple[str, str], ...] = (
+    ("Chat", "💬"),
+    ("Graph", "🕸"),
+    ("Working Set", "🧠"),
+    ("Retrieval", "🔍"),
+    ("Reflections", "✨"),
+    ("Communities", "🌐"),
+    ("Timeline", "🗓"),
 )
+
+_RENDERERS = {
+    "Chat": lambda st: _render_chat(st),
+    "Graph": lambda st: _render_memory_graph(st),
+    "Working Set": lambda st: _render_session_working_set(st),
+    "Retrieval": lambda st: _render_retrieval_trace(st),
+    "Reflections": lambda st: _render_reflections(st),
+    "Communities": lambda st: _render_communities(st),
+    "Timeline": lambda st: _render_timeline(st),
+}
 
 
 def render_command_center(st: Any) -> None:
-    """Render the Claude-style, single-column Memory Command Center UI."""
+    """Render the Claude-style UI: a left view rail plus a centered workspace."""
     _init_state(st)
+    theme, active = _render_sidebar(st)
+    st.markdown(command_center_css(theme), unsafe_allow_html=True)
+    _RENDERERS.get(active, _RENDERERS["Chat"])(st)
 
-    brand, control = st.columns([0.74, 0.26], vertical_alignment="center")
-    with brand:
+
+def _render_sidebar(st: Any) -> tuple[str, str]:
+    """Render the view rail; return (theme, active view) for this run."""
+    active = str(st.session_state.get("mira_view", "Chat"))
+    with st.sidebar:
         _unsafe(
             st,
             """
             <div class="brand">
               <span class="spark">✻</span>
               <span class="wordmark">MIRA</span>
-              <span class="muted">Memory Command Center</span>
             </div>
+            <p class="sb-tagline">Memory Command Center</p>
             """,
         )
-    with control:
+        for label, icon in VIEWS:
+            kind = "primary" if label == active else "secondary"
+            if st.button(
+                f"{icon}  {label}",
+                key=f"nav_{label}",
+                use_container_width=True,
+                type=kind,
+            ):
+                active = label
+                st.session_state["mira_view"] = label
+        _unsafe(st, '<div class="sb-divider"></div>')
         theme = _theme_control(st)
-    st.markdown(command_center_css(theme), unsafe_allow_html=True)
-
-    tabs = st.tabs(list(TABS))
-    with tabs[0]:
-        _render_chat(st)
-    with tabs[1]:
-        _render_memory_graph(st)
-    with tabs[2]:
-        _render_session_working_set(st)
-    with tabs[3]:
-        _render_retrieval_trace(st)
-    with tabs[4]:
-        _render_reflections(st)
-    with tabs[5]:
-        _render_communities(st)
-    with tabs[6]:
-        _render_timeline(st)
+    return theme, active
 
 
 def _unsafe(st: Any, markup: str) -> None:
@@ -86,6 +96,7 @@ def _unsafe(st: Any, markup: str) -> None:
 def _init_state(st: Any) -> None:
     state = st.session_state
     state.setdefault("mira_theme", "dark")
+    state.setdefault("mira_view", "Chat")
     state.setdefault("mira_last_action", "Ready")
 
 

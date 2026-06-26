@@ -138,7 +138,7 @@ def main(st: Any | None = None) -> None:
     streamlit.set_page_config(
         page_title=APP_TITLE,
         layout="wide",
-        initial_sidebar_state="collapsed",
+        initial_sidebar_state="expanded",
     )
     if st is None:
         render_command_center(streamlit)
