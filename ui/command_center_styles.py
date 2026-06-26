@@ -45,10 +45,12 @@ html, body, [data-testid="stAppViewContainer"] {{
 /* Hide Streamlit chrome we don't use (no native sidebar, so no collapse). */
 [data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stHeader"], footer {{ display: none !important; }}
 
+/* Full-width app; the workspace clears the fixed rail via left padding. */
 .block-container {{
-  max-width: 1180px !important;
-  padding: 1.2rem 1.5rem 3rem !important;
+  max-width: 100% !important;
+  padding: 1.4rem 2rem 3rem 304px !important;
 }}
+.st-key-cc_main {{ max-width: 860px; margin: 0 auto; }}
 
 /* ---- Workspace top bar -------------------------------------------------- */
 
@@ -74,13 +76,16 @@ html, body, [data-testid="stAppViewContainer"] {{
 /* ---- Navigation rail (always-visible left column) ----------------------- */
 
 .st-key-cc_rail {{
-  position: sticky;
-  top: .8rem;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 272px;
+  height: 100vh;
+  overflow-y: auto;
+  z-index: 100;
   background: var(--rail);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  padding: 16px 14px;
-  min-height: calc(100vh - 2.4rem);
+  border-right: 1px solid var(--border);
+  padding: 18px 14px;
 }}
 
 .rail-brand {{ padding: .3rem .4rem 1rem; }}

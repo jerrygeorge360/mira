@@ -57,11 +57,11 @@ def render_command_center(st: Any) -> None:
     """Render the Claude-style UI: an always-visible rail plus a workspace."""
     _init_state(st)
 
-    rail_col, main_col = st.columns([0.24, 0.76], gap="medium")
-    with rail_col:
-        active, theme = _render_rail(st)
+    # The rail is pinned flush to the left screen edge via CSS (position: fixed),
+    # and the workspace is centered in the remaining space — like Claude.
+    active, theme = _render_rail(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
-    with main_col:
+    with st.container(key="cc_main"):
         title = _TITLES.get(active, active)
         _unsafe(
             st,
