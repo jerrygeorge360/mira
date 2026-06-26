@@ -5,10 +5,11 @@ Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
 
-Layout: a Claude-style left rail (new conversation, view list, recents, account)
-and a centered workspace with its own top bar (page title + theme toggle, so the
-toggle survives collapsing the rail). Chat uses native st.chat_message /
-st.chat_input; the graph view embeds a real 3D force-directed graph.
+The navigation rail is a real, always-visible column (not st.sidebar, whose
+collapse chrome could hide the nav with no way back). It holds the brand, a new
+conversation action, the view list, recents, a user footer, and the theme
+toggle. The workspace renders the active view; Chat uses native st.chat_message
+bubbles with an inline composer, and the Graph view embeds a real 3D graph.
 """
 
 from __future__ import annotations
@@ -50,19 +51,17 @@ _RECENTS = (
 
 
 def render_command_center(st: Any) -> None:
-    """Render the Claude-style UI: a left view rail plus a centered workspace."""
+    """Render the Claude-style UI: an always-visible rail plus a workspace."""
     _init_state(st)
-    active = _render_sidebar(st)
 
-    top_l, top_r = st.columns([0.7, 0.3], gap="small", vertical_alignment="center")
-    with top_r:
-        theme = _theme_control(st)
+    rail_col, main_col = st.columns([0.23, 0.77], gap="large")
+    with rail_col:
+        active, theme = _render_rail(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
-    icon = next((ic for lbl, ic in VIEWS if lbl == active), "💬")
-    with top_l:
+    with main_col:
+        icon = next((ic for lbl, ic in VIEWS if lbl == active), "💬")
         _unsafe(st, f'<div class="page-title">{escape(icon)} &nbsp;{escape(active)}</div>')
-
-    _RENDERERS.get(active, _render_chat)(st)
+        _RENDERERS.get(active, _render_chat)(st)
 
 
 def _unsafe(st: Any, markup: str) -> None:
@@ -85,23 +84,19 @@ def _theme_control(st: Any) -> str:
     return str(state["mira_theme"])
 
 
-def _render_sidebar(st: Any) -> str:
-    """Render the Claude-style rail; return the active view for this run."""
+def _render_rail(st: Any) -> tuple[str, str]:
+    """Render the navigation rail; return (active view, theme) for this run."""
     active = str(st.session_state.get("mira_view", "Chat"))
-    with st.sidebar:
+    with st.container(key="cc_rail"):
         _unsafe(
             st,
-            """
-            <div class="sb-brand">
-              <span class="spark">✻</span><span class="wordmark">MIRA</span>
-            </div>
-            """,
+            '<div class="rail-brand"><span class="spark">✻</span><span class="wordmark">MIRA</span></div>',
         )
         if st.button("✎  New conversation", key="new_chat", use_container_width=True):
             st.session_state["mira_view"] = "Chat"
             active = "Chat"
 
-        _unsafe(st, '<p class="sb-section">Views</p>')
+        _unsafe(st, '<p class="rail-section">Views</p>')
         for label, icon in VIEWS:
             kind = "primary" if label == active else "secondary"
             if st.button(
@@ -110,19 +105,21 @@ def _render_sidebar(st: Any) -> str:
                 st.session_state["mira_view"] = label
                 active = label
 
-        recents = "".join(f'<div class="sb-recent">{escape(title)}</div>' for title in _RECENTS)
-        _unsafe(st, f'<p class="sb-section">Recents</p>{recents}')
+        recents = "".join(f'<div class="rail-recent">{escape(t)}</div>' for t in _RECENTS)
+        _unsafe(st, f'<p class="rail-section">Recents</p>{recents}')
 
+        _unsafe(st, '<div class="rail-divider"></div>')
         _unsafe(
             st,
             """
-            <div class="sb-footer">
+            <div class="rail-user">
               <span class="avatar">JG</span>
-              <div class="sb-user"><strong>Jerry</strong><small>Workspace · Personal</small></div>
+              <div class="rail-user-meta"><strong>Jerry</strong><small>Personal workspace</small></div>
             </div>
             """,
         )
-    return active
+        theme = _theme_control(st)
+    return active, theme
 
 
 def _section_title(st: Any, title: str, subtitle: str) -> None:
@@ -143,20 +140,54 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
 def _render_chat(st: Any) -> None:
     _unsafe(
         st,
-        """
-        <div class="greeting"><span class="spark-lg">✻</span><span>Good to see you, Jerry</span></div>
-        """,
+        '<div class="greeting"><span class="spark-lg">✻</span><span>Good to see you, Jerry</span></div>',
     )
     for message in CHAT_MESSAGES:
         role = "user" if message["role"] == "user" else "assistant"
         with st.chat_message(role, avatar="🧑" if role == "user" else "✨"):
             st.markdown(message["content"])
 
-    with st.chat_message("assistant", avatar="✨"):
-        st.markdown("**NovaDynamics Meeting Brief** · synthesized from memory")
-        cols = st.columns(min(4, len(BRIEF_DETAILS)) or 1)
-        for index, item in enumerate(BRIEF_DETAILS):
-            with cols[index % len(cols)]:
+    _render_brief(st)
+
+    _unsafe(st, '<p class="suggest-label">Suggested follow-ups</p>')
+    chip_cols = st.columns(len(ACTION_CHIPS))
+    for index, chip in enumerate(ACTION_CHIPS):
+        with chip_cols[index]:
+            if st.button(chip, key=f"action_{chip}", use_container_width=True):
+                st.session_state["mira_last_action"] = chip
+
+    with st.container(key="cc_composer"):
+        field, send = st.columns([0.9, 0.1], gap="small", vertical_alignment="center")
+        with field:
+            st.text_input(
+                "Message",
+                placeholder="Reply to MIRA…",
+                label_visibility="collapsed",
+                key="mira_chat_input",
+            )
+        with send:
+            if st.button("↑", key="send_message"):
+                st.session_state["mira_last_action"] = "Message sent"
+    st.caption(f"Last action · {st.session_state['mira_last_action']}")
+
+
+def _render_brief(st: Any) -> None:
+    _unsafe(
+        st,
+        """
+        <div class="brief-card">
+          <div class="row-top"><strong>📋 &nbsp;NovaDynamics Meeting Brief</strong><span class="badge">27 sources</span></div>
+          <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p>
+        </div>
+        """,
+    )
+    rows = [BRIEF_DETAILS[:3], BRIEF_DETAILS[3:]]
+    for row in rows:
+        if not row:
+            continue
+        cols = st.columns(len(row))
+        for col, item in zip(cols, row, strict=False):
+            with col:
                 _unsafe(
                     st,
                     f"""
@@ -166,17 +197,6 @@ def _render_chat(st: Any) -> None:
                     </div>
                     """,
                 )
-
-    _unsafe(st, '<p class="suggest-label">Suggested follow-ups</p>')
-    chip_cols = st.columns(len(ACTION_CHIPS))
-    for index, chip in enumerate(ACTION_CHIPS):
-        with chip_cols[index]:
-            if st.button(chip, key=f"action_{chip}", use_container_width=True):
-                st.session_state["mira_last_action"] = chip
-
-    prompt = st.chat_input("Reply to MIRA…")
-    if prompt:
-        st.session_state["mira_last_action"] = "Message sent"
 
 
 # ---- Graph (3D) ------------------------------------------------------------
@@ -240,10 +260,7 @@ def _graph_data() -> dict[str, list[dict[str, object]]]:
         ("mira", "sqlite"),
         ("nova", "comm"),
     ]
-    return {
-        "nodes": nodes,
-        "links": [{"source": s, "target": t} for s, t in links],
-    }
+    return {"nodes": nodes, "links": [{"source": s, "target": t} for s, t in links]}
 
 
 def _graph_3d_html(theme: str) -> str:
@@ -258,7 +275,7 @@ def _graph_3d_html(theme: str) -> str:
         const data = {data_json};
         const el = document.getElementById('mira-graph');
         if (!window.ForceGraph3D) {{
-          el.innerHTML = '<p style="color:{label_text};font-family:sans-serif;padding:1rem">3D graph needs internet access to load.</p>';
+          el.innerHTML = '<p style="color:{label_text};font-family:sans-serif;padding:1rem">3D graph needs internet access to load the renderer.</p>';
           return;
         }}
         const G = ForceGraph3D()(el)

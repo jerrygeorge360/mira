@@ -42,37 +42,12 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: var(--bg) !important;
 }}
 
-/* Hide deploy toolbar/decoration; keep header so collapse controls survive. */
-[data-testid="stToolbar"], [data-testid="stDecoration"], footer {{ display: none !important; }}
-[data-testid="stHeader"] {{ background: transparent !important; }}
-
-/* Sidebar collapse + the expand button shown when the rail is collapsed.
-   Streamlit paints the expand icon as faded text (near-invisible on a custom
-   theme), so force a clear coral chevron and pin the expand button. */
-[data-testid="stSidebarCollapseButton"],
-[data-testid="stExpandSidebarButton"] {{
-  display: inline-flex !important;
-  visibility: visible !important;
-  opacity: 1 !important;
-}}
-[data-testid="stExpandSidebarButton"] {{
-  position: fixed;
-  top: .55rem;
-  left: .55rem;
-  z-index: 1000;
-  background: var(--surface) !important;
-  border: 1px solid var(--border-strong) !important;
-  border-radius: 10px !important;
-  box-shadow: var(--shadow);
-}}
-[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebarCollapseButton"] span,
-[data-testid="stExpandSidebarButton"] button, [data-testid="stExpandSidebarButton"] span {{
-  color: var(--accent) !important;
-}}
+/* Hide Streamlit chrome we don't use (no native sidebar, so no collapse). */
+[data-testid="stToolbar"], [data-testid="stDecoration"], [data-testid="stHeader"], footer {{ display: none !important; }}
 
 .block-container {{
-  max-width: 880px !important;
-  padding: 1.4rem 1.5rem 7rem !important;
+  max-width: 1180px !important;
+  padding: 1.2rem 1.5rem 3rem !important;
 }}
 
 /* ---- Workspace top bar -------------------------------------------------- */
@@ -82,55 +57,52 @@ html, body, [data-testid="stAppViewContainer"] {{
   font-weight: 600;
   color: var(--muted);
   letter-spacing: -.01em;
+  margin-bottom: .6rem;
 }}
-.st-key-mira_theme_toggle {{ display: flex; justify-content: flex-end; }}
 
-/* ---- Sidebar rail ------------------------------------------------------- */
+/* ---- Navigation rail (always-visible left column) ----------------------- */
 
-[data-testid="stSidebar"] {{
-  background: var(--rail) !important;
-  border-right: 1px solid var(--border);
+.st-key-cc_rail {{
+  position: sticky;
+  top: .8rem;
+  background: var(--rail);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 16px 14px;
+  min-height: calc(100vh - 2.4rem);
 }}
-[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding-top: .5rem; }}
 
-.sb-brand {{ display: flex; gap: 9px; align-items: baseline; padding: .2rem .3rem 1rem; }}
-.spark {{ color: var(--accent); font-size: 1.05rem; line-height: 1; }}
+.rail-brand {{ display: flex; gap: 9px; align-items: baseline; padding: .3rem .3rem 1rem; }}
+.spark {{ color: var(--accent); font-size: 1.1rem; line-height: 1; }}
 .spark-lg {{ color: var(--accent); font-size: 1.7rem; line-height: 1; }}
 .wordmark {{ font-weight: 700; font-size: 1.25rem; letter-spacing: -.01em; }}
 
-.sb-section {{
-  margin: 1.2rem .35rem .35rem;
+.rail-section {{
+  margin: 1.1rem .35rem .35rem;
   color: var(--faint);
-  font-size: .72rem;
-  font-weight: 600;
-  letter-spacing: .06em;
+  font-size: .7rem;
+  font-weight: 700;
+  letter-spacing: .07em;
   text-transform: uppercase;
 }}
 
-.sb-recent {{
+.rail-recent {{
   padding: 7px 12px;
-  margin: 1px .15rem;
+  margin: 1px .1rem;
   border-radius: 9px;
   color: var(--muted);
-  font-size: .86rem;
+  font-size: .85rem;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  cursor: default;
 }}
-.sb-recent:hover {{ background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"}; color: var(--text); }}
+.rail-recent:hover {{ background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"}; color: var(--text); }}
 
-.sb-footer {{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 1.4rem;
-  padding: 10px 8px 0;
-  border-top: 1px solid var(--border);
-}}
-.sb-user {{ display: flex; flex-direction: column; line-height: 1.25; }}
-.sb-user strong {{ font-size: .9rem; }}
-.sb-user small {{ color: var(--faint); font-size: .74rem; }}
+.rail-divider {{ height: 1px; background: var(--border); margin: 1.1rem .2rem .8rem; }}
+.rail-user {{ display: flex; align-items: center; gap: 10px; padding: 0 .2rem .6rem; }}
+.rail-user-meta {{ display: flex; flex-direction: column; line-height: 1.25; }}
+.rail-user-meta strong {{ font-size: .9rem; }}
+.rail-user-meta small {{ color: var(--faint); font-size: .74rem; }}
 
 .avatar {{
   width: 32px;
@@ -145,7 +117,7 @@ html, body, [data-testid="stAppViewContainer"] {{
   font-weight: 800;
 }}
 
-/* New-conversation button (accent) + nav buttons (quiet list). */
+/* New-conversation button (outlined) + nav buttons (quiet list). */
 .st-key-new_chat .stButton > button {{
   justify-content: flex-start;
   text-align: left;
@@ -157,7 +129,7 @@ html, body, [data-testid="stAppViewContainer"] {{
 }}
 .st-key-new_chat .stButton > button:hover {{ border-color: var(--accent); color: var(--accent); }}
 
-[data-testid="stSidebar"] .stButton > button {{
+.st-key-cc_rail .stButton > button {{
   justify-content: flex-start;
   text-align: left;
   border: none;
@@ -167,16 +139,19 @@ html, body, [data-testid="stAppViewContainer"] {{
   border-radius: 9px;
   padding: 8px 12px;
 }}
-[data-testid="stSidebar"] .stButton > button:hover {{
+.st-key-cc_rail .stButton > button:hover {{
   background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"};
   color: var(--text);
 }}
-[data-testid="stSidebar"] .stButton > button[kind="primary"],
-[data-testid="stSidebar"] [data-testid="stBaseButton-primary"] {{
+.st-key-cc_rail .stButton > button[kind="primary"],
+.st-key-cc_rail [data-testid="stBaseButton-primary"] {{
   background: var(--accent-soft);
   color: var(--text);
   font-weight: 600;
 }}
+
+/* Theme toggle in the rail footer. */
+.st-key-mira_theme_toggle {{ padding: .4rem .2rem 0; }}
 
 /* ---- Chat (native chat_message / chat_input) ---------------------------- */
 
@@ -211,16 +186,38 @@ html, body, [data-testid="stAppViewContainer"] {{
   border: 1px solid var(--border);
 }}
 
-[data-testid="stChatInput"] {{
-  background: var(--surface) !important;
-  border: 1px solid var(--border-strong) !important;
-  border-radius: 24px !important;
+/* Inline composer (rounded box: borderless input + round coral send). */
+.st-key-cc_composer {{
+  margin-top: .6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 26px;
+  padding: 4px 6px 4px 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
 }}
-[data-testid="stChatInput"]:focus-within {{ border-color: var(--accent) !important; }}
-[data-testid="stChatInput"] textarea {{ color: var(--text) !important; }}
-[data-testid="stChatInput"] textarea::placeholder {{ color: var(--faint) !important; }}
-[data-testid="stChatInputSubmitButton"] {{ color: var(--accent) !important; }}
-[data-testid="stBottom"] > div {{ background: var(--bg) !important; }}
+.st-key-cc_composer:focus-within {{ border-color: var(--accent); }}
+.st-key-cc_composer .stTextInput input {{
+  border: none !important;
+  background: transparent !important;
+  color: var(--text) !important;
+  font-size: .98rem !important;
+  padding: 11px 8px !important;
+}}
+.st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
+.st-key-send_message {{ display: flex; justify-content: center; }}
+.st-key-send_message .stButton > button {{
+  width: 40px;
+  min-width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  padding: 0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #fff;
+  border: none;
+  background: var(--accent);
+}}
+.st-key-send_message .stButton > button:hover {{ color: #fff; background: var(--accent); filter: brightness(1.05); }}
 
 .suggest-label {{
   margin: 1.4rem 0 .5rem;
