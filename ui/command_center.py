@@ -95,15 +95,27 @@ def _theme_control(st: Any) -> str:
     return str(state["mira_theme"])
 
 
-def _nav_button(st: Any, label: str, icon: str, active: str) -> str:
-    """Render one rail nav button; return the (possibly updated) active view."""
+def _select_view(st: Any, label: str) -> None:
+    """on_click callback: set the active view before the script reruns.
+
+    Running in the callback (not after st.button returns) means the new value is
+    in place before any nav button renders, so every button's active highlight is
+    correct on the same run instead of lagging one click behind.
+    """
+    st.session_state["mira_view"] = label
+
+
+def _nav_button(st: Any, label: str, icon: str, active: str) -> None:
+    """Render one rail nav button with correct same-run active highlighting."""
     kind = "primary" if label == active else "secondary"
-    if st.button(
-        f":material/{icon}:  {label}", key=f"nav_{label}", use_container_width=True, type=kind
-    ):
-        st.session_state["mira_view"] = label
-        return label
-    return active
+    st.button(
+        f":material/{icon}:  {label}",
+        key=f"nav_{label}",
+        use_container_width=True,
+        type=kind,
+        on_click=_select_view,
+        args=(st, label),
+    )
 
 
 def _render_rail(st: Any) -> tuple[str, str]:
@@ -112,15 +124,19 @@ def _render_rail(st: Any) -> tuple[str, str]:
     with st.container(key="cc_rail"):
         _unsafe(st, '<div class="rail-brand"><span class="wordmark">MIRA</span></div>')
 
-        if st.button(":material/edit_square:  New chat", key="new_chat", use_container_width=True):
-            st.session_state["mira_view"] = "Chat"
-            active = "Chat"
+        st.button(
+            ":material/edit_square:  New chat",
+            key="new_chat",
+            use_container_width=True,
+            on_click=_select_view,
+            args=(st, "Chat"),
+        )
         for label, icon in _PRIMARY_VIEWS:
-            active = _nav_button(st, label, icon, active)
+            _nav_button(st, label, icon, active)
 
         _unsafe(st, '<p class="rail-section">Memory</p>')
         for label, icon in _MEMORY_VIEWS:
-            active = _nav_button(st, label, icon, active)
+            _nav_button(st, label, icon, active)
 
         recents = "".join(f'<div class="rail-recent">{escape(t)}</div>' for t in _RECENTS)
         _unsafe(st, f'<p class="rail-section">Recents</p>{recents}')
