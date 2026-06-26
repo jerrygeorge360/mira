@@ -1,4 +1,4 @@
-.PHONY: help install run slack test test-slack lint format type security check fix precommit clean ablation
+.PHONY: help install run slack test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts
@@ -20,6 +20,9 @@ help:
 		'  fix        Apply Ruff fixes and formatting' \
 		'  precommit  Run all pre-commit hooks' \
 		'  ablation   Run the ablation study and write results' \
+		'  benchmark-cost     Estimate benchmark cost without paid calls' \
+		'  benchmark          Run official-capable benchmark with budget cap' \
+		'  benchmark-subset   Run budget-limited benchmark subset' \
 		'  clean      Remove generated caches and reports'
 
 install:
@@ -62,6 +65,36 @@ precommit:
 
 ablation:
 	$(PYTHON) -m scripts.run_ablation --stub --out evaluation/results
+
+benchmark-cost:
+	$(PYTHON) -m scripts.run_benchmark \
+		--suite longmemeval \
+		--official \
+		--dry-run-cost \
+		--budget-usd $${BUDGET_USD:-15}
+
+benchmark:
+	$(PYTHON) -m scripts.run_benchmark \
+		--suite longmemeval \
+		--official \
+		--live \
+		--judge hybrid \
+		--budget-usd $${BUDGET_USD:-15} \
+		--model $${MODEL:-qwen-plus} \
+		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		--out evaluation/results/benchmarks
+
+benchmark-subset:
+	$(PYTHON) -m scripts.run_benchmark \
+		--suite longmemeval \
+		--official \
+		--live \
+		--judge hybrid \
+		--limit $${LIMIT:-100} \
+		--budget-usd $${BUDGET_USD:-15} \
+		--model $${MODEL:-qwen-plus} \
+		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		--out evaluation/results/benchmarks
 
 clean:
 	rm -rf .pytest_cache .mypy_cache .ruff_cache .coverage htmlcov
