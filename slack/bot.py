@@ -126,7 +126,7 @@ def run_bot() -> None:
 
     app = App(token=bot_token)
 
-    @app.message("")  # type: ignore[untyped-decorator, unused-ignore]
+    @app.message("")  # type: ignore[misc, untyped-decorator, unused-ignore]
     def on_message(message: dict[str, object], say: Callable[..., Any]) -> None:
         subtype = message.get("subtype", "")
         if subtype in ("message_deleted", "message_changed"):
