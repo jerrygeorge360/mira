@@ -30,7 +30,12 @@ def render_command_center(st: Any) -> None:
     _init_state(st)
     theme = _theme_control(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
-    st.markdown(_shell_html(theme), unsafe_allow_html=True)
+    st.markdown(_html(_shell_html(theme)), unsafe_allow_html=True)
+
+
+def _html(markup: str) -> str:
+    """Strip template indentation so Streamlit Markdown never renders HTML as code."""
+    return "\n".join(line.strip() for line in markup.splitlines() if line.strip())
 
 
 def _init_state(st: Any) -> None:
