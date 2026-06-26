@@ -169,35 +169,40 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 /* ---- Chat (native chat_message / chat_input) ---------------------------- */
 
-.greeting {{
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin: 1rem 0 1.6rem;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.8rem;
-  letter-spacing: -.01em;
+.turn {{ display: flex; gap: 12px; margin: 1.3rem 0; }}
+.turn.user {{ justify-content: flex-end; }}
+.turn.bot {{ align-items: flex-start; }}
+
+.ubub {{
+  background: var(--user-bubble);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 11px 16px;
+  max-width: 76%;
+  line-height: 1.6;
+  font-size: .98rem;
 }}
 
-[data-testid="stChatMessage"] {{
-  background: transparent;
-  padding: .35rem 0;
-  gap: .7rem;
+.bot-ava {{
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  margin-top: 2px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: .95rem;
 }}
-[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {{
-  background: var(--user-bubble);
-  border-radius: 16px;
-  padding: .4rem 1rem;
-  margin: .5rem 0;
-}}
-[data-testid="stChatMessageAvatarAssistant"] {{
-  background: var(--accent-soft) !important;
-  color: var(--accent) !important;
-  border: 1px solid var(--border);
-}}
-[data-testid="stChatMessageAvatarUser"] {{
-  background: var(--surface-soft) !important;
-  border: 1px solid var(--border);
+.bot-msg {{ color: var(--text); line-height: 1.72; font-size: 1rem; max-width: 88%; }}
+.bot-msg-wide {{ max-width: 100%; width: 100%; }}
+
+.tile-grid {{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin-top: 14px;
 }}
 
 /* Inline composer (rounded box: borderless input + round coral send). */
@@ -279,7 +284,10 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 .stProgress > div > div > div {{ background: var(--accent) !important; }}
 [data-testid="stCaptionContainer"], .stCaption {{ color: var(--faint) !important; }}
-.stToggle label, .stToggle p {{ color: var(--muted) !important; }}
+.stToggle label, .stToggle p, [data-testid="stWidgetLabel"] p {{ color: var(--muted) !important; }}
+
+/* Readable bold text inside cards/turns (overrides Streamlit defaults). */
+.bot-msg strong, .brief-card strong, .row-card strong, .row-top strong, .topbar-title {{ color: var(--text); }}
 
 /* ---- Section heads & cards ---------------------------------------------- */
 
@@ -298,13 +306,13 @@ h2, h3, h4 {{ color: var(--text); }}
 }}
 
 .tile {{
-  padding: 13px;
+  padding: 12px 13px;
   border-radius: 13px;
   background: var(--surface-soft);
   border: 1px solid var(--border);
 }}
 .tile small {{ display: block; color: var(--faint); margin-bottom: 5px; font-size: .74rem; }}
-.tile strong {{ font-size: .96rem; }}
+.tile strong {{ display: block; font-size: .94rem; color: var(--text); line-height: 1.35; }}
 
 .row-card {{
   border-radius: 14px;

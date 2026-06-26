@@ -155,15 +155,11 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
 
 def _render_chat(st: Any) -> None:
     for message in CHAT_MESSAGES:
-        role = "user" if message["role"] == "user" else "assistant"
-        with st.chat_message(role, avatar="🧑" if role == "user" else "✨"):
-            st.markdown(message["content"])
-
-    with st.chat_message("assistant", avatar="✨"):
-        _render_brief(st)
+        _render_turn(st, str(message["role"]), str(message["content"]))
+    _render_brief(st)
 
     with st.container(key="cc_composer"):
-        add, field, send = st.columns([0.08, 0.82, 0.1], vertical_alignment="center")
+        add, field, send = st.columns([0.07, 0.86, 0.07], vertical_alignment="center")
         with add:
             st.button(":material/add:", key="composer_add")
         with field:
@@ -182,32 +178,36 @@ def _render_chat(st: Any) -> None:
     )
 
 
-def _render_brief(st: Any) -> None:
+def _render_turn(st: Any, role: str, content: str) -> None:
+    if role == "user":
+        _unsafe(st, f'<div class="turn user"><div class="ubub">{escape(content)}</div></div>')
+        return
     _unsafe(
         st,
-        """
-        <div class="brief-card">
-          <div class="row-top"><strong>📋 &nbsp;NovaDynamics Meeting Brief</strong><span class="badge">27 sources</span></div>
-          <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p>
+        f'<div class="turn bot"><div class="bot-ava">✻</div><div class="bot-msg">{escape(content)}</div></div>',
+    )
+
+
+def _render_brief(st: Any) -> None:
+    tiles = "".join(
+        f'<div class="tile"><small>{escape(item["label"])}</small><strong>{escape(item["value"])}</strong></div>'
+        for item in BRIEF_DETAILS
+    )
+    _unsafe(
+        st,
+        f"""
+        <div class="turn bot">
+          <div class="bot-ava">✻</div>
+          <div class="bot-msg bot-msg-wide">
+            <div class="brief-card">
+              <div class="row-top"><strong>NovaDynamics Meeting Brief</strong><span class="badge">27 sources</span></div>
+              <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p>
+              <div class="tile-grid">{tiles}</div>
+            </div>
+          </div>
         </div>
         """,
     )
-    rows = [BRIEF_DETAILS[:3], BRIEF_DETAILS[3:]]
-    for row in rows:
-        if not row:
-            continue
-        cols = st.columns(len(row))
-        for col, item in zip(cols, row, strict=False):
-            with col:
-                _unsafe(
-                    st,
-                    f"""
-                    <div class="tile">
-                      <small>{escape(item["label"])}</small>
-                      <strong>{escape(item["value"])}</strong>
-                    </div>
-                    """,
-                )
 
 
 # ---- Graph (3D) ------------------------------------------------------------
