@@ -1,15 +1,14 @@
 # ruff: noqa: E501
-"""Custom CSS for the MIRA Memory Command Center.
+"""Custom CSS for the MIRA Memory Command Center (Claude-style).
 
 Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
 
-The renderer (``ui/command_center.py``) is a single screen with top-level tabs.
-This stylesheet themes the slim header, the tab bar (the primary navigation), the
-native widgets (buttons, inputs, metrics, progress), and the hand-written HTML
-fragments. Theme variables live on a global scope so they cascade onto native
-Streamlit widgets, not just the hand-written HTML.
+Warm paper/charcoal palette with a coral accent, a centered single column, a
+serif greeting, understated underline tabs, and a rounded composer — inspired by
+the Claude UI. Theme variables live on a global scope so they cascade onto native
+Streamlit widgets, not just the hand-written HTML fragments.
 """
 
 from __future__ import annotations
@@ -21,45 +20,35 @@ def command_center_css(theme: str) -> str:
     return f"""
 <style>
 :root, [data-testid="stAppViewContainer"] {{
-  --radius-xl: 24px;
-  --radius-lg: 18px;
-  --radius-md: 14px;
   --ease: cubic-bezier(.2,.8,.2,1);
-  --bg: {"#eef3fb" if safe_theme == "light" else "#050812"};
-  --bg-2: {"#f8fbff" if safe_theme == "light" else "#09111f"};
-  --panel: {"rgba(255,255,255,.80)" if safe_theme == "light" else "rgba(13, 22, 38, .72)"};
-  --panel-strong: {"rgba(255,255,255,.94)" if safe_theme == "light" else "rgba(18, 30, 52, .94)"};
-  --panel-soft: {"rgba(239,246,255,.84)" if safe_theme == "light" else "rgba(10, 18, 32, .55)"};
-  --text: {"#111827" if safe_theme == "light" else "#ecf7ff"};
-  --muted: {"#5e6b82" if safe_theme == "light" else "#8fa3bf"};
-  --faint: {"#8290a8" if safe_theme == "light" else "#61748f"};
-  --border: {"rgba(98, 119, 154, .20)" if safe_theme == "light" else "rgba(139, 226, 255, .14)"};
-  --border-strong: {"rgba(60, 95, 190, .24)" if safe_theme == "light" else "rgba(101, 229, 255, .28)"};
-  --shadow: {"0 20px 60px rgba(46, 76, 140, .16)" if safe_theme == "light" else "0 20px 70px rgba(0, 0, 0, .40)"};
-  --glow: {"0 0 36px rgba(92, 116, 255, .18)" if safe_theme == "light" else "0 0 44px rgba(39, 226, 255, .18)"};
-  --accent: #23d5ff;
-  --accent-2: #8b5cf6;
-  --accent-3: #21e6a8;
-  --warning: #fbbf24;
+  --bg: {"#f4f3ee" if safe_theme == "light" else "#262624"};
+  --surface: {"#ffffff" if safe_theme == "light" else "#30302e"};
+  --surface-soft: {"#faf9f5" if safe_theme == "light" else "#393937"};
+  --user-bubble: {"#ecebe3" if safe_theme == "light" else "#3a3a37"};
+  --text: {"#2d2c28" if safe_theme == "light" else "#f3f2ec"};
+  --muted: {"#6b6a62" if safe_theme == "light" else "#a3a299"};
+  --faint: {"#908f86" if safe_theme == "light" else "#7d7c73"};
+  --border: {"#e6e4da" if safe_theme == "light" else "#42423f"};
+  --border-strong: {"#d6d3c6" if safe_theme == "light" else "#54534f"};
+  --accent: {"#cc785c" if safe_theme == "light" else "#d97757"};
+  --accent-soft: {"rgba(204, 120, 92, .12)" if safe_theme == "light" else "rgba(217, 119, 87, .16)"};
+  --shadow: {"0 1px 3px rgba(50, 40, 30, .06), 0 8px 24px rgba(50, 40, 30, .05)" if safe_theme == "light" else "0 1px 3px rgba(0, 0, 0, .3)"};
 }}
 
 html, body, [data-testid="stAppViewContainer"] {{
   color: var(--text) !important;
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  background:
-    radial-gradient(circle at top left, {"rgba(82, 111, 255, .16)" if safe_theme == "light" else "rgba(16, 185, 255, .14)"}, transparent 34rem),
-    radial-gradient(circle at 84% 4%, rgba(139, 92, 246, .14), transparent 30rem),
-    linear-gradient(135deg, var(--bg), var(--bg-2)) !important;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
+  background: var(--bg) !important;
 }}
 
 [data-testid="stHeader"], [data-testid="stToolbar"], footer {{ display: none !important; }}
 
 .block-container {{
-  max-width: 1180px !important;
-  padding: 1rem 1.5rem 2rem !important;
+  max-width: 760px !important;
+  padding: 1rem 1.25rem 3rem !important;
 }}
 
-/* Dark-mode toggle pinned top-right, clear of the header. */
+/* Dark-mode toggle pinned top-right. */
 .st-key-mira_theme_toggle {{
   position: absolute;
   top: .3rem;
@@ -74,244 +63,234 @@ html, body, [data-testid="stAppViewContainer"] {{
   justify-content: space-between;
   align-items: center;
   gap: 16px;
-  margin: .2rem 0 1.1rem;
+  margin: .1rem 0 1.4rem;
 }}
 
-.brand {{ display: flex; gap: 13px; align-items: center; }}
-
-.logo-mark {{
-  width: 46px;
-  height: 46px;
-  border-radius: 15px;
-  display: grid;
-  place-items: center;
-  font-weight: 900;
-  letter-spacing: -.08em;
-  color: #04111f;
-  background: linear-gradient(135deg, var(--accent), var(--accent-2));
-  box-shadow: 0 0 30px rgba(35, 213, 255, .34);
-}}
-
-.brand h1 {{ margin: 0; font-size: 1.5rem; letter-spacing: -.04em; }}
-.muted {{ margin: 0; color: var(--muted); font-size: .82rem; }}
-
-.header-right {{ display: flex; align-items: center; gap: 10px; }}
-
-.top-pill {{
-  display: inline-flex;
-  align-items: center;
-  padding: 7px 13px;
-  border-radius: 999px;
-  color: var(--accent);
-  font-weight: 800;
-  font-size: .78rem;
-  letter-spacing: .04em;
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-}}
+.brand {{ display: flex; gap: 9px; align-items: baseline; }}
+.spark {{ color: var(--accent); font-size: 1.05rem; line-height: 1; }}
+.spark-lg {{ color: var(--accent); font-size: 1.6rem; line-height: 1; }}
+.wordmark {{ font-weight: 700; font-size: 1.2rem; letter-spacing: -.01em; }}
+.muted {{ margin: 0; color: var(--muted); font-size: .85rem; }}
 
 .status-online {{
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  font-size: .74rem;
-  font-weight: 800;
-  color: var(--accent-3);
-  letter-spacing: .08em;
-}}
-
-.pulse {{
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  background: var(--accent-3);
-  box-shadow: 0 0 18px var(--accent-3);
-}}
-
-.avatar {{
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  color: white;
-  background: linear-gradient(135deg, var(--accent-2), var(--accent));
   font-size: .76rem;
-  font-weight: 900;
+  color: var(--muted);
+}}
+.pulse {{
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #6cbf73;
+  box-shadow: 0 0 10px rgba(108, 191, 115, .6);
 }}
 
-/* ---- Tabs (primary navigation) ------------------------------------------ */
+/* ---- Tabs (understated text nav) ---------------------------------------- */
 
 .stTabs [data-baseweb="tab-list"] {{
-  gap: 8px;
-  padding: 6px;
-  border-radius: var(--radius-lg);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
+  gap: 2px;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
 }}
-
-.stTabs [data-baseweb="tab-list"] {{ border-bottom: 1px solid var(--border); }}
-
 .stTabs [data-baseweb="tab"] {{
-  border-radius: 12px;
-  padding: 8px 16px;
+  padding: 7px 14px;
   color: var(--muted);
-  font-weight: 650;
+  font-weight: 500;
+  font-size: .92rem;
 }}
-
 .stTabs [data-baseweb="tab"]:hover {{ color: var(--text); }}
+.stTabs [aria-selected="true"] {{ color: var(--text) !important; }}
+.stTabs [data-baseweb="tab-highlight"] {{ background: var(--accent) !important; height: 2px; }}
+.stTabs [data-baseweb="tab-panel"] {{ padding-top: 1.6rem; }}
 
-.stTabs [aria-selected="true"] {{
-  color: var(--text) !important;
-  background: linear-gradient(135deg, rgba(35, 213, 255, .16), rgba(139, 92, 246, .14));
-  box-shadow: var(--glow);
-}}
+/* ---- Chat --------------------------------------------------------------- */
 
-.stTabs [data-baseweb="tab-highlight"] {{ background: transparent; }}
-.stTabs [data-baseweb="tab-panel"] {{ padding-top: 1.2rem; }}
-
-/* ---- Section heads ------------------------------------------------------ */
-
-.section-title {{
+.greeting {{
   display: flex;
-  justify-content: space-between;
-  align-items: flex-end;
+  align-items: center;
   gap: 12px;
-  margin-bottom: 1rem;
+  margin: 1.2rem 0 2rem;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.9rem;
+  letter-spacing: -.01em;
+  color: var(--text);
 }}
 
-.section-title h2 {{ margin: 0; font-size: 1.5rem; letter-spacing: -.03em; }}
+.turn {{ display: flex; margin: 1.1rem 0; }}
+.turn.user {{ justify-content: flex-end; }}
+.turn.assistant {{ gap: 11px; align-items: flex-start; }}
+.turn.assistant .spark {{ margin-top: 3px; font-size: 1rem; }}
+
+.bubble {{
+  background: var(--user-bubble);
+  border-radius: 16px;
+  padding: 11px 16px;
+  max-width: 80%;
+  line-height: 1.6;
+  font-size: .96rem;
+}}
+
+.answer {{
+  line-height: 1.7;
+  font-size: 1rem;
+  color: var(--text);
+  max-width: 92%;
+}}
+
+/* ---- Composer ----------------------------------------------------------- */
+
+.st-key-cc_composer {{
+  border: 1px solid var(--border-strong);
+  border-radius: 22px;
+  padding: 6px 6px 6px 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}}
+.st-key-cc_composer:focus-within {{ border-color: var(--accent); }}
+
+.st-key-cc_composer .stTextInput input {{
+  border: none !important;
+  background: transparent !important;
+  color: var(--text) !important;
+  font-size: .98rem !important;
+  padding: 10px 8px !important;
+}}
+.st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
+
+.st-key-send_message .stButton > button {{
+  border-radius: 50%;
+  aspect-ratio: 1;
+  padding: 0;
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #ffffff;
+  border: none;
+  background: var(--accent);
+}}
+.st-key-send_message .stButton > button:hover {{
+  background: var(--accent);
+  filter: brightness(1.05);
+  transform: none;
+}}
 
 /* ---- Native widgets ----------------------------------------------------- */
 
 .stButton > button {{
   width: 100%;
-  border-radius: 12px;
-  padding: 9px 14px;
-  font-weight: 650;
+  border-radius: 11px;
+  padding: 8px 13px;
+  font-weight: 500;
+  font-size: .86rem;
   color: var(--muted);
   border: 1px solid var(--border);
-  background: var(--panel-soft);
-  transition: transform .18s var(--ease), border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease);
+  background: var(--surface);
+  transition: background .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease);
 }}
-
 .stButton > button:hover {{
-  transform: translateY(-1px);
   color: var(--text);
   border-color: var(--border-strong);
-  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
-}}
-
-.st-key-send_message .stButton > button {{
-  color: #04111f;
-  font-weight: 850;
-  border: none;
-  background: linear-gradient(135deg, var(--accent), var(--accent-3));
-  box-shadow: 0 14px 34px rgba(35, 213, 255, .24);
+  background: var(--surface-soft);
 }}
 
 .stTextInput input {{
-  border-radius: 13px !important;
+  border-radius: 12px !important;
   border: 1px solid var(--border) !important;
-  background: var(--panel-soft) !important;
+  background: var(--surface) !important;
   color: var(--text) !important;
 }}
 .stTextInput input::placeholder {{ color: var(--faint) !important; }}
 
 [data-testid="stMetric"] {{
   border-radius: 14px;
-  padding: 12px 14px;
-  background: var(--panel-soft);
+  padding: 13px 15px;
+  background: var(--surface);
   border: 1px solid var(--border);
 }}
 [data-testid="stMetricLabel"] p {{ color: var(--faint) !important; font-size: .76rem; }}
 [data-testid="stMetricValue"] {{ color: var(--text) !important; font-size: 1.3rem; }}
 
-.stProgress > div > div > div {{
-  background: linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
-}}
+.stProgress > div > div > div {{ background: var(--accent) !important; }}
 
-[data-testid="stCaptionContainer"], .stCaption {{ color: var(--muted) !important; }}
+[data-testid="stCaptionContainer"], .stCaption {{ color: var(--faint) !important; }}
 .stToggle label, .stToggle p {{ color: var(--muted) !important; }}
 
-h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
+/* ---- Section heads & cards ---------------------------------------------- */
 
-/* ---- Cards & fragments -------------------------------------------------- */
+.section-title {{ margin-bottom: 1.2rem; }}
+.section-title h2 {{ margin: 0 0 .2rem; font-size: 1.5rem; letter-spacing: -.02em; color: var(--text); font-family: Georgia, "Times New Roman", serif; }}
+
+h2, h3, h4 {{ color: var(--text); }}
 
 .badge {{
   color: var(--accent);
-  font-size: .7rem;
-  font-weight: 850;
-  padding: 5px 10px;
+  font-size: .72rem;
+  font-weight: 600;
+  padding: 3px 9px;
   border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-  letter-spacing: .07em;
+  background: var(--accent-soft);
   white-space: nowrap;
 }}
 
-.bubble {{
-  border-radius: 18px;
-  padding: 13px 16px;
-  margin: 10px 0;
-  max-width: 78%;
-  line-height: 1.55;
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-}}
-.bubble.user {{
-  margin-left: auto;
-  background: linear-gradient(135deg, rgba(35, 213, 255, .18), rgba(139, 92, 246, .18));
-}}
-
 .brief-card {{
-  margin: 1.2rem 0 .6rem;
-  border-radius: var(--radius-lg);
-  padding: 18px;
-  background: linear-gradient(135deg, rgba(35, 213, 255, .10), rgba(139, 92, 246, .08));
-  border: 1px solid var(--border-strong);
+  margin: 1.4rem 0 .7rem;
+  border-radius: 16px;
+  padding: 16px 18px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
 }}
+.brief-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
+.brief-head h3 {{ margin: 0; font-size: 1.05rem; }}
+.brief-card .muted {{ margin-top: .35rem; }}
 
-.brief-head, .row-top {{
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}}
-.brief-head h3 {{ margin: 0 0 .15rem; font-size: 1.05rem; }}
-
-.metric-tile {{
+.tile {{
   padding: 13px;
-  border-radius: 14px;
-  background: var(--panel-soft);
+  border-radius: 13px;
+  background: var(--surface-soft);
   border: 1px solid var(--border);
 }}
-.metric-tile small {{ display: block; color: var(--faint); margin-bottom: 5px; font-size: .74rem; }}
-.metric-tile strong {{ font-size: .98rem; }}
+.tile small {{ display: block; color: var(--faint); margin-bottom: 5px; font-size: .74rem; }}
+.tile strong {{ font-size: .96rem; }}
 
-.chip-row {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }}
+.row-card {{
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin: 10px 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+}}
+.row-card strong {{ font-size: .95rem; }}
+.row-card p {{ margin: .4rem 0 .55rem; font-size: .93rem; line-height: 1.6; color: var(--text); }}
+.row-card .muted {{ font-size: .82rem; }}
+.row-top {{ display: flex; justify-content: space-between; gap: 10px; align-items: center; }}
+
+.chip-row {{ display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }}
 .chip {{
   display: inline-flex;
   align-items: center;
   color: var(--muted);
-  padding: 6px 11px;
+  padding: 5px 11px;
   font-size: .78rem;
   border-radius: 999px;
+  background: var(--surface-soft);
   border: 1px solid var(--border);
-  background: var(--panel-soft);
 }}
+
+.timeline-card {{ min-height: 100px; }}
+.timeline-card h4 {{ margin: .4rem 0 0; font-size: .94rem; }}
+
+/* ---- Graph -------------------------------------------------------------- */
 
 .graph-stage {{
   height: 320px;
   position: relative;
-  border-radius: var(--radius-lg);
+  border-radius: 16px;
   margin-bottom: 1rem;
   background:
-    radial-gradient(circle at 50% 48%, rgba(35, 213, 255, .18), transparent 11rem),
-    linear-gradient(135deg, rgba(255,255,255,.035), transparent);
+    radial-gradient(circle at 50% 46%, var(--accent-soft), transparent 12rem),
+    var(--surface);
   border: 1px solid var(--border);
 }}
 
@@ -321,42 +300,28 @@ h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
   place-items: center;
   border-radius: 50%;
   border: 1px solid var(--border-strong);
-  box-shadow: var(--glow);
-  background: var(--panel-strong);
+  background: var(--surface);
   color: var(--text);
-  font-weight: 850;
-  font-size: .84rem;
+  font-weight: 600;
+  font-size: .82rem;
+  box-shadow: var(--shadow);
 }}
-.node.main {{ width: 92px; height: 92px; left: calc(50% - 46px); top: 104px; }}
-.node.n1 {{ width: 58px; height: 58px; left: 12%; top: 50px; color: var(--accent); }}
-.node.n2 {{ width: 54px; height: 54px; right: 14%; top: 56px; color: var(--accent-2); }}
-.node.n3 {{ width: 52px; height: 52px; left: 20%; bottom: 42px; color: var(--accent-3); }}
-.node.n4 {{ width: 62px; height: 62px; right: 18%; bottom: 34px; color: var(--warning); }}
+.node.main {{ width: 88px; height: 88px; left: calc(50% - 44px); top: 108px; color: var(--accent); border-color: var(--accent); }}
+.node.n1 {{ width: 56px; height: 56px; left: 13%; top: 54px; }}
+.node.n2 {{ width: 52px; height: 52px; right: 15%; top: 60px; }}
+.node.n3 {{ width: 50px; height: 50px; left: 21%; bottom: 44px; }}
+.node.n4 {{ width: 58px; height: 58px; right: 19%; bottom: 36px; }}
 
 .edge {{
   position: absolute;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  opacity: .5;
+  background: var(--border-strong);
+  opacity: .8;
   transform-origin: left center;
 }}
-.edge.e1 {{ width: 230px; left: 18%; top: 96px; transform: rotate(20deg); }}
-.edge.e2 {{ width: 210px; right: 18%; top: 104px; transform: rotate(-18deg); }}
-.edge.e3 {{ width: 190px; left: 24%; bottom: 92px; transform: rotate(-16deg); }}
-.edge.e4 {{ width: 196px; right: 22%; bottom: 86px; transform: rotate(17deg); }}
-
-.memory-row, .evidence-row, .reflection-card, .community-row, .timeline-card {{
-  border-radius: 14px;
-  padding: 14px;
-  margin: 10px 0;
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-}}
-.memory-row strong, .evidence-row strong, .community-row strong {{ font-size: .95rem; }}
-.reflection-card p {{ margin: .4rem 0 .55rem; font-size: .92rem; line-height: 1.55; }}
-.evidence-row .muted, .community-row .muted, .memory-row .muted {{ font-size: .8rem; }}
-
-.timeline-card {{ min-height: 104px; }}
-.timeline-card h4 {{ margin: .45rem 0 0; font-size: .96rem; }}
+.edge.e1 {{ width: 220px; left: 19%; top: 100px; transform: rotate(20deg); }}
+.edge.e2 {{ width: 200px; right: 19%; top: 108px; transform: rotate(-18deg); }}
+.edge.e3 {{ width: 184px; left: 25%; bottom: 94px; transform: rotate(-16deg); }}
+.edge.e4 {{ width: 190px; right: 23%; bottom: 88px; transform: rotate(17deg); }}
 </style>
 """

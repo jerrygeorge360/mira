@@ -1,14 +1,14 @@
 # ruff: noqa: E501
-"""Premium Streamlit Memory Command Center renderer for MIRA.
+"""Claude-style Streamlit Memory Command Center renderer for MIRA.
 
 Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
 
-One screen, tabbed. A slim header carries the brand, live status, and the
-dark/light toggle; a single row of top-level tabs switches between the memory
+A calm, centered, single-column layout inspired by the Claude UI: warm paper
+background, a coral accent, a serif greeting, plain assistant text with soft user
+bubbles, and a rounded composer. Minimal text tabs switch between the memory
 views (Chat, Graph, Working Set, Retrieval, Reflections, Communities, Timeline).
-Each view renders full-width and spacious instead of being crammed into columns.
 """
 
 from __future__ import annotations
@@ -31,18 +31,18 @@ from ui.command_center_data import (
 from ui.command_center_styles import command_center_css
 
 TABS = (
-    "💬  Chat",
-    "🕸  Graph",
-    "🧠  Working Set",
-    "🔍  Retrieval",
-    "✨  Reflections",
-    "🌐  Communities",
-    "🗓  Timeline",
+    "Chat",
+    "Graph",
+    "Working Set",
+    "Retrieval",
+    "Reflections",
+    "Communities",
+    "Timeline",
 )
 
 
 def render_command_center(st: Any) -> None:
-    """Render the one-screen, tabbed Memory Command Center UI."""
+    """Render the Claude-style, single-column Memory Command Center UI."""
     _init_state(st)
     theme = _theme_control(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
@@ -91,14 +91,11 @@ def _render_header(st: Any) -> None:
         """
         <div class="cc-header">
           <div class="brand">
-            <div class="logo-mark">M</div>
-            <div><h1>MIRA</h1><p class="muted">Memory Command Center</p></div>
+            <span class="spark">✻</span>
+            <span class="wordmark">MIRA</span>
+            <span class="muted">· Memory</span>
           </div>
-          <div class="header-right">
-            <span class="top-pill">● MIRA 3.1 PRO</span>
-            <span class="status-online"><span class="pulse"></span>ONLINE</span>
-            <span class="avatar">JG</span>
-          </div>
+          <span class="status-online"><span class="pulse"></span>Online</span>
         </div>
         """,
     )
@@ -109,8 +106,8 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
         st,
         f"""
         <div class="section-title">
-          <div><h2>{escape(title)}</h2><p class="muted">{escape(subtitle)}</p></div>
-          <span class="badge">LIVE</span>
+          <h2>{escape(title)}</h2>
+          <p class="muted">{escape(subtitle)}</p>
         </div>
         """,
     )
@@ -120,40 +117,51 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
 
 
 def _render_chat(st: Any) -> None:
-    _section_title(st, "Conversation", "Grounded in your durable memory")
+    _unsafe(
+        st,
+        """
+        <div class="greeting">
+          <span class="spark-lg">✻</span>
+          <span>Good to see you, Jerry</span>
+        </div>
+        """,
+    )
     for message in CHAT_MESSAGES:
         _render_message(st, message["role"], message["content"])
     _render_brief(st)
 
     st.write("")
-    action_cols = st.columns(len(ACTION_CHIPS))
+    with st.container(key="cc_composer"):
+        field, send = st.columns([0.9, 0.1], gap="small")
+        with field:
+            st.text_input(
+                "Message",
+                placeholder="Reply to MIRA…",
+                label_visibility="collapsed",
+                key="mira_chat_input",
+            )
+        with send:
+            if st.button("↑", key="send_message", use_container_width=True):
+                st.session_state["mira_last_action"] = "Message sent"
+
+    chip_cols = st.columns(len(ACTION_CHIPS))
     for index, chip in enumerate(ACTION_CHIPS):
-        with action_cols[index]:
+        with chip_cols[index]:
             if st.button(chip, key=f"action_{chip}", use_container_width=True):
                 st.session_state["mira_last_action"] = chip
-
-    composer, send = st.columns([0.88, 0.12], gap="small")
-    with composer:
-        st.text_input(
-            "Message",
-            placeholder="Ask MIRA anything about your memory...",
-            label_visibility="collapsed",
-            key="mira_chat_input",
-        )
-    with send:
-        if st.button("Send", key="send_message", use_container_width=True):
-            st.session_state["mira_last_action"] = "Message sent"
     st.caption(f"Last action · {st.session_state['mira_last_action']}")
 
 
 def _render_message(st: Any, role: str, content: str) -> None:
-    label = "You" if role == "user" else "MIRA"
+    if role == "user":
+        _unsafe(st, f'<div class="turn user"><div class="bubble">{escape(content)}</div></div>')
+        return
     _unsafe(
         st,
         f"""
-        <div class="bubble {escape(role)}">
-          <small class="muted">{label}</small>
-          <div>{escape(content)}</div>
+        <div class="turn assistant">
+          <span class="spark">✻</span>
+          <div class="answer">{escape(content)}</div>
         </div>
         """,
     )
@@ -165,10 +173,10 @@ def _render_brief(st: Any) -> None:
         """
         <div class="brief-card">
           <div class="brief-head">
-            <div><h3>NovaDynamics Meeting Brief</h3>
-            <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p></div>
+            <h3>NovaDynamics Meeting Brief</h3>
             <span class="badge">27 sources</span>
           </div>
+          <p class="muted">Synthesized from graph paths, recent turns, and durable memory.</p>
         </div>
         """,
     )
@@ -178,7 +186,7 @@ def _render_brief(st: Any) -> None:
             _unsafe(
                 st,
                 f"""
-                <div class="metric-tile">
+                <div class="tile">
                   <small>{escape(item["label"])}</small>
                   <strong>{escape(item["value"])}</strong>
                 </div>
@@ -214,7 +222,7 @@ def _render_session_working_set(st: Any) -> None:
         _unsafe(
             st,
             f"""
-            <div class="memory-row">
+            <div class="row-card">
               <div class="row-top">
                 <strong>{escape(item["title"])}</strong><span class="badge">{escape(item["type"])}</span>
               </div>
@@ -233,7 +241,7 @@ def _render_retrieval_trace(st: Any) -> None:
         _unsafe(
             st,
             f"""
-            <div class="evidence-row">
+            <div class="row-card">
               <div class="row-top"><span class="badge">{escape(item["rank"])}</span>
               <small class="muted">score {escape(item["score"])}</small></div>
               <strong>{escape(item["title"])}</strong>
@@ -251,7 +259,7 @@ def _render_reflections(st: Any) -> None:
         _unsafe(
             st,
             f"""
-            <div class="reflection-card">
+            <div class="row-card">
               <small class="muted">{escape(str(item["time"]))}</small>
               <p>{escape(str(item["insight"]))}</p>
               <div class="chip-row">{tags}</div>
@@ -266,7 +274,7 @@ def _render_communities(st: Any) -> None:
         _unsafe(
             st,
             f"""
-            <div class="community-row">
+            <div class="row-card">
               <div class="row-top"><strong>{escape(item["title"])}</strong>
               <span class="badge">{escape(item["delta"])}</span></div>
               <small class="muted">{escape(item["people"])} people · {escape(item["insights"])} insights</small>
@@ -283,7 +291,7 @@ def _render_timeline(st: Any) -> None:
             _unsafe(
                 st,
                 f"""
-                <div class="timeline-card">
+                <div class="row-card timeline-card">
                   <small class="muted">{escape(item["when"])} · {escape(item["kind"])}</small>
                   <h4>{escape(item["title"])}</h4>
                 </div>
