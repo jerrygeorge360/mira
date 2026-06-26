@@ -25,6 +25,7 @@ from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
 from ui.command_center import render_command_center
 from ui.foresight_view import render_foresight_timeline
 from ui.graph_viz import render_graph
+from ui.landing import render_landing
 from ui.retrieval_trace import render_retrieval_trace
 from ui.session_view import render_session_working_set
 
@@ -141,7 +142,10 @@ def main(st: Any | None = None) -> None:
         initial_sidebar_state="expanded",
     )
     if st is None:
-        render_command_center(streamlit)
+        if streamlit.session_state.get("mira_entered"):
+            render_command_center(streamlit)
+        else:
+            render_landing(streamlit)
         return
     streamlit.sidebar.title(APP_TITLE)
     selection = streamlit.sidebar.radio("Navigation", page_titles())
