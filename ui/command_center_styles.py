@@ -52,13 +52,24 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 /* ---- Workspace top bar -------------------------------------------------- */
 
-.page-title {{
-  font-size: 1.02rem;
-  font-weight: 600;
-  color: var(--muted);
-  letter-spacing: -.01em;
-  margin-bottom: .6rem;
+.topbar {{
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin: .1rem 0 1.4rem;
 }}
+.topbar-title {{ font-size: 1rem; font-weight: 600; color: var(--text); }}
+.caret {{ color: var(--faint); font-size: .9rem; }}
+.plan-pill {{
+  font-size: .78rem;
+  color: var(--muted);
+  padding: 5px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}}
+.plan-pill b {{ color: var(--accent); font-weight: 600; }}
+.disclaimer {{ text-align: center; color: var(--faint); font-size: .74rem; margin: .8rem 0 0; }}
 
 /* ---- Navigation rail (always-visible left column) ----------------------- */
 
@@ -72,10 +83,8 @@ html, body, [data-testid="stAppViewContainer"] {{
   min-height: calc(100vh - 2.4rem);
 }}
 
-.rail-brand {{ display: flex; gap: 9px; align-items: baseline; padding: .3rem .3rem 1rem; }}
-.spark {{ color: var(--accent); font-size: 1.1rem; line-height: 1; }}
-.spark-lg {{ color: var(--accent); font-size: 1.7rem; line-height: 1; }}
-.wordmark {{ font-weight: 700; font-size: 1.25rem; letter-spacing: -.01em; }}
+.rail-brand {{ padding: .3rem .4rem 1rem; }}
+.wordmark {{ font-weight: 700; font-size: 1.4rem; letter-spacing: -.02em; color: var(--text); }}
 
 .rail-section {{
   margin: 1.1rem .35rem .35rem;
@@ -204,15 +213,26 @@ html, body, [data-testid="stAppViewContainer"] {{
   padding: 11px 8px !important;
 }}
 .st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
-.st-key-send_message {{ display: flex; justify-content: center; }}
-.st-key-send_message .stButton > button {{
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
+.st-key-composer_add {{ display: flex; justify-content: center; }}
+.st-key-composer_add .stButton > button {{
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
   border-radius: 50%;
   padding: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: transparent;
+}}
+.st-key-composer_add .stButton > button:hover {{ color: var(--text); border-color: var(--border-strong); }}
+
+.st-key-send_message {{ display: flex; justify-content: center; }}
+.st-key-send_message .stButton > button {{
+  width: 38px;
+  min-width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  padding: 0;
   color: #fff;
   border: none;
   background: var(--accent);

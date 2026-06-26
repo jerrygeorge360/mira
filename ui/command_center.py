@@ -20,7 +20,6 @@ from textwrap import dedent
 from typing import Any
 
 from ui.command_center_data import (
-    ACTION_CHIPS,
     BRIEF_DETAILS,
     CHAT_MESSAGES,
     COMMUNITIES,
@@ -32,15 +31,19 @@ from ui.command_center_data import (
 )
 from ui.command_center_styles import command_center_css
 
-VIEWS: tuple[tuple[str, str], ...] = (
-    ("Chat", "💬"),
-    ("Graph", "🕸"),
-    ("Working Set", "🧠"),
-    ("Retrieval", "🔍"),
-    ("Reflections", "✨"),
-    ("Communities", "🌐"),
-    ("Timeline", "🗓"),
+# (label, material-symbol icon name) — clean monochrome line icons, Claude-style.
+_PRIMARY_VIEWS: tuple[tuple[str, str], ...] = (("Chat", "chat_bubble"),)
+_MEMORY_VIEWS: tuple[tuple[str, str], ...] = (
+    ("Graph", "hub"),
+    ("Working Set", "layers"),
+    ("Retrieval", "search"),
+    ("Reflections", "auto_awesome"),
+    ("Communities", "groups"),
+    ("Timeline", "timeline"),
 )
+VIEWS: tuple[tuple[str, str], ...] = _PRIMARY_VIEWS + _MEMORY_VIEWS
+
+_TITLES = {"Chat": "NovaDynamics meeting prep"}
 
 _RECENTS = (
     "NovaDynamics meeting prep",
@@ -54,13 +57,21 @@ def render_command_center(st: Any) -> None:
     """Render the Claude-style UI: an always-visible rail plus a workspace."""
     _init_state(st)
 
-    rail_col, main_col = st.columns([0.23, 0.77], gap="large")
+    rail_col, main_col = st.columns([0.24, 0.76], gap="medium")
     with rail_col:
         active, theme = _render_rail(st)
     st.markdown(command_center_css(theme), unsafe_allow_html=True)
     with main_col:
-        icon = next((ic for lbl, ic in VIEWS if lbl == active), "💬")
-        _unsafe(st, f'<div class="page-title">{escape(icon)} &nbsp;{escape(active)}</div>')
+        title = _TITLES.get(active, active)
+        _unsafe(
+            st,
+            f"""
+            <div class="topbar">
+              <div class="topbar-title">{escape(title)} <span class="caret">⌄</span></div>
+              <span class="plan-pill">Free plan · <b>Upgrade</b></span>
+            </div>
+            """,
+        )
         _RENDERERS.get(active, _render_chat)(st)
 
 
@@ -84,37 +95,42 @@ def _theme_control(st: Any) -> str:
     return str(state["mira_theme"])
 
 
+def _nav_button(st: Any, label: str, icon: str, active: str) -> str:
+    """Render one rail nav button; return the (possibly updated) active view."""
+    kind = "primary" if label == active else "secondary"
+    if st.button(
+        f":material/{icon}:  {label}", key=f"nav_{label}", use_container_width=True, type=kind
+    ):
+        st.session_state["mira_view"] = label
+        return label
+    return active
+
+
 def _render_rail(st: Any) -> tuple[str, str]:
     """Render the navigation rail; return (active view, theme) for this run."""
     active = str(st.session_state.get("mira_view", "Chat"))
     with st.container(key="cc_rail"):
-        _unsafe(
-            st,
-            '<div class="rail-brand"><span class="spark">✻</span><span class="wordmark">MIRA</span></div>',
-        )
-        if st.button("✎  New conversation", key="new_chat", use_container_width=True):
+        _unsafe(st, '<div class="rail-brand"><span class="wordmark">MIRA</span></div>')
+
+        if st.button(":material/edit_square:  New chat", key="new_chat", use_container_width=True):
             st.session_state["mira_view"] = "Chat"
             active = "Chat"
+        for label, icon in _PRIMARY_VIEWS:
+            active = _nav_button(st, label, icon, active)
 
-        _unsafe(st, '<p class="rail-section">Views</p>')
-        for label, icon in VIEWS:
-            kind = "primary" if label == active else "secondary"
-            if st.button(
-                f"{icon}  {label}", key=f"nav_{label}", use_container_width=True, type=kind
-            ):
-                st.session_state["mira_view"] = label
-                active = label
+        _unsafe(st, '<p class="rail-section">Memory</p>')
+        for label, icon in _MEMORY_VIEWS:
+            active = _nav_button(st, label, icon, active)
 
         recents = "".join(f'<div class="rail-recent">{escape(t)}</div>' for t in _RECENTS)
         _unsafe(st, f'<p class="rail-section">Recents</p>{recents}')
 
-        _unsafe(st, '<div class="rail-divider"></div>')
         _unsafe(
             st,
             """
             <div class="rail-user">
-              <span class="avatar">JG</span>
-              <div class="rail-user-meta"><strong>Jerry</strong><small>Personal workspace</small></div>
+              <span class="avatar">J</span>
+              <div class="rail-user-meta"><strong>Jerry</strong><small>Free plan</small></div>
             </div>
             """,
         )
@@ -138,26 +154,18 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
 
 
 def _render_chat(st: Any) -> None:
-    _unsafe(
-        st,
-        '<div class="greeting"><span class="spark-lg">✻</span><span>Good to see you, Jerry</span></div>',
-    )
     for message in CHAT_MESSAGES:
         role = "user" if message["role"] == "user" else "assistant"
         with st.chat_message(role, avatar="🧑" if role == "user" else "✨"):
             st.markdown(message["content"])
 
-    _render_brief(st)
-
-    _unsafe(st, '<p class="suggest-label">Suggested follow-ups</p>')
-    chip_cols = st.columns(len(ACTION_CHIPS))
-    for index, chip in enumerate(ACTION_CHIPS):
-        with chip_cols[index]:
-            if st.button(chip, key=f"action_{chip}", use_container_width=True):
-                st.session_state["mira_last_action"] = chip
+    with st.chat_message("assistant", avatar="✨"):
+        _render_brief(st)
 
     with st.container(key="cc_composer"):
-        field, send = st.columns([0.9, 0.1], gap="small", vertical_alignment="center")
+        add, field, send = st.columns([0.08, 0.82, 0.1], vertical_alignment="center")
+        with add:
+            st.button(":material/add:", key="composer_add")
         with field:
             st.text_input(
                 "Message",
@@ -166,9 +174,12 @@ def _render_chat(st: Any) -> None:
                 key="mira_chat_input",
             )
         with send:
-            if st.button("↑", key="send_message"):
+            if st.button(":material/arrow_upward:", key="send_message"):
                 st.session_state["mira_last_action"] = "Message sent"
-    st.caption(f"Last action · {st.session_state['mira_last_action']}")
+    _unsafe(
+        st,
+        '<p class="disclaimer">MIRA can make mistakes. Verify important details.</p>',
+    )
 
 
 def _render_brief(st: Any) -> None:
