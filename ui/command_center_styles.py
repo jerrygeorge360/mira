@@ -5,11 +5,11 @@ Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
 
-The renderer (``ui/command_center.py``) builds the layout from native Streamlit
-columns/containers, so this stylesheet themes two things: the keyed card
-containers (``.st-key-cc_*``) and the native widgets (buttons, tabs, inputs,
-metrics) that live inside them. Theme variables are attached to a global scope
-so they cascade onto native widgets, not just the hand-written HTML fragments.
+The renderer (``ui/command_center.py``) is a single screen with top-level tabs.
+This stylesheet themes the slim header, the tab bar (the primary navigation), the
+native widgets (buttons, inputs, metrics, progress), and the hand-written HTML
+fragments. Theme variables live on a global scope so they cascade onto native
+Streamlit widgets, not just the hand-written HTML.
 """
 
 from __future__ import annotations
@@ -21,113 +21,68 @@ def command_center_css(theme: str) -> str:
     return f"""
 <style>
 :root, [data-testid="stAppViewContainer"] {{
-  --radius-xl: 26px;
-  --radius-lg: 20px;
-  --radius-md: 15px;
-  --radius-sm: 11px;
+  --radius-xl: 24px;
+  --radius-lg: 18px;
+  --radius-md: 14px;
   --ease: cubic-bezier(.2,.8,.2,1);
   --bg: {"#eef3fb" if safe_theme == "light" else "#050812"};
   --bg-2: {"#f8fbff" if safe_theme == "light" else "#09111f"};
-  --panel: {"rgba(255,255,255,.78)" if safe_theme == "light" else "rgba(13, 22, 38, .80)"};
+  --panel: {"rgba(255,255,255,.80)" if safe_theme == "light" else "rgba(13, 22, 38, .72)"};
   --panel-strong: {"rgba(255,255,255,.94)" if safe_theme == "light" else "rgba(18, 30, 52, .94)"};
-  --panel-soft: {"rgba(239,246,255,.84)" if safe_theme == "light" else "rgba(10, 18, 32, .60)"};
+  --panel-soft: {"rgba(239,246,255,.84)" if safe_theme == "light" else "rgba(10, 18, 32, .55)"};
   --text: {"#111827" if safe_theme == "light" else "#ecf7ff"};
   --muted: {"#5e6b82" if safe_theme == "light" else "#8fa3bf"};
   --faint: {"#8290a8" if safe_theme == "light" else "#61748f"};
   --border: {"rgba(98, 119, 154, .20)" if safe_theme == "light" else "rgba(139, 226, 255, .14)"};
   --border-strong: {"rgba(60, 95, 190, .24)" if safe_theme == "light" else "rgba(101, 229, 255, .28)"};
-  --shadow: {"0 22px 70px rgba(46, 76, 140, .18)" if safe_theme == "light" else "0 22px 90px rgba(0, 0, 0, .42)"};
+  --shadow: {"0 20px 60px rgba(46, 76, 140, .16)" if safe_theme == "light" else "0 20px 70px rgba(0, 0, 0, .40)"};
   --glow: {"0 0 36px rgba(92, 116, 255, .18)" if safe_theme == "light" else "0 0 44px rgba(39, 226, 255, .18)"};
   --accent: #23d5ff;
   --accent-2: #8b5cf6;
   --accent-3: #21e6a8;
   --warning: #fbbf24;
-  --danger: #fb7185;
 }}
 
 html, body, [data-testid="stAppViewContainer"] {{
   color: var(--text) !important;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background:
-    radial-gradient(circle at top left, {"rgba(82, 111, 255, .18)" if safe_theme == "light" else "rgba(16, 185, 255, .16)"}, transparent 32rem),
-    radial-gradient(circle at 82% 8%, rgba(139, 92, 246, .15), transparent 28rem),
+    radial-gradient(circle at top left, {"rgba(82, 111, 255, .16)" if safe_theme == "light" else "rgba(16, 185, 255, .14)"}, transparent 34rem),
+    radial-gradient(circle at 84% 4%, rgba(139, 92, 246, .14), transparent 30rem),
     linear-gradient(135deg, var(--bg), var(--bg-2)) !important;
 }}
 
-[data-testid="stHeader"], [data-testid="stToolbar"], footer {{
-  display: none !important;
-}}
+[data-testid="stHeader"], [data-testid="stToolbar"], footer {{ display: none !important; }}
 
 .block-container {{
-  max-width: 100% !important;
-  padding: 1.1rem 1.4rem 1.6rem !important;
+  max-width: 1180px !important;
+  padding: 1rem 1.5rem 2rem !important;
 }}
 
-/* The dark-mode toggle sits flush in the top-right corner. */
+/* Dark-mode toggle pinned top-right, clear of the header. */
 .st-key-mira_theme_toggle {{
   position: absolute;
-  top: .2rem;
+  top: .3rem;
   right: .6rem;
-  z-index: 5;
+  z-index: 6;
 }}
 
-/* ---- Card containers (keyed st.container -> .st-key-cc_*) ---------------- */
+/* ---- Header ------------------------------------------------------------- */
 
-.st-key-cc_sidebar,
-.st-key-cc_topbar,
-.st-key-cc_chat,
-.st-key-cc_brief,
-[class*="st-key-cc_panel"],
-.st-key-cc_timeline {{
-  position: relative;
-  border-radius: var(--radius-xl);
-  padding: 20px;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.09), rgba(255,255,255,.02)),
-    var(--panel);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-  backdrop-filter: blur(22px);
-  -webkit-backdrop-filter: blur(22px);
-}}
-
-.st-key-cc_sidebar {{
-  min-height: calc(100vh - 2.6rem);
-}}
-
-.st-key-cc_topbar {{
-  padding: 12px 16px;
-  border-radius: var(--radius-lg);
-  margin-bottom: 16px;
-}}
-
-[class*="st-key-cc_panel"] {{
-  min-height: 460px;
-}}
-
-.st-key-cc_brief {{
-  margin: 12px 0;
-  background: linear-gradient(135deg, rgba(35, 213, 255, .10), rgba(139, 92, 246, .08));
-  border: 1px solid var(--border-strong);
-}}
-
-.st-key-cc_timeline {{
-  margin-top: 16px;
-}}
-
-/* ---- Branding & sidebar ------------------------------------------------- */
-
-.brand {{
+.cc-header {{
   display: flex;
-  gap: 13px;
+  justify-content: space-between;
   align-items: center;
-  margin-bottom: 18px;
+  gap: 16px;
+  margin: .2rem 0 1.1rem;
 }}
+
+.brand {{ display: flex; gap: 13px; align-items: center; }}
 
 .logo-mark {{
   width: 46px;
   height: 46px;
-  border-radius: 16px;
+  border-radius: 15px;
   display: grid;
   place-items: center;
   font-weight: 900;
@@ -137,21 +92,28 @@ html, body, [data-testid="stAppViewContainer"] {{
   box-shadow: 0 0 30px rgba(35, 213, 255, .34);
 }}
 
-.brand h1 {{ margin: 0; font-size: 1.45rem; letter-spacing: -.04em; }}
-.brand p, .muted {{ margin: 0; color: var(--muted); font-size: .82rem; }}
+.brand h1 {{ margin: 0; font-size: 1.5rem; letter-spacing: -.04em; }}
+.muted {{ margin: 0; color: var(--muted); font-size: .82rem; }}
 
-.status-card {{
-  border-radius: 18px;
-  padding: 14px;
-  margin: 14px 0 10px;
-  background: var(--panel-soft);
+.header-right {{ display: flex; align-items: center; gap: 10px; }}
+
+.top-pill {{
+  display: inline-flex;
+  align-items: center;
+  padding: 7px 13px;
+  border-radius: 999px;
+  color: var(--accent);
+  font-weight: 800;
+  font-size: .78rem;
+  letter-spacing: .04em;
   border: 1px solid var(--border);
+  background: var(--panel-soft);
 }}
 
 .status-online {{
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   font-size: .74rem;
   font-weight: 800;
   color: var(--accent-3);
@@ -166,149 +128,9 @@ html, body, [data-testid="stAppViewContainer"] {{
   box-shadow: 0 0 18px var(--accent-3);
 }}
 
-/* ---- Native buttons ----------------------------------------------------- */
-
-.stButton > button {{
-  width: 100%;
-  border-radius: 14px;
-  padding: 10px 14px;
-  font-weight: 650;
-  color: var(--text);
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-  transition: transform .18s var(--ease), border-color .18s var(--ease), background .18s var(--ease);
-}}
-
-.stButton > button:hover {{
-  transform: translateY(-1px);
-  border-color: var(--border-strong);
-  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
-  color: var(--text);
-}}
-
-/* Sidebar nav buttons read as a left-aligned nav stack. */
-[class*="st-key-nav_"] .stButton > button {{
-  justify-content: flex-start;
-  text-align: left;
-  color: var(--muted);
-}}
-
-/* Accent call-to-action buttons. */
-.st-key-optimize_memory .stButton > button,
-.st-key-send_message .stButton > button {{
-  color: #04111f;
-  font-weight: 850;
-  border: none;
-  background: linear-gradient(135deg, var(--accent), var(--accent-3));
-  box-shadow: 0 14px 34px rgba(35, 213, 255, .24);
-}}
-
-[class*="st-key-action_"] .stButton > button {{
-  border-radius: 999px;
-  font-size: .82rem;
-  color: var(--muted);
-}}
-
-/* ---- Native tabs -------------------------------------------------------- */
-
-.stTabs [data-baseweb="tab-list"] {{
-  gap: 6px;
-  border-bottom: 1px solid var(--border);
-}}
-
-.stTabs [data-baseweb="tab"] {{
-  border-radius: 12px 12px 0 0;
-  padding: 6px 12px;
-  color: var(--muted);
-  font-weight: 600;
-}}
-
-.stTabs [aria-selected="true"] {{
-  color: var(--text);
-  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
-}}
-
-.stTabs [data-baseweb="tab-highlight"] {{ background: var(--accent); }}
-
-/* ---- Native inputs, metrics, progress, captions ------------------------- */
-
-.stTextInput input {{
-  border-radius: 14px !important;
-  border: 1px solid var(--border) !important;
-  background: var(--panel-soft) !important;
-  color: var(--text) !important;
-}}
-
-.stTextInput input::placeholder {{ color: var(--faint) !important; }}
-
-[data-testid="stMetric"] {{
-  border-radius: 15px;
-  padding: 12px 14px;
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-}}
-
-[data-testid="stMetricLabel"] p {{ color: var(--faint) !important; font-size: .76rem; }}
-[data-testid="stMetricValue"] {{ color: var(--text) !important; font-size: 1.3rem; }}
-
-.stProgress > div > div > div {{
-  background: linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
-}}
-
-[data-testid="stCaptionContainer"], .stCaption {{ color: var(--muted) !important; }}
-
-.stToggle label, .stToggle p {{ color: var(--muted) !important; }}
-
-h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
-
-/* ---- Hand-written inner fragments --------------------------------------- */
-
-.panel-title, .chat-title, .brief-head {{
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: start;
-  margin-bottom: 12px;
-}}
-
-.panel-title h3, .brief-head h3 {{ margin: 0; font-size: 1.02rem; letter-spacing: -.03em; }}
-.chat-title h2 {{ margin: 0; font-size: 1.7rem; letter-spacing: -.04em; }}
-
-.badge {{
-  color: var(--accent);
-  font-size: .7rem;
-  font-weight: 850;
-  padding: 5px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-  letter-spacing: .07em;
-}}
-
-.top-pill {{
-  display: inline-flex;
-  align-items: center;
-  height: 100%;
-  padding: 8px 14px;
-  border-radius: 999px;
-  color: var(--accent);
-  font-weight: 800;
-  letter-spacing: .04em;
-  border: 1px solid var(--border);
-  background: var(--panel-soft);
-}}
-
-.profile-row {{
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  justify-content: flex-end;
-  height: 100%;
-}}
-
 .avatar {{
-  width: 30px;
-  height: 30px;
+  width: 32px;
+  height: 32px;
   display: grid;
   place-items: center;
   border-radius: 50%;
@@ -318,50 +140,164 @@ h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
   font-weight: 900;
 }}
 
-.bubble {{
-  border-radius: 20px;
-  padding: 13px 15px;
-  margin: 8px 0;
-  max-width: 88%;
-  line-height: 1.55;
+/* ---- Tabs (primary navigation) ------------------------------------------ */
+
+.stTabs [data-baseweb="tab-list"] {{
+  gap: 8px;
+  padding: 6px;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
 }}
 
+.stTabs [data-baseweb="tab-list"] {{ border-bottom: 1px solid var(--border); }}
+
+.stTabs [data-baseweb="tab"] {{
+  border-radius: 12px;
+  padding: 8px 16px;
+  color: var(--muted);
+  font-weight: 650;
+}}
+
+.stTabs [data-baseweb="tab"]:hover {{ color: var(--text); }}
+
+.stTabs [aria-selected="true"] {{
+  color: var(--text) !important;
+  background: linear-gradient(135deg, rgba(35, 213, 255, .16), rgba(139, 92, 246, .14));
+  box-shadow: var(--glow);
+}}
+
+.stTabs [data-baseweb="tab-highlight"] {{ background: transparent; }}
+.stTabs [data-baseweb="tab-panel"] {{ padding-top: 1.2rem; }}
+
+/* ---- Section heads ------------------------------------------------------ */
+
+.section-title {{
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 12px;
+  margin-bottom: 1rem;
+}}
+
+.section-title h2 {{ margin: 0; font-size: 1.5rem; letter-spacing: -.03em; }}
+
+/* ---- Native widgets ----------------------------------------------------- */
+
+.stButton > button {{
+  width: 100%;
+  border-radius: 12px;
+  padding: 9px 14px;
+  font-weight: 650;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  transition: transform .18s var(--ease), border-color .18s var(--ease), background .18s var(--ease), color .18s var(--ease);
+}}
+
+.stButton > button:hover {{
+  transform: translateY(-1px);
+  color: var(--text);
+  border-color: var(--border-strong);
+  background: linear-gradient(135deg, rgba(35, 213, 255, .14), rgba(139, 92, 246, .12));
+}}
+
+.st-key-send_message .stButton > button {{
+  color: #04111f;
+  font-weight: 850;
+  border: none;
+  background: linear-gradient(135deg, var(--accent), var(--accent-3));
+  box-shadow: 0 14px 34px rgba(35, 213, 255, .24);
+}}
+
+.stTextInput input {{
+  border-radius: 13px !important;
+  border: 1px solid var(--border) !important;
+  background: var(--panel-soft) !important;
+  color: var(--text) !important;
+}}
+.stTextInput input::placeholder {{ color: var(--faint) !important; }}
+
+[data-testid="stMetric"] {{
+  border-radius: 14px;
+  padding: 12px 14px;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+}}
+[data-testid="stMetricLabel"] p {{ color: var(--faint) !important; font-size: .76rem; }}
+[data-testid="stMetricValue"] {{ color: var(--text) !important; font-size: 1.3rem; }}
+
+.stProgress > div > div > div {{
+  background: linear-gradient(90deg, var(--accent), var(--accent-2)) !important;
+}}
+
+[data-testid="stCaptionContainer"], .stCaption {{ color: var(--muted) !important; }}
+.stToggle label, .stToggle p {{ color: var(--muted) !important; }}
+
+h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
+
+/* ---- Cards & fragments -------------------------------------------------- */
+
+.badge {{
+  color: var(--accent);
+  font-size: .7rem;
+  font-weight: 850;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  letter-spacing: .07em;
+  white-space: nowrap;
+}}
+
+.bubble {{
+  border-radius: 18px;
+  padding: 13px 16px;
+  margin: 10px 0;
+  max-width: 78%;
+  line-height: 1.55;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+}}
 .bubble.user {{
   margin-left: auto;
   background: linear-gradient(135deg, rgba(35, 213, 255, .18), rgba(139, 92, 246, .18));
 }}
 
-.bubble.assistant {{ background: var(--panel-soft); }}
-
-.metric-grid {{
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
+.brief-card {{
+  margin: 1.2rem 0 .6rem;
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  background: linear-gradient(135deg, rgba(35, 213, 255, .10), rgba(139, 92, 246, .08));
+  border: 1px solid var(--border-strong);
 }}
+
+.brief-head, .row-top {{
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}}
+.brief-head h3 {{ margin: 0 0 .15rem; font-size: 1.05rem; }}
 
 .metric-tile {{
-  padding: 11px;
-  border-radius: 15px;
-  background: rgba(127, 145, 172, .08);
+  padding: 13px;
+  border-radius: 14px;
+  background: var(--panel-soft);
   border: 1px solid var(--border);
 }}
+.metric-tile small {{ display: block; color: var(--faint); margin-bottom: 5px; font-size: .74rem; }}
+.metric-tile strong {{ font-size: .98rem; }}
 
-.metric-tile small {{ display: block; color: var(--faint); margin-bottom: 4px; font-size: .74rem; }}
-.metric-tile strong {{ font-size: .92rem; }}
-
-.chip-row {{
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-top: 10px;
-}}
-
+.chip-row {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }}
 .chip {{
   display: inline-flex;
   align-items: center;
   color: var(--muted);
-  padding: 7px 11px;
+  padding: 6px 11px;
   font-size: .78rem;
   border-radius: 999px;
   border: 1px solid var(--border);
@@ -369,12 +305,12 @@ h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
 }}
 
 .graph-stage {{
-  height: 210px;
+  height: 320px;
   position: relative;
-  border-radius: 20px;
-  margin-bottom: 12px;
+  border-radius: var(--radius-lg);
+  margin-bottom: 1rem;
   background:
-    radial-gradient(circle at 50% 50%, rgba(35, 213, 255, .18), transparent 8rem),
+    radial-gradient(circle at 50% 48%, rgba(35, 213, 255, .18), transparent 11rem),
     linear-gradient(135deg, rgba(255,255,255,.035), transparent);
   border: 1px solid var(--border);
 }}
@@ -389,52 +325,38 @@ h2, h3, h4 {{ color: var(--text); letter-spacing: -.02em; }}
   background: var(--panel-strong);
   color: var(--text);
   font-weight: 850;
-  font-size: .82rem;
+  font-size: .84rem;
 }}
-
-.node.main {{ width: 78px; height: 78px; left: calc(50% - 39px); top: 64px; }}
-.node.n1 {{ width: 50px; height: 50px; left: 26px; top: 32px; color: var(--accent); }}
-.node.n2 {{ width: 46px; height: 46px; right: 32px; top: 34px; color: var(--accent-2); }}
-.node.n3 {{ width: 44px; height: 44px; left: 56px; bottom: 28px; color: var(--accent-3); }}
-.node.n4 {{ width: 54px; height: 54px; right: 48px; bottom: 20px; color: var(--warning); }}
+.node.main {{ width: 92px; height: 92px; left: calc(50% - 46px); top: 104px; }}
+.node.n1 {{ width: 58px; height: 58px; left: 12%; top: 50px; color: var(--accent); }}
+.node.n2 {{ width: 54px; height: 54px; right: 14%; top: 56px; color: var(--accent-2); }}
+.node.n3 {{ width: 52px; height: 52px; left: 20%; bottom: 42px; color: var(--accent-3); }}
+.node.n4 {{ width: 62px; height: 62px; right: 18%; bottom: 34px; color: var(--warning); }}
 
 .edge {{
   position: absolute;
   height: 1px;
   background: linear-gradient(90deg, transparent, var(--accent), transparent);
-  opacity: .55;
+  opacity: .5;
   transform-origin: left center;
 }}
-.edge.e1 {{ width: 145px; left: 76px; top: 74px; transform: rotate(22deg); }}
-.edge.e2 {{ width: 132px; right: 78px; top: 80px; transform: rotate(-20deg); }}
-.edge.e3 {{ width: 120px; left: 94px; bottom: 70px; transform: rotate(-18deg); }}
-.edge.e4 {{ width: 122px; right: 96px; bottom: 70px; transform: rotate(19deg); }}
+.edge.e1 {{ width: 230px; left: 18%; top: 96px; transform: rotate(20deg); }}
+.edge.e2 {{ width: 210px; right: 18%; top: 104px; transform: rotate(-18deg); }}
+.edge.e3 {{ width: 190px; left: 24%; bottom: 92px; transform: rotate(-16deg); }}
+.edge.e4 {{ width: 196px; right: 22%; bottom: 86px; transform: rotate(17deg); }}
 
 .memory-row, .evidence-row, .reflection-card, .community-row, .timeline-card {{
-  border-radius: 15px;
-  padding: 12px;
-  margin: 8px 0;
+  border-radius: 14px;
+  padding: 14px;
+  margin: 10px 0;
   background: var(--panel-soft);
   border: 1px solid var(--border);
 }}
+.memory-row strong, .evidence-row strong, .community-row strong {{ font-size: .95rem; }}
+.reflection-card p {{ margin: .4rem 0 .55rem; font-size: .92rem; line-height: 1.55; }}
+.evidence-row .muted, .community-row .muted, .memory-row .muted {{ font-size: .8rem; }}
 
-.memory-row strong, .evidence-row strong, .community-row strong {{ font-size: .92rem; }}
-.reflection-card p {{ margin: .35rem 0 .5rem; font-size: .9rem; line-height: 1.5; }}
-.evidence-row .muted, .community-row .muted, .memory-row .muted {{ font-size: .78rem; }}
-
-.row-top {{
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}}
-
-.timeline-card {{ min-height: 96px; }}
-.timeline-card h4 {{ margin: .4rem 0 0; font-size: .94rem; }}
-
-@media (max-width: 1180px) {{
-  [class*="st-key-cc_panel"] {{ min-height: auto; }}
-  .st-key-cc_sidebar {{ min-height: auto; }}
-}}
+.timeline-card {{ min-height: 104px; }}
+.timeline-card h4 {{ margin: .45rem 0 0; font-size: .96rem; }}
 </style>
 """
