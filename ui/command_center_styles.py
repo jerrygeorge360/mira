@@ -41,7 +41,12 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: var(--bg) !important;
 }}
 
-[data-testid="stHeader"], [data-testid="stToolbar"], footer {{ display: none !important; }}
+/* Hide the deploy toolbar/decoration, but keep the header so the sidebar
+   expand control stays clickable when the rail is collapsed. */
+[data-testid="stToolbar"], [data-testid="stDecoration"], footer {{ display: none !important; }}
+[data-testid="stHeader"] {{ background: transparent !important; }}
+[data-testid="stSidebarCollapsedControl"] {{ display: flex !important; }}
+[data-testid="stSidebarCollapseButton"] {{ display: inline-flex !important; }}
 
 .block-container {{
   max-width: 880px !important;
