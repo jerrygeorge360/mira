@@ -88,8 +88,20 @@ html, body, [data-testid="stAppViewContainer"] {{
   padding: 18px 14px;
 }}
 
-.rail-brand {{ padding: .3rem .4rem 1rem; }}
-.wordmark {{ font-weight: 700; font-size: 1.4rem; letter-spacing: -.02em; color: var(--text); }}
+/* Brand button (clickable wordmark that returns to the landing page). */
+.st-key-home_brand {{ margin-bottom: .6rem; }}
+.st-key-home_brand button {{
+  justify-content: flex-start;
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+  font-weight: 700;
+  font-size: 1.4rem;
+  letter-spacing: -.02em;
+  padding: .3rem .4rem;
+}}
+.st-key-home_brand button:hover {{ color: var(--accent) !important; }}
 
 .rail-section {{
   margin: 1.1rem .35rem .35rem;

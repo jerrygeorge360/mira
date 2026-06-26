@@ -95,6 +95,11 @@ def _theme_control(st: Any) -> str:
     return str(state["mira_theme"])
 
 
+def _go_home(st: Any) -> None:
+    """on_click callback: return to the landing page on the next run."""
+    st.session_state["mira_entered"] = False
+
+
 def _select_view(st: Any, label: str) -> None:
     """on_click callback: set the active view before the script reruns.
 
@@ -122,7 +127,13 @@ def _render_rail(st: Any) -> tuple[str, str]:
     """Render the navigation rail; return (active view, theme) for this run."""
     active = str(st.session_state.get("mira_view", "Chat"))
     with st.container(key="cc_rail"):
-        _unsafe(st, '<div class="rail-brand"><span class="wordmark">MIRA</span></div>')
+        st.button(
+            "✻ MIRA",
+            key="home_brand",
+            use_container_width=True,
+            on_click=_go_home,
+            args=(st,),
+        )
 
         st.button(
             ":material/edit_square:  New chat",

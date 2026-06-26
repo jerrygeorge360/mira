@@ -107,7 +107,7 @@ def render_landing(st: Any) -> None:
     with cta_l:
         st.button("Launch MIRA  →", key="hero_launch", on_click=_enter_app, args=(st,))
     with cta_r:
-        st.button("How it works", key="hero_docs")
+        _unsafe(st, '<a href="#how-it-works" class="lp-ghost-btn">How it works</a>')
 
     # --- Live graph visual ---
     _unsafe(st, '<div class="lp-visual-cap">A living, typed memory graph</div>')
@@ -130,7 +130,7 @@ def render_landing(st: Any) -> None:
             )
 
     # --- How it works ---
-    _unsafe(st, '<h2 class="lp-h2">How it works</h2>')
+    _unsafe(st, '<h2 class="lp-h2" id="how-it-works">How it works</h2>')
     step_cols = st.columns(3, gap="medium")
     for col, (num, title, desc) in zip(step_cols, _STEPS, strict=False):
         with col:
@@ -183,6 +183,7 @@ def _landing_css(theme: str) -> str:
   --shadow: {"0 1px 3px rgba(50,40,30,.06), 0 10px 30px rgba(50,40,30,.06)" if safe == "light" else "0 1px 3px rgba(0,0,0,.3)"};
 }}
 
+html {{ scroll-behavior: smooth; }}
 html, body, [data-testid="stAppViewContainer"] {{
   color: var(--text) !important;
   font-family: ui-sans-serif, -apple-system, "Segoe UI", Inter, system-ui, sans-serif;
@@ -221,10 +222,30 @@ html, body, [data-testid="stAppViewContainer"] {{
 .lp-sub {{
   max-width: 640px;
   margin: 0 auto;
+  text-align: center;
   color: var(--muted);
   font-size: 1.12rem;
   line-height: 1.6;
 }}
+
+/* Anchor styled as a secondary button (scrolls to #how-it-works). */
+.lp-ghost-btn {{
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 12px 18px;
+  border-radius: 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text) !important;
+  font-weight: 600;
+  font-size: .96rem;
+  text-decoration: none !important;
+}}
+.lp-ghost-btn:hover {{ border-color: var(--accent); color: var(--accent) !important; }}
+/* Offset anchor target so the heading isn't hidden under the top of the viewport. */
+#how-it-works {{ scroll-margin-top: 2rem; }}
 
 /* CTA buttons */
 .st-key-hero_launch .stButton > button, .st-key-closing_launch .stButton > button {{
