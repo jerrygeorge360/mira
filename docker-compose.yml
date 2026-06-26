@@ -30,3 +30,24 @@ services:
       interval: 30s
       timeout: 5s
       retries: 5
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command:
+      - python
+      - -m
+      - scripts.run_worker
+      - --batch-size
+      - "20"
+      - --poll-interval
+      - "2"
+    environment:
+      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
+      DASHSCOPE_CHAT_ENDPOINT: ${DASHSCOPE_CHAT_ENDPOINT:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions}
+      MIRA_DB_PATH: /data/sqlite/mira.db
+      CHROMA_DB_PATH: /data/chroma
+    volumes:
+      - ./.docker-data/sqlite:/data/sqlite
+      - ./.docker-data/chroma:/data/chroma

@@ -30,10 +30,13 @@ from core.memory.graph import (
     link_entity_mention,
 )
 from core.memory.tiers import evaluate_promotion_candidate, promote_to_hot_memory
+from core.observability import log_event
 from core.session.confirmation import (
     confirm_session_item,
     promote_session_item_to_durable_candidate,
 )
+
+QUEUE_STATUSES = ("pending", "processing", "done", "failed", "dead_letter")
 
 WorkerRunRecord = dict[str, object]
 OrchestratorResult = dict[str, object]
@@ -158,12 +161,25 @@ def run_slow_path_once(batch_size: int) -> list[WorkerRunRecord]:
     return run_records
 
 
-def run_slow_path_loop(batch_size: int, poll_interval_s: float) -> None:
-    """Continuously process slow-path batches until interrupted by the caller."""
+def run_slow_path_loop(
+    batch_size: int,
+    poll_interval_s: float,
+    *,
+    max_iterations: int | None = None,
+) -> None:
+    """Continuously drain the queue through the orchestrator-backed batch path.
+
+    Uses ``run_slow_path_batch`` (the ISSUE-121 orchestrator) -- not the empty
+    step registry -- so the production loop performs real memory work.
+    """
     if poll_interval_s < 0:
         raise ValueError("poll_interval_s must not be negative")
+    iterations = 0
     while True:
-        results = run_slow_path_once(batch_size)
+        iterations += 1
+        results = run_slow_path_batch(batch_size)
+        if max_iterations is not None and iterations >= max_iterations:
+            return
         if not results:
             time.sleep(poll_interval_s)
 
@@ -260,6 +276,142 @@ def run_slow_path_batch(batch_size: int) -> list[OrchestratorResult]:
             mark_failed(queue_id, str(result.get("error_message") or "slow-path step failed"))
         results.append(result)
     return results
+
+
+# --- background worker runtime (ISSUE-124) ----------------------------------
+
+
+def run_worker_once(batch_size: int = 20, *, worker_id: str = "slow-path-worker") -> dict[str, int]:
+    """Process exactly one batch through the orchestrator and return counts."""
+    return run_worker(batch_size=batch_size, once=True, worker_id=worker_id)
+
+
+def run_worker(
+    *,
+    batch_size: int = 20,
+    poll_interval_s: float = 2.0,
+    once: bool = False,
+    max_iterations: int | None = None,
+    worker_id: str = "slow-path-worker",
+) -> dict[str, int]:
+    """Drain the slow-path queue continuously via the orchestrator-backed batch.
+
+    Emits structured worker events, sleeps when the queue is empty, and stops on
+    ``--once``, ``max_iterations``, or interruption -- shutting down without
+    corrupting queue state. One failed observation never stops the batch: each is
+    marked done/failed independently by ``run_slow_path_batch``.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be a positive integer")
+    if poll_interval_s < 0:
+        raise ValueError("poll_interval_s must not be negative")
+
+    log_event(
+        "worker_started",
+        "slow-path worker started",
+        worker_id=worker_id,
+        batch_size=batch_size,
+        poll_interval_s=poll_interval_s,
+    )
+    processed = 0
+    failed = 0
+    iterations = 0
+    try:
+        while True:
+            iterations += 1
+            batch_id = uuid4().hex
+            started = time.monotonic()
+            results = run_slow_path_batch(batch_size)
+            duration_ms = int((time.monotonic() - started) * 1000)
+
+            if not results:
+                log_event(
+                    "batch_empty", "no pending observations", worker_id=worker_id, batch_id=batch_id
+                )
+                if once or _reached(max_iterations, iterations):
+                    break
+                log_event(
+                    "worker_sleeping",
+                    "sleeping until work is available",
+                    worker_id=worker_id,
+                    seconds=poll_interval_s,
+                )
+                time.sleep(poll_interval_s)
+                continue
+
+            log_event(
+                "batch_claimed",
+                "claimed batch",
+                worker_id=worker_id,
+                batch_id=batch_id,
+                count=len(results),
+            )
+            batch_failed = 0
+            for result in results:
+                observation_id = str(result["observation_id"])
+                if result["succeeded"]:
+                    processed += 1
+                    log_event(
+                        "observation_processing_completed",
+                        "observation processed",
+                        worker_id=worker_id,
+                        batch_id=batch_id,
+                        observation_id=observation_id,
+                        status="done",
+                    )
+                else:
+                    failed += 1
+                    batch_failed += 1
+                    log_event(
+                        "observation_processing_failed",
+                        "observation processing failed",
+                        level=logging.WARNING,
+                        worker_id=worker_id,
+                        batch_id=batch_id,
+                        observation_id=observation_id,
+                        status="failed",
+                        error_message=result.get("error_message"),
+                    )
+            log_event(
+                "batch_completed",
+                "batch completed",
+                worker_id=worker_id,
+                batch_id=batch_id,
+                processed=len(results) - batch_failed,
+                failed=batch_failed,
+                duration_ms=duration_ms,
+            )
+            if once or _reached(max_iterations, iterations):
+                break
+    except KeyboardInterrupt:
+        log_event("worker_stopped", "worker interrupted", worker_id=worker_id, status="interrupted")
+        return {"processed": processed, "failed": failed, "iterations": iterations}
+
+    log_event(
+        "worker_stopped",
+        "worker stopped",
+        worker_id=worker_id,
+        processed=processed,
+        failed=failed,
+        iterations=iterations,
+    )
+    return {"processed": processed, "failed": failed, "iterations": iterations}
+
+
+def get_slow_path_queue_status() -> dict[str, int]:
+    """Return queue health: a count per slow-path queue status."""
+    counts = dict.fromkeys(QUEUE_STATUSES, 0)
+    with repository_connection() as connection:
+        rows = connection.execute(
+            "SELECT status, COUNT(*) AS count FROM slow_path_queue GROUP BY status"
+        ).fetchall()
+    for row in rows:
+        counts[str(row["status"])] = int(row["count"])
+    return counts
+
+
+def _reached(max_iterations: int | None, iterations: int) -> bool:
+    return max_iterations is not None and iterations >= max_iterations
 
 
 def _step_session_confirmation(observation_id: str, session_id: str | None) -> dict[str, list[str]]:

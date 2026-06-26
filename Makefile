@@ -1,4 +1,4 @@
-.PHONY: help install run slack test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
+.PHONY: help install run slack worker test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts
@@ -10,6 +10,7 @@ help:
 		'  install    Install development and production requirements' \
 		'  run        Run the UI entry point' \
 		'  slack      Run the Slack bot entry point' \
+		'  worker     Run the slow-path background memory worker' \
 		'  test       Run the test suite' \
 		'  test-slack Run only the Slack bot tests' \
 		'  lint       Run Ruff checks and formatting check' \
@@ -65,6 +66,9 @@ precommit:
 
 ablation:
 	$(PYTHON) -m scripts.run_ablation --stub --out evaluation/results
+
+worker:
+	$(PYTHON) -m scripts.run_worker --batch-size $${BATCH_SIZE:-20} --poll-interval $${POLL_INTERVAL:-2}
 
 benchmark-cost:
 	$(PYTHON) -m scripts.run_benchmark \
