@@ -45,8 +45,32 @@ html, body, [data-testid="stAppViewContainer"] {{
    expand control stays clickable when the rail is collapsed. */
 [data-testid="stToolbar"], [data-testid="stDecoration"], footer {{ display: none !important; }}
 [data-testid="stHeader"] {{ background: transparent !important; }}
-[data-testid="stSidebarCollapsedControl"] {{ display: flex !important; }}
-[data-testid="stSidebarCollapseButton"] {{ display: inline-flex !important; }}
+
+/* Sidebar collapse (chevron) and the expand button shown when the rail is
+   collapsed. Streamlit colours the expand icon as faded text, which is nearly
+   invisible on a custom background, so force a clear coral chevron. */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="stExpandSidebarButton"] {{
+  display: inline-flex !important;
+  visibility: visible !important;
+  opacity: 1 !important;
+}}
+[data-testid="stExpandSidebarButton"] {{
+  position: fixed;
+  top: .55rem;
+  left: .55rem;
+  z-index: 1000;
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 10px !important;
+  box-shadow: var(--shadow);
+}}
+[data-testid="stSidebarCollapseButton"] button,
+[data-testid="stSidebarCollapseButton"] span,
+[data-testid="stExpandSidebarButton"] button,
+[data-testid="stExpandSidebarButton"] span {{
+  color: var(--accent) !important;
+}}
 
 .block-container {{
   max-width: 880px !important;
