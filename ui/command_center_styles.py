@@ -5,10 +5,10 @@ Ownership: Sarah.
 Related issue: ISSUE-130.
 Architecture area: UI.
 
-Warm paper/charcoal palette with a coral accent, a centered single column, a
-serif greeting, understated underline tabs, and a rounded composer — inspired by
-the Claude UI. Theme variables live on a global scope so they cascade onto native
-Streamlit widgets, not just the hand-written HTML fragments.
+Warm paper/charcoal palette with a coral accent. Themes the Claude-style left
+rail, the workspace top bar (with the theme toggle that survives collapsing the
+rail), native chat_message / chat_input, and the hand-written HTML fragments.
+Theme variables live on a global scope so they cascade onto native widgets.
 """
 
 from __future__ import annotations
@@ -24,6 +24,7 @@ def command_center_css(theme: str) -> str:
   --bg: {"#f4f3ee" if safe_theme == "light" else "#262624"};
   --surface: {"#ffffff" if safe_theme == "light" else "#30302e"};
   --surface-soft: {"#faf9f5" if safe_theme == "light" else "#393937"};
+  --rail: {"#ebe9e0" if safe_theme == "light" else "#1f1e1d"};
   --user-bubble: {"#ecebe3" if safe_theme == "light" else "#3a3a37"};
   --text: {"#2d2c28" if safe_theme == "light" else "#f3f2ec"};
   --muted: {"#6b6a62" if safe_theme == "light" else "#a3a299"};
@@ -31,7 +32,7 @@ def command_center_css(theme: str) -> str:
   --border: {"#e6e4da" if safe_theme == "light" else "#42423f"};
   --border-strong: {"#d6d3c6" if safe_theme == "light" else "#54534f"};
   --accent: {"#cc785c" if safe_theme == "light" else "#d97757"};
-  --accent-soft: {"rgba(204, 120, 92, .12)" if safe_theme == "light" else "rgba(217, 119, 87, .16)"};
+  --accent-soft: {"rgba(204, 120, 92, .13)" if safe_theme == "light" else "rgba(217, 119, 87, .17)"};
   --shadow: {"0 1px 3px rgba(50, 40, 30, .06), 0 8px 24px rgba(50, 40, 30, .05)" if safe_theme == "light" else "0 1px 3px rgba(0, 0, 0, .3)"};
 }}
 
@@ -41,14 +42,13 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: var(--bg) !important;
 }}
 
-/* Hide the deploy toolbar/decoration, but keep the header so the sidebar
-   expand control stays clickable when the rail is collapsed. */
+/* Hide deploy toolbar/decoration; keep header so collapse controls survive. */
 [data-testid="stToolbar"], [data-testid="stDecoration"], footer {{ display: none !important; }}
 [data-testid="stHeader"] {{ background: transparent !important; }}
 
-/* Sidebar collapse (chevron) and the expand button shown when the rail is
-   collapsed. Streamlit colours the expand icon as faded text, which is nearly
-   invisible on a custom background, so force a clear coral chevron. */
+/* Sidebar collapse + the expand button shown when the rail is collapsed.
+   Streamlit paints the expand icon as faded text (near-invisible on a custom
+   theme), so force a clear coral chevron and pin the expand button. */
 [data-testid="stSidebarCollapseButton"],
 [data-testid="stExpandSidebarButton"] {{
   display: inline-flex !important;
@@ -65,35 +65,98 @@ html, body, [data-testid="stAppViewContainer"] {{
   border-radius: 10px !important;
   box-shadow: var(--shadow);
 }}
-[data-testid="stSidebarCollapseButton"] button,
-[data-testid="stSidebarCollapseButton"] span,
-[data-testid="stExpandSidebarButton"] button,
-[data-testid="stExpandSidebarButton"] span {{
+[data-testid="stSidebarCollapseButton"] button, [data-testid="stSidebarCollapseButton"] span,
+[data-testid="stExpandSidebarButton"] button, [data-testid="stExpandSidebarButton"] span {{
   color: var(--accent) !important;
 }}
 
 .block-container {{
   max-width: 880px !important;
-  padding: 2rem 1.5rem 3rem !important;
+  padding: 1.4rem 1.5rem 7rem !important;
 }}
 
-/* ---- Sidebar rail (view navigation) ------------------------------------- */
+/* ---- Workspace top bar -------------------------------------------------- */
+
+.page-title {{
+  font-size: 1.02rem;
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: -.01em;
+}}
+.st-key-mira_theme_toggle {{ display: flex; justify-content: flex-end; }}
+
+/* ---- Sidebar rail ------------------------------------------------------- */
 
 [data-testid="stSidebar"] {{
-  background: {"#ebe9e0" if safe_theme == "light" else "#1f1e1d"} !important;
+  background: var(--rail) !important;
   border-right: 1px solid var(--border);
 }}
-[data-testid="stSidebar"] > div {{ padding-top: 1.4rem; }}
+[data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {{ padding-top: .5rem; }}
 
-.brand {{ display: flex; gap: 9px; align-items: baseline; padding: 0 .25rem; }}
+.sb-brand {{ display: flex; gap: 9px; align-items: baseline; padding: .2rem .3rem 1rem; }}
 .spark {{ color: var(--accent); font-size: 1.05rem; line-height: 1; }}
-.spark-lg {{ color: var(--accent); font-size: 1.6rem; line-height: 1; }}
+.spark-lg {{ color: var(--accent); font-size: 1.7rem; line-height: 1; }}
 .wordmark {{ font-weight: 700; font-size: 1.25rem; letter-spacing: -.01em; }}
-.muted {{ margin: 0; color: var(--muted); font-size: .85rem; }}
-.sb-tagline {{ margin: .15rem .25rem 1.2rem; color: var(--faint); font-size: .76rem; }}
-.sb-divider {{ height: 1px; background: var(--border); margin: 1rem .25rem; }}
 
-/* Sidebar nav buttons read as a quiet list; the active one is coral-tinted. */
+.sb-section {{
+  margin: 1.2rem .35rem .35rem;
+  color: var(--faint);
+  font-size: .72rem;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}}
+
+.sb-recent {{
+  padding: 7px 12px;
+  margin: 1px .15rem;
+  border-radius: 9px;
+  color: var(--muted);
+  font-size: .86rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: default;
+}}
+.sb-recent:hover {{ background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"}; color: var(--text); }}
+
+.sb-footer {{
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1.4rem;
+  padding: 10px 8px 0;
+  border-top: 1px solid var(--border);
+}}
+.sb-user {{ display: flex; flex-direction: column; line-height: 1.25; }}
+.sb-user strong {{ font-size: .9rem; }}
+.sb-user small {{ color: var(--faint); font-size: .74rem; }}
+
+.avatar {{
+  width: 32px;
+  height: 32px;
+  flex: 0 0 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: linear-gradient(135deg, var(--accent), #b5614a);
+  font-size: .76rem;
+  font-weight: 800;
+}}
+
+/* New-conversation button (accent) + nav buttons (quiet list). */
+.st-key-new_chat .stButton > button {{
+  justify-content: flex-start;
+  text-align: left;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 600;
+  border-radius: 11px;
+}}
+.st-key-new_chat .stButton > button:hover {{ border-color: var(--accent); color: var(--accent); }}
+
 [data-testid="stSidebar"] .stButton > button {{
   justify-content: flex-start;
   text-align: left;
@@ -101,8 +164,8 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: transparent;
   color: var(--muted);
   font-weight: 500;
-  border-radius: 10px;
-  padding: 9px 12px;
+  border-radius: 9px;
+  padding: 8px 12px;
 }}
 [data-testid="stSidebar"] .stButton > button:hover {{
   background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"};
@@ -115,93 +178,57 @@ html, body, [data-testid="stAppViewContainer"] {{
   font-weight: 600;
 }}
 
-/* Theme toggle sits in the sidebar footer. */
-.st-key-mira_theme_toggle {{ padding: 0 .25rem; }}
-
-/* ---- Chat --------------------------------------------------------------- */
+/* ---- Chat (native chat_message / chat_input) ---------------------------- */
 
 .greeting {{
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 1.2rem 0 2rem;
+  margin: 1rem 0 1.6rem;
   font-family: Georgia, "Times New Roman", serif;
-  font-size: 1.9rem;
+  font-size: 1.8rem;
   letter-spacing: -.01em;
-  color: var(--text);
 }}
 
-.turn {{ display: flex; margin: 1.1rem 0; }}
-.turn.user {{ justify-content: flex-end; }}
-.turn.assistant {{ gap: 11px; align-items: flex-start; }}
-.turn.assistant .spark {{ margin-top: 3px; font-size: 1rem; }}
-
-.bubble {{
+[data-testid="stChatMessage"] {{
+  background: transparent;
+  padding: .35rem 0;
+  gap: .7rem;
+}}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarUser"]) {{
   background: var(--user-bubble);
   border-radius: 16px;
-  padding: 11px 16px;
-  max-width: 80%;
-  line-height: 1.6;
-  font-size: .96rem;
+  padding: .4rem 1rem;
+  margin: .5rem 0;
+}}
+[data-testid="stChatMessageAvatarAssistant"] {{
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  border: 1px solid var(--border);
+}}
+[data-testid="stChatMessageAvatarUser"] {{
+  background: var(--surface-soft) !important;
+  border: 1px solid var(--border);
 }}
 
-.answer {{
-  line-height: 1.7;
-  font-size: 1rem;
-  color: var(--text);
-  max-width: 92%;
+[data-testid="stChatInput"] {{
+  background: var(--surface) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: 24px !important;
 }}
-
-/* ---- Suggested follow-ups + composer ------------------------------------ */
+[data-testid="stChatInput"]:focus-within {{ border-color: var(--accent) !important; }}
+[data-testid="stChatInput"] textarea {{ color: var(--text) !important; }}
+[data-testid="stChatInput"] textarea::placeholder {{ color: var(--faint) !important; }}
+[data-testid="stChatInputSubmitButton"] {{ color: var(--accent) !important; }}
+[data-testid="stBottom"] > div {{ background: var(--bg) !important; }}
 
 .suggest-label {{
-  margin: 1.6rem 0 .5rem;
+  margin: 1.4rem 0 .5rem;
   color: var(--faint);
-  font-size: .76rem;
+  font-size: .74rem;
   font-weight: 600;
   letter-spacing: .04em;
   text-transform: uppercase;
-}}
-
-.st-key-cc_composer {{
-  margin-top: 1rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 26px;
-  padding: 4px 6px 4px 10px;
-  background: var(--surface);
-  box-shadow: var(--shadow);
-}}
-.st-key-cc_composer:focus-within {{ border-color: var(--accent); }}
-
-.st-key-cc_composer .stTextInput input {{
-  border: none !important;
-  background: transparent !important;
-  color: var(--text) !important;
-  font-size: .98rem !important;
-  padding: 11px 8px !important;
-}}
-.st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
-
-/* Round coral send button, centered in its narrow column. */
-.st-key-send_message {{ display: flex; justify-content: center; }}
-.st-key-send_message .stButton > button {{
-  width: 40px;
-  min-width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  padding: 0;
-  font-size: 1.15rem;
-  font-weight: 700;
-  line-height: 1;
-  color: #ffffff;
-  border: none;
-  background: var(--accent);
-}}
-.st-key-send_message .stButton > button:hover {{
-  color: #ffffff;
-  background: var(--accent);
-  filter: brightness(1.05);
-  transform: none;
 }}
 
 /* ---- Native widgets ----------------------------------------------------- */
@@ -217,19 +244,7 @@ html, body, [data-testid="stAppViewContainer"] {{
   background: var(--surface);
   transition: background .16s var(--ease), color .16s var(--ease), border-color .16s var(--ease);
 }}
-.stButton > button:hover {{
-  color: var(--text);
-  border-color: var(--border-strong);
-  background: var(--surface-soft);
-}}
-
-.stTextInput input {{
-  border-radius: 12px !important;
-  border: 1px solid var(--border) !important;
-  background: var(--surface) !important;
-  color: var(--text) !important;
-}}
-.stTextInput input::placeholder {{ color: var(--faint) !important; }}
+.stButton > button:hover {{ color: var(--text); border-color: var(--border-strong); background: var(--surface-soft); }}
 
 [data-testid="stMetric"] {{
   border-radius: 14px;
@@ -241,15 +256,13 @@ html, body, [data-testid="stAppViewContainer"] {{
 [data-testid="stMetricValue"] {{ color: var(--text) !important; font-size: 1.3rem; }}
 
 .stProgress > div > div > div {{ background: var(--accent) !important; }}
-
 [data-testid="stCaptionContainer"], .stCaption {{ color: var(--faint) !important; }}
 .stToggle label, .stToggle p {{ color: var(--muted) !important; }}
 
 /* ---- Section heads & cards ---------------------------------------------- */
 
 .section-title {{ margin-bottom: 1.2rem; }}
-.section-title h2 {{ margin: 0 0 .2rem; font-size: 1.5rem; letter-spacing: -.02em; color: var(--text); font-family: Georgia, "Times New Roman", serif; }}
-
+.section-title h2 {{ margin: 0 0 .2rem; font-size: 1.5rem; letter-spacing: -.02em; font-family: Georgia, "Times New Roman", serif; }}
 h2, h3, h4 {{ color: var(--text); }}
 
 .badge {{
@@ -261,18 +274,6 @@ h2, h3, h4 {{ color: var(--text); }}
   background: var(--accent-soft);
   white-space: nowrap;
 }}
-
-.brief-card {{
-  margin: 1.4rem 0 .7rem;
-  border-radius: 16px;
-  padding: 16px 18px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow);
-}}
-.brief-head {{ display: flex; justify-content: space-between; align-items: center; gap: 10px; }}
-.brief-head h3 {{ margin: 0; font-size: 1.05rem; }}
-.brief-card .muted {{ margin-top: .35rem; }}
 
 .tile {{
   padding: 13px;
@@ -310,47 +311,6 @@ h2, h3, h4 {{ color: var(--text); }}
 .timeline-card {{ min-height: 100px; }}
 .timeline-card h4 {{ margin: .4rem 0 0; font-size: .94rem; }}
 
-/* ---- Graph -------------------------------------------------------------- */
-
-.graph-stage {{
-  height: 320px;
-  position: relative;
-  border-radius: 16px;
-  margin-bottom: 1rem;
-  background:
-    radial-gradient(circle at 50% 46%, var(--accent-soft), transparent 12rem),
-    var(--surface);
-  border: 1px solid var(--border);
-}}
-
-.node {{
-  position: absolute;
-  display: grid;
-  place-items: center;
-  border-radius: 50%;
-  border: 1px solid var(--border-strong);
-  background: var(--surface);
-  color: var(--text);
-  font-weight: 600;
-  font-size: .82rem;
-  box-shadow: var(--shadow);
-}}
-.node.main {{ width: 88px; height: 88px; left: calc(50% - 44px); top: 108px; color: var(--accent); border-color: var(--accent); }}
-.node.n1 {{ width: 56px; height: 56px; left: 13%; top: 54px; }}
-.node.n2 {{ width: 52px; height: 52px; right: 15%; top: 60px; }}
-.node.n3 {{ width: 50px; height: 50px; left: 21%; bottom: 44px; }}
-.node.n4 {{ width: 58px; height: 58px; right: 19%; bottom: 36px; }}
-
-.edge {{
-  position: absolute;
-  height: 1px;
-  background: var(--border-strong);
-  opacity: .8;
-  transform-origin: left center;
-}}
-.edge.e1 {{ width: 220px; left: 19%; top: 100px; transform: rotate(20deg); }}
-.edge.e2 {{ width: 200px; right: 19%; top: 108px; transform: rotate(-18deg); }}
-.edge.e3 {{ width: 184px; left: 25%; bottom: 94px; transform: rotate(-16deg); }}
-.edge.e4 {{ width: 190px; right: 23%; bottom: 88px; transform: rotate(17deg); }}
+.muted {{ margin: 0; color: var(--muted); font-size: .85rem; }}
 </style>
 """
