@@ -370,7 +370,11 @@ def run_worker(
             iterations += 1
             batch_id = uuid4().hex
             started = time.monotonic()
-            results = run_slow_path_batch(batch_size, config=config)
+            results = (
+                run_slow_path_batch(batch_size, config=config)
+                if semantic_config is not None
+                else run_slow_path_batch(batch_size)
+            )
             duration_ms = int((time.monotonic() - started) * 1000)
 
             if not results:
@@ -690,7 +694,15 @@ def _step_foresight(
         return {}
     ambient_context: dict[str, object] = {"current_time": _now()}
     created: list[str] = []
-    records = detect_foresight(observation_id, content, ambient_context)
+    try:
+        records = detect_foresight(observation_id, content, ambient_context)
+    except Exception as error:  # noqa: BLE001 - semantic memory must not break factual slow path
+        LOGGER.warning(
+            "Skipping foresight for %s because detection failed: %s",
+            observation_id,
+            str(error) or error.__class__.__name__,
+        )
+        return {}
     for record in records[: config.max_foresight_records_per_observation]:
         foresight_content = str(record.get("content", "")).strip()
         if not foresight_content or _foresight_exists(observation_id, foresight_content):
