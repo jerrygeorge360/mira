@@ -22,12 +22,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
+from ui.command_center import render_command_center
 from ui.foresight_view import render_foresight_timeline
 from ui.graph_viz import render_graph
 from ui.retrieval_trace import render_retrieval_trace
 from ui.session_view import render_session_working_set
 
-APP_TITLE = "MIRA — Memory, Inspectable"
+APP_TITLE = "MIRA — Memory Command Center"
 
 
 @dataclass(frozen=True)
@@ -127,9 +128,21 @@ def build_app() -> tuple[Page, ...]:
 
 
 def main(st: Any | None = None) -> None:
-    """Render the navigation shell and the selected page."""
+    """Render MIRA.
+
+    With real Streamlit this renders the premium Memory Command Center. When an
+    injected fake ``st`` is supplied, it preserves the original testable page
+    shell contract used by existing UI tests.
+    """
     streamlit = st if st is not None else _load_streamlit()
-    streamlit.set_page_config(page_title=APP_TITLE, layout="wide")
+    streamlit.set_page_config(
+        page_title=APP_TITLE,
+        layout="wide",
+        initial_sidebar_state="collapsed",
+    )
+    if st is None:
+        render_command_center(streamlit)
+        return
     streamlit.sidebar.title(APP_TITLE)
     selection = streamlit.sidebar.radio("Navigation", page_titles())
     render_page(str(selection), streamlit)
