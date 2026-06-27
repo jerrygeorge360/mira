@@ -109,9 +109,13 @@ prompts but never rewrites prior turns. The slow path records the durable change
 
 ## Cross-session slow path
 
-Orchestrator: [`core/memory/slow_path.py`](../core/memory/slow_path.py) — **stub**
-(`run_slow_path` / `enrich_observation`). The per-observation steps it is meant to chain are
-all implemented and individually tested:
+Orchestrator and worker runtime: [`core/memory/slow_path.py`](../core/memory/slow_path.py).
+`run_slow_path_batch`, `run_slow_path_for_observation`, `run_worker`, and
+`run_worker_once` claim queue records, chain the memory-processing steps, mark queue items
+done/failed independently, and expose worker counts for diagnostics. The older async
+adapters (`run_slow_path` / `enrich_observation`) delegate into this orchestrator path.
+
+The orchestrator chains these implemented per-observation steps:
 
 | Step | Module | Function(s) |
 | --- | --- | --- |
@@ -124,9 +128,9 @@ all implemented and individually tested:
 | Tier promotion/demotion | [`core/memory/tiers.py`](../core/memory/tiers.py) | `evaluate_promotion_candidate`, `promote_to_hot_memory` |
 | Session item confirmation | [`core/session/confirmation.py`](../core/session/confirmation.py) | `confirm_session_item`, ... |
 
-Work is claimed from the queue via `claim_slow_path_batch` /
-`mark_queue_done` ([`core/db/repositories.py`](../core/db/repositories.py)). Building the
-async batch runner that wires these steps in order is the remaining integration work.
+Work is claimed from the queue via `claim_pending_batch`, then completed with `mark_done` or
+`mark_failed` ([`core/db/repositories.py`](../core/db/repositories.py)). One failed
+observation does not stop the rest of the batch.
 
 ## Graph model
 
@@ -172,7 +176,10 @@ Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
   uncertainty.
 
 The public dispatcher [`router.py`](../core/retrieval/router.py) (`route_retrieval(query,
-mode, limit)`) is a **stub**; the agent currently dispatches inline via `_dispatch_retrieval`.
+mode, limit)`) is still a **stub**; the agent currently dispatches inline via
+`_dispatch_retrieval`. The vector search boundary [`vector.py`](../core/retrieval/vector.py)
+is also a **stub**; Chroma indexing and rebuild helpers live in
+[`core/db/chroma.py`](../core/db/chroma.py).
 
 ## Prompt builder
 
@@ -231,6 +238,54 @@ Background, graph-derived warm memory — **not** transcript compression.
 deterministic connected-components fallback), `summarize_community` produces a title +
 summary linked to member nodes, and `store_community_summary` persists it and indexes
 `title + summary` in Chroma for Deep Mode. Detection never runs during a query.
+
+## UI and demo surfaces
+
+Modules: [`ui/app.py`](../ui/app.py), [`ui/landing.py`](../ui/landing.py),
+[`ui/command_center.py`](../ui/command_center.py), and
+[`ui/command_center_styles.py`](../ui/command_center_styles.py).
+
+The Streamlit app has two layers:
+
+1. **Landing page** — a product/research narrative for MIRA: capabilities, architecture,
+   official benchmark tracks, and ablation studies. Its purpose is orientation and demo
+   setup, not runtime memory logic.
+2. **Memory Command Center** — the inspectable application shell used for the demo. It has a
+   collapsible Claude-style sidebar, clickable chat history, central chat workspace, graph
+   inspector, Session Working Set, retrieval trace, reflections, community summaries,
+   timeline, and evaluation dashboard.
+
+The command center is deliberately **demo-first**. Static/mock data keeps the UI usable while
+the backend is incomplete or expensive to run. This is a UI contract, not a memory contract:
+frontend demo data must never be treated as durable memory or source of truth.
+
+The chat surface is the bridge to actual usage. Demo mode calls
+[`MockChatAgent`](../ui/chat.py); real mode calls
+`core.agent.Agent(DEFAULT_SESSION_ID).respond(...)`, which enters the runtime path described
+at the top of this document. Real mode therefore requires a configured SQLite database,
+DashScope/Qwen credentials, and the relevant retrieval/memory components.
+
+The graph panel is an inspectable representation of the typed memory graph. Clicking a node
+opens a detail inspector with type/status, summary, evidence IDs, and connected paths. This
+matches the architecture goal that graph edges are read paths for Relational Mode, not just a
+decorative visualization.
+
+## Evaluation reporting
+
+Modules: [`evaluation/`](../evaluation), landing evaluation sections in
+[`ui/landing.py`](../ui/landing.py), and the Evaluation Dashboard in
+[`ui/app.py`](../ui/app.py).
+
+MIRA keeps **official benchmark results** separate from **ablation studies**:
+
+- Official benchmark results evaluate the complete system on external/standard memory tasks
+  such as LongMemEval and LoCoMo-style temporal conversational memory.
+- Ablation studies remove one MIRA component at a time and measure the drop. Example
+  components include Session Working Set, keyword retrieval, typed graph traversal,
+  foresight records, and reflections/community summaries.
+
+This separation matters because a benchmark score answers "how well does MIRA work as a
+whole?", while an ablation answers "which architectural component caused the improvement?".
 
 ## Sensa-style ambient context
 

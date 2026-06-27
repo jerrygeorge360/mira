@@ -79,8 +79,23 @@ python -m scripts.seed_demo --reset
 make run
 ```
 
+The app opens on a polished landing page and then launches the **Memory Command Center**:
+
+- collapsible Claude-style sidebar with chat history and memory surfaces;
+- central chat workspace with a demo/real-agent toggle;
+- graph viewer with click-to-inspect memory nodes, evidence IDs, and connected paths;
+- Session Working Set, Retrieval Trace, Reflections, Community Summaries, Timeline, and
+  Evaluation Dashboard surfaces;
+- separate UI sections for official benchmark tracks and ablation studies.
+
+Most visual panels are intentionally backed by deterministic demo data so the team can
+rehearse the story without waiting for organic long conversations. The chat surface has an
+explicit **Use real MIRA agent** toggle: demo mode calls a deterministic mock agent; real
+mode calls `core.agent.Agent(DEFAULT_SESSION_ID).respond(...)` and therefore requires the
+database, DashScope/Qwen credentials, and runtime memory components to be configured.
+
 The judge/user walkthrough is in [docs/demo-script.md](docs/demo-script.md). You can also
-drive the runtime directly:
+drive the runtime directly without the UI:
 
 ```python
 from core.db.repositories import configure_database, create_session
@@ -171,12 +186,16 @@ typed stub. (Run `make check` to validate everything marked implemented.)
 | Agent runtime (`handle_user_message`) + answer trace | ✅ Implemented |
 | Structured logging / secret redaction | ✅ Implemented |
 | Evaluation: cases harness, LongMemEval/LoCoMo adapter, ablations | ✅ Implemented |
+| Evaluation judge: deterministic, LLM, and hybrid judge modes | ✅ Implemented |
+| Premium Streamlit UI shell + Memory Command Center | ✅ Implemented (demo-first, real-agent chat toggle) |
 | MCP memory server skeleton, Slack bot, Docker setup | ✅ Implemented |
 | Cross-session slow-path **step** functions | ✅ Implemented |
-| Async slow-path **orchestrator** (`run_slow_path` batch runner) | 🟡 Stub — steps exist; chaining pending |
+| Async slow-path **orchestrator**, worker loop, and queue status helpers | ✅ Implemented |
 | Public retrieval **dispatcher** (`router.route_retrieval`) | 🟡 Stub — classifier done in `retrieval/auto.py` |
+| Vector search boundary (`retrieval/vector.py`) | 🟡 Stub — Chroma index helpers live in `core/db/chroma.py` |
+| Standalone prompt builder facade (`context/prompt_builder.py`) | 🟡 Stub — agent renders centralized prompts inline |
 | Durable hot working-memory pool (`memory/working.py`) | 🟡 Stub |
-| LLM judge, vector helper, function-calling helper, memory-inspector UI | 🟡 Stub |
+| Function-calling helper and memory-inspector UI contract | 🟡 Stub |
 | Full procedural memory, multimodal, multi-user | ⛔ Out of scope (future work) |
 
 ## Team ownership
@@ -184,6 +203,19 @@ typed stub. (Run `make check` to validate everything marked implemented.)
 - **Jerry** — architecture, core memory, retrieval, context, and LLM integration.
 - **Kelechi** — database, deployment, infrastructure, and Slack/MCP.
 - **Sarah** — UI, graph visualization, evaluation, and demo mode.
+
+## Evaluation surfaces
+
+MIRA separates two evaluation stories:
+
+- **Official benchmark results** — whole-system runs against external/standard memory tasks
+  such as LongMemEval and LoCoMo-style temporal conversational memory.
+- **Ablation studies** — internal component-removal runs that measure what degrades when one
+  MIRA subsystem is disabled, such as the Session Working Set, keyword retrieval, typed graph
+  traversal, foresight records, or reflections/community summaries.
+
+The landing page introduces both categories. The in-app Evaluation Dashboard is the place to
+record the actual numbers once runs are complete.
 
 ## Architecture decision records
 
