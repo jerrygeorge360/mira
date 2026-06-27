@@ -170,11 +170,16 @@ def render_landing(st: Any) -> None:
         _unsafe(st, '<a href="#how-it-works" class="lp-ghost-btn">How it works</a>')
 
     # --- Product visual ---
-    _unsafe(st, '<div class="lp-visual-cap">A calm command surface over a living memory graph</div>')
+    _unsafe(
+        st, '<div class="lp-visual-cap">A calm command surface over a living memory graph</div>'
+    )
     st.components.v1.html(_landing_memory_visual(theme), height=390)
 
     # --- Features ---
-    _unsafe(st, '<div id="capabilities" class="lp-anchor"></div><h2 class="lp-h2">One memory, many capabilities</h2>')
+    _unsafe(
+        st,
+        '<div id="capabilities" class="lp-anchor"></div><h2 class="lp-h2">One memory, many capabilities</h2>',
+    )
     cols = st.columns(3, gap="medium")
     for index, (icon, title, desc) in enumerate(_FEATURES):
         with cols[index % 3]:
@@ -190,7 +195,9 @@ def render_landing(st: Any) -> None:
             )
 
     # --- How it works ---
-    _unsafe(st, '<div id="how-it-works" class="lp-anchor"></div><h2 class="lp-h2">How it works</h2>')
+    _unsafe(
+        st, '<div id="how-it-works" class="lp-anchor"></div><h2 class="lp-h2">How it works</h2>'
+    )
     step_cols = st.columns(3, gap="medium")
     for col, (num, title, desc) in zip(step_cols, _STEPS, strict=False):
         with col:
@@ -230,9 +237,15 @@ def render_landing(st: Any) -> None:
         </section>
         """,
     )
-    _unsafe(st, '<div id="official-benchmarks" class="lp-anchor"></div><h3 class="lp-mini-h">Official benchmark tracks</h3>')
+    _unsafe(
+        st,
+        '<div id="official-benchmarks" class="lp-anchor"></div><h3 class="lp-mini-h">Official benchmark tracks</h3>',
+    )
     _render_evaluation_cards(st, _OFFICIAL_BENCHMARKS, metric_label="Metric to report")
-    _unsafe(st, '<div id="ablation-studies" class="lp-anchor"></div><h3 class="lp-mini-h">Ablation studies</h3>')
+    _unsafe(
+        st,
+        '<div id="ablation-studies" class="lp-anchor"></div><h3 class="lp-mini-h">Ablation studies</h3>',
+    )
     _render_evaluation_cards(st, _ABLATION_STUDIES, metric_label="Ablation metric")
 
     # --- Closing CTA + footer ---

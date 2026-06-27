@@ -369,7 +369,7 @@ def _render_chat(st: Any) -> None:
         f"""
         <div class="chat-mode-row">
           <span class="badge">{escape(mode)}</span>
-          <small class="muted">{escape(str(st.session_state.get(_CC_AGENT_STATUS_KEY, 'Ready')))}</small>
+          <small class="muted">{escape(str(st.session_state.get(_CC_AGENT_STATUS_KEY, "Ready")))}</small>
         </div>
         """,
     )
