@@ -47,9 +47,65 @@ _MOCK_MEMORY = [
     {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
     {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
 ]
-_MOCK_EVAL = [
-    {"category": "direct_fact_recall", "passed": 1, "total": 1},
-    {"category": "session_correction_handling", "passed": 1, "total": 1},
+_MOCK_BENCHMARK_RESULTS = [
+    {
+        "benchmark": "LongMemEval",
+        "task": "Long-term cross-session recall",
+        "primary_metric": "Recall / evidence F1",
+        "mira_result": "Pending",
+        "notes": "Official external-style memory benchmark track.",
+    },
+    {
+        "benchmark": "LoCoMo-style",
+        "task": "Temporal conversational memory",
+        "primary_metric": "Temporal QA accuracy",
+        "mira_result": "Pending",
+        "notes": "Conversation timeline and temporal dependency track.",
+    },
+]
+
+_MOCK_ABLATION_RESULTS = [
+    {
+        "ablation": "Remove Session Working Set",
+        "expected_drop": "High",
+        "metric_to_report": "Next-turn correction compliance",
+        "why_it_matters": "Tests whether immediate corrections work before durable confirmation.",
+        "result": "Pending",
+    },
+    {
+        "ablation": "Remove keyword retrieval",
+        "expected_drop": "Medium",
+        "metric_to_report": "Exact-name / deadline recall",
+        "why_it_matters": (
+            "Tests whether semantic search alone misses IDs, names, and exact phrases."
+        ),
+        "result": "Pending",
+    },
+    {
+        "ablation": "Remove typed graph traversal",
+        "expected_drop": "High",
+        "metric_to_report": "Contradiction and supersession QA",
+        "why_it_matters": (
+            "Tests whether MIRA can answer change/relationship questions without graph paths."
+        ),
+        "result": "Pending",
+    },
+    {
+        "ablation": "Remove foresight records",
+        "expected_drop": "Medium",
+        "metric_to_report": "Future-task activation precision",
+        "why_it_matters": (
+            "Tests whether deadlines and pending commitments resurface at the right time."
+        ),
+        "result": "Pending",
+    },
+    {
+        "ablation": "Remove reflections/community summaries",
+        "expected_drop": "Medium",
+        "metric_to_report": "Long-horizon synthesis score",
+        "why_it_matters": "Tests whether broad pattern recall depends on higher-order memory.",
+        "result": "Pending",
+    },
 ]
 
 _PLACEHOLDER = "Placeholder page with mock data — backend wiring is a follow-up issue."
@@ -84,8 +140,19 @@ def _render_foresight_timeline(st: Any) -> None:
 
 def _render_evaluation_dashboard(st: Any) -> None:
     st.title("📊 Evaluation Dashboard")
-    st.caption("Per-category pass rates from the evaluation harness.")
-    st.dataframe(_MOCK_EVAL)
+    st.caption("Official benchmark results are separate from MIRA ablation studies.")
+    st.markdown(
+        """
+        Official benchmarks evaluate the complete MIRA system against standard
+        memory tasks. Ablation studies remove one MIRA component at a time and
+        measure the performance drop, so the team can prove which architectural
+        pieces are actually carrying the result.
+        """
+    )
+    st.subheader("Official benchmark results")
+    st.dataframe(_MOCK_BENCHMARK_RESULTS)
+    st.subheader("Ablation studies")
+    st.dataframe(_MOCK_ABLATION_RESULTS)
     st.info(_PLACEHOLDER)
 
 
@@ -145,6 +212,7 @@ def main(st: Any | None = None) -> None:
         if streamlit.session_state.get("mira_entered"):
             render_command_center(streamlit)
         else:
+            streamlit.markdown(_landing_transition_css(), unsafe_allow_html=True)
             render_landing(streamlit)
         return
     streamlit.sidebar.title(APP_TITLE)
@@ -164,6 +232,19 @@ def _load_streamlit() -> Any:
         raise RuntimeError(
             "streamlit is not installed; install it to run the MIRA UI shell"
         ) from error
+
+
+def _landing_transition_css() -> str:
+    """Return a small pre-render reset used when leaving the command center."""
+    return """
+    <style>
+    .st-key-cc_rail { display: none !important; }
+    .block-container {
+      max-width: 1080px !important;
+      padding: 1.4rem 1.6rem 4rem !important;
+    }
+    </style>
+    """
 
 
 if __name__ == "__main__":  # pragma: no cover - Streamlit entry point

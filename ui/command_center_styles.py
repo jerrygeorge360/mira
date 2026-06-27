@@ -14,23 +14,26 @@ Theme variables live on a global scope so they cascade onto native widgets.
 from __future__ import annotations
 
 
-def command_center_css(theme: str) -> str:
+def command_center_css(theme: str, *, rail_collapsed: bool = False) -> str:
     """Return the custom CSS layer for the selected theme."""
     safe_theme = "light" if theme == "light" else "dark"
+    rail_width = "68px" if rail_collapsed else "272px"
+    content_left_padding = "96px" if rail_collapsed else "304px"
+    content_max_width = "980px" if rail_collapsed else "860px"
     return f"""
 <style>
 :root, [data-testid="stAppViewContainer"] {{
   --ease: cubic-bezier(.2,.8,.2,1);
-  --bg: {"#f4f3ee" if safe_theme == "light" else "#262624"};
-  --surface: {"#ffffff" if safe_theme == "light" else "#30302e"};
-  --surface-soft: {"#faf9f5" if safe_theme == "light" else "#393937"};
-  --rail: {"#ebe9e0" if safe_theme == "light" else "#1f1e1d"};
-  --user-bubble: {"#ecebe3" if safe_theme == "light" else "#3a3a37"};
-  --text: {"#2d2c28" if safe_theme == "light" else "#f3f2ec"};
-  --muted: {"#6b6a62" if safe_theme == "light" else "#a3a299"};
-  --faint: {"#908f86" if safe_theme == "light" else "#7d7c73"};
-  --border: {"#e6e4da" if safe_theme == "light" else "#42423f"};
-  --border-strong: {"#d6d3c6" if safe_theme == "light" else "#54534f"};
+  --bg: {"#f7f4ec" if safe_theme == "light" else "#262624"};
+  --surface: {"#fffdf8" if safe_theme == "light" else "#30302e"};
+  --surface-soft: {"#f1ede4" if safe_theme == "light" else "#393937"};
+  --rail: {"#eee9de" if safe_theme == "light" else "#1f1e1d"};
+  --user-bubble: {"#ebe5d8" if safe_theme == "light" else "#3a3a37"};
+  --text: {"#28251f" if safe_theme == "light" else "#f3f2ec"};
+  --muted: {"#645f55" if safe_theme == "light" else "#a3a299"};
+  --faint: {"#8b8578" if safe_theme == "light" else "#7d7c73"};
+  --border: {"#ddd5c7" if safe_theme == "light" else "#42423f"};
+  --border-strong: {"#cfc4b2" if safe_theme == "light" else "#54534f"};
   --accent: {"#cc785c" if safe_theme == "light" else "#d97757"};
   --accent-soft: {"rgba(204, 120, 92, .13)" if safe_theme == "light" else "rgba(217, 119, 87, .17)"};
   --shadow: {"0 1px 3px rgba(50, 40, 30, .06), 0 8px 24px rgba(50, 40, 30, .05)" if safe_theme == "light" else "0 1px 3px rgba(0, 0, 0, .3)"};
@@ -48,9 +51,10 @@ html, body, [data-testid="stAppViewContainer"] {{
 /* Full-width app; the workspace clears the fixed rail via left padding. */
 .block-container {{
   max-width: 100% !important;
-  padding: 1.4rem 2rem 3rem 304px !important;
+  padding: 1.4rem 2rem 3rem {content_left_padding} !important;
+  transition: padding .18s var(--ease);
 }}
-.st-key-cc_main {{ max-width: 860px; margin: 0 auto; }}
+.st-key-cc_main {{ max-width: {content_max_width}; margin: 0 auto; }}
 
 /* ---- Workspace top bar -------------------------------------------------- */
 
@@ -79,13 +83,14 @@ html, body, [data-testid="stAppViewContainer"] {{
   position: fixed;
   top: 0;
   left: 0;
-  width: 272px;
+  width: {rail_width};
   height: 100vh;
   overflow-y: auto;
   z-index: 100;
   background: var(--rail);
   border-right: 1px solid var(--border);
-  padding: 18px 14px;
+  padding: {"18px 10px" if rail_collapsed else "18px 14px"};
+  transition: width .18s var(--ease), padding .18s var(--ease);
 }}
 
 /* Brand button (clickable wordmark that returns to the landing page). */
@@ -103,6 +108,31 @@ html, body, [data-testid="stAppViewContainer"] {{
 }}
 .st-key-home_brand button:hover {{ color: var(--accent) !important; }}
 
+.st-key-home_brand_collapsed .stButton > button,
+.st-key-rail_expand .stButton > button,
+.st-key-rail_collapse .stButton > button,
+.st-key-rail_theme_icon .stButton > button,
+.st-key-nav_collapsed_Chat .stButton > button,
+.st-key-nav_collapsed_Graph .stButton > button,
+.st-key-nav_collapsed_Working_Set .stButton > button,
+.st-key-nav_collapsed_Retrieval .stButton > button,
+.st-key-nav_collapsed_Reflections .stButton > button,
+.st-key-nav_collapsed_Communities .stButton > button,
+.st-key-nav_collapsed_Timeline .stButton > button {{
+  justify-content: center !important;
+  text-align: center !important;
+  width: 44px !important;
+  min-width: 44px !important;
+  height: 42px !important;
+  padding: 0 !important;
+  margin: 0 auto 6px !important;
+  border-radius: 13px !important;
+}}
+.st-key-rail_collapse .stButton > button {{
+  justify-content: center !important;
+  padding: 6px !important;
+}}
+
 .rail-section {{
   margin: 1.1rem .35rem .35rem;
   color: var(--faint);
@@ -111,18 +141,6 @@ html, body, [data-testid="stAppViewContainer"] {{
   letter-spacing: .07em;
   text-transform: uppercase;
 }}
-
-.rail-recent {{
-  padding: 7px 12px;
-  margin: 1px .1rem;
-  border-radius: 9px;
-  color: var(--muted);
-  font-size: .85rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}}
-.rail-recent:hover {{ background: {"rgba(0,0,0,.04)" if safe_theme == "light" else "rgba(255,255,255,.05)"}; color: var(--text); }}
 
 .rail-divider {{ height: 1px; background: var(--border); margin: 1.1rem .2rem .8rem; }}
 .rail-user {{ display: flex; align-items: center; gap: 10px; padding: 0 .2rem .6rem; }}
@@ -154,6 +172,29 @@ html, body, [data-testid="stAppViewContainer"] {{
   border-radius: 11px;
 }}
 .st-key-new_chat .stButton > button:hover {{ border-color: var(--accent); color: var(--accent); }}
+
+.st-key-history_nova .stButton > button,
+.st-key-history_roadmap .stButton > button,
+.st-key-history_benchmarks .stButton > button,
+.st-key-history_kelechi .stButton > button {{
+  min-height: 44px;
+  align-items: flex-start;
+  white-space: pre-line;
+  line-height: 1.25;
+  font-size: .82rem;
+}}
+.st-key-history_nova .stButton > button[kind="primary"],
+.st-key-history_roadmap .stButton > button[kind="primary"],
+.st-key-history_benchmarks .stButton > button[kind="primary"],
+.st-key-history_kelechi .stButton > button[kind="primary"],
+.st-key-history_nova [data-testid="stBaseButton-primary"],
+.st-key-history_roadmap [data-testid="stBaseButton-primary"],
+.st-key-history_benchmarks [data-testid="stBaseButton-primary"],
+.st-key-history_kelechi [data-testid="stBaseButton-primary"] {{
+  border: 1px solid var(--border);
+  background: var(--accent-soft);
+  color: var(--text);
+}}
 
 .st-key-cc_rail .stButton > button {{
   justify-content: flex-start;
@@ -210,6 +251,40 @@ html, body, [data-testid="stAppViewContainer"] {{
 .bot-msg {{ color: var(--text); line-height: 1.72; font-size: 1rem; max-width: 88%; }}
 .bot-msg-wide {{ max-width: 100%; width: 100%; }}
 
+.empty-chat-card {{
+  margin: 4rem auto 2rem;
+  max-width: 520px;
+  text-align: center;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface);
+  padding: 28px;
+  box-shadow: var(--shadow);
+}}
+.empty-chat-card strong {{
+  display: block;
+  color: var(--text);
+  font-size: 1.12rem;
+  margin-bottom: 8px;
+}}
+.empty-chat-card p {{
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}}
+
+.chat-mode-row {{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: .4rem 0 1rem;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+}}
+
 .tile-grid {{
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -223,16 +298,29 @@ html, body, [data-testid="stAppViewContainer"] {{
   border: 1px solid var(--border-strong);
   border-radius: 26px;
   padding: 4px 6px 4px 10px;
-  background: var(--surface);
+  background: {"#f8f6ef" if safe_theme == "light" else "#242321"};
   box-shadow: var(--shadow);
 }}
 .st-key-cc_composer:focus-within {{ border-color: var(--accent); }}
+.st-key-cc_composer [data-testid="stTextInputRoot"],
+.st-key-cc_composer [data-baseweb="input"],
+.st-key-cc_composer [data-baseweb="base-input"] {{
+  border: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}}
+.st-key-cc_composer [data-baseweb="input"]:focus-within {{
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}}
 .st-key-cc_composer .stTextInput input {{
   border: none !important;
   background: transparent !important;
   color: var(--text) !important;
   font-size: .98rem !important;
   padding: 11px 8px !important;
+  caret-color: var(--accent) !important;
 }}
 .st-key-cc_composer .stTextInput input::placeholder {{ color: var(--faint) !important; }}
 .st-key-composer_add {{ display: flex; justify-content: center; }}

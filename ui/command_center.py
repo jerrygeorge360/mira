@@ -14,11 +14,13 @@ bubbles with an inline composer, and the Graph view embeds a real 3D graph.
 
 from __future__ import annotations
 
+import importlib
 import json
 from html import escape
 from textwrap import dedent
 from typing import Any
 
+from ui.chat import DEFAULT_SESSION_ID, MockChatAgent
 from ui.command_center_data import (
     BRIEF_DETAILS,
     CHAT_MESSAGES,
@@ -43,26 +45,82 @@ _MEMORY_VIEWS: tuple[tuple[str, str], ...] = (
 )
 VIEWS: tuple[tuple[str, str], ...] = _PRIMARY_VIEWS + _MEMORY_VIEWS
 
-_TITLES = {"Chat": "NovaDynamics meeting prep"}
+_TITLES = {"Chat": "Chat"}
 
-_RECENTS = (
-    "NovaDynamics meeting prep",
-    "Q3 roadmap trade-offs",
-    "Benchmark cost controls",
-    "Onboarding Kelechi",
+_HISTORY_THREADS: tuple[dict[str, object], ...] = (
+    {
+        "id": "nova",
+        "title": "NovaDynamics meeting prep",
+        "subtitle": "27 memories · relational",
+        "messages": CHAT_MESSAGES,
+    },
+    {
+        "id": "roadmap",
+        "title": "Q3 roadmap trade-offs",
+        "subtitle": "12 memories · deep",
+        "messages": [
+            {"role": "user", "content": "What are the biggest Q3 roadmap trade-offs?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "The main trade-off is demo polish versus backend depth. The graph, "
+                    "retrieval trace, and ablation story carry the strongest judge signal."
+                ),
+            },
+        ],
+    },
+    {
+        "id": "benchmarks",
+        "title": "Benchmark cost controls",
+        "subtitle": "8 memories · quick",
+        "messages": [
+            {"role": "user", "content": "Keep the benchmark run credible but cheap."},
+            {
+                "role": "assistant",
+                "content": (
+                    "Use a small representative suite first: official benchmark tracks "
+                    "separate from ablations, with result slots marked pending until real runs."
+                ),
+            },
+        ],
+    },
+    {
+        "id": "kelechi",
+        "title": "Onboarding Kelechi",
+        "subtitle": "5 memories · session",
+        "messages": [
+            {"role": "user", "content": "What should Kelechi own next?"},
+            {
+                "role": "assistant",
+                "content": (
+                    "Kelechi should stay close to infra boundaries: queue reliability, "
+                    "worker runtime, CI, Docker, and repository contracts."
+                ),
+            },
+        ],
+    },
 )
+
+_CC_MESSAGES_KEY = "mira_cc_chat_messages"
+_CC_USE_REAL_AGENT_KEY = "mira_cc_use_real_agent"
+_CC_AGENT_STATUS_KEY = "mira_cc_agent_status"
+_CC_ACTIVE_THREAD_KEY = "mira_cc_active_thread"
+_CC_THREAD_TITLE_KEY = "mira_cc_thread_title"
+_CC_RAIL_COLLAPSED_KEY = "mira_cc_rail_collapsed"
 
 
 def render_command_center(st: Any) -> None:
     """Render the Claude-style UI: an always-visible rail plus a workspace."""
     _init_state(st)
 
-    # The rail is pinned flush to the left screen edge via CSS (position: fixed),
-    # and the workspace is centered in the remaining space — like Claude.
+    theme = str(st.session_state.get("mira_theme", "dark"))
+    rail_collapsed = bool(st.session_state.get(_CC_RAIL_COLLAPSED_KEY, False))
+    st.markdown(command_center_css(theme, rail_collapsed=rail_collapsed), unsafe_allow_html=True)
     active, theme = _render_rail(st)
-    st.markdown(command_center_css(theme), unsafe_allow_html=True)
     with st.container(key="cc_main"):
         title = _TITLES.get(active, active)
+        if active == "Chat":
+            title = str(st.session_state.get(_CC_THREAD_TITLE_KEY, title))
         _unsafe(
             st,
             f"""
@@ -85,6 +143,12 @@ def _init_state(st: Any) -> None:
     state.setdefault("mira_theme", "dark")
     state.setdefault("mira_view", "Chat")
     state.setdefault("mira_last_action", "Ready")
+    state.setdefault(_CC_ACTIVE_THREAD_KEY, "nova")
+    state.setdefault(_CC_THREAD_TITLE_KEY, "NovaDynamics meeting prep")
+    state.setdefault(_CC_MESSAGES_KEY, _seed_messages("nova"))
+    state.setdefault(_CC_USE_REAL_AGENT_KEY, False)
+    state.setdefault(_CC_AGENT_STATUS_KEY, "Demo data")
+    state.setdefault(_CC_RAIL_COLLAPSED_KEY, False)
 
 
 def _theme_control(st: Any) -> str:
@@ -93,6 +157,12 @@ def _theme_control(st: Any) -> str:
     toggle = st.toggle("Dark mode", value=dark_mode, key="mira_theme_toggle")
     state["mira_theme"] = "dark" if toggle else "light"
     return str(state["mira_theme"])
+
+
+def _toggle_theme(st: Any) -> None:
+    """Toggle the command-center theme from icon-only collapsed rail mode."""
+    current = str(st.session_state.get("mira_theme", "dark"))
+    st.session_state["mira_theme"] = "light" if current == "dark" else "dark"
 
 
 def _go_home(st: Any) -> None:
@@ -108,6 +178,32 @@ def _select_view(st: Any, label: str) -> None:
     correct on the same run instead of lagging one click behind.
     """
     st.session_state["mira_view"] = label
+
+
+def _toggle_rail(st: Any) -> None:
+    """Collapse or expand the command-center rail."""
+    st.session_state[_CC_RAIL_COLLAPSED_KEY] = not bool(
+        st.session_state.get(_CC_RAIL_COLLAPSED_KEY, False)
+    )
+
+
+def _start_new_chat(st: Any) -> None:
+    """Create a clean command-center chat thread."""
+    st.session_state["mira_view"] = "Chat"
+    st.session_state[_CC_ACTIVE_THREAD_KEY] = "new"
+    st.session_state[_CC_THREAD_TITLE_KEY] = "New conversation"
+    st.session_state[_CC_MESSAGES_KEY] = []
+    st.session_state[_CC_AGENT_STATUS_KEY] = "Ready"
+
+
+def _select_history_thread(st: Any, thread_id: str) -> None:
+    """Load one saved/demo history item into the chat workspace."""
+    thread = _history_thread(thread_id)
+    st.session_state["mira_view"] = "Chat"
+    st.session_state[_CC_ACTIVE_THREAD_KEY] = thread_id
+    st.session_state[_CC_THREAD_TITLE_KEY] = str(thread["title"])
+    st.session_state[_CC_MESSAGES_KEY] = [dict(message) for message in thread["messages"]]  # type: ignore[index]
+    st.session_state[_CC_AGENT_STATUS_KEY] = str(thread["subtitle"])
 
 
 def _nav_button(st: Any, label: str, icon: str, active: str) -> None:
@@ -126,21 +222,71 @@ def _nav_button(st: Any, label: str, icon: str, active: str) -> None:
 def _render_rail(st: Any) -> tuple[str, str]:
     """Render the navigation rail; return (active view, theme) for this run."""
     active = str(st.session_state.get("mira_view", "Chat"))
+    collapsed = bool(st.session_state.get(_CC_RAIL_COLLAPSED_KEY, False))
     with st.container(key="cc_rail"):
-        st.button(
-            "✻ MIRA",
-            key="home_brand",
-            use_container_width=True,
-            on_click=_go_home,
-            args=(st,),
-        )
+        if collapsed:
+            st.button(
+                ":material/side_navigation:",
+                key="rail_expand",
+                help="Open sidebar",
+                use_container_width=True,
+                on_click=_toggle_rail,
+                args=(st,),
+            )
+            st.button(
+                "✻",
+                key="home_brand_collapsed",
+                help="MIRA home",
+                use_container_width=True,
+                on_click=_go_home,
+                args=(st,),
+            )
+            for label, icon in _PRIMARY_VIEWS + _MEMORY_VIEWS:
+                st.button(
+                    f":material/{icon}:",
+                    key=f"nav_collapsed_{_key_slug(label)}",
+                    help=label,
+                    use_container_width=True,
+                    type="primary" if label == active else "secondary",
+                    on_click=_select_view,
+                    args=(st, label),
+                )
+            current_theme = str(st.session_state.get("mira_theme", "dark"))
+            st.button(
+                ":material/light_mode:" if current_theme == "dark" else ":material/dark_mode:",
+                key="rail_theme_icon",
+                help="Toggle theme",
+                use_container_width=True,
+                on_click=_toggle_theme,
+                args=(st,),
+            )
+            return active, str(st.session_state.get("mira_theme", "dark"))
+
+        rail_top_l, rail_top_r = st.columns([0.76, 0.24], vertical_alignment="center")
+        with rail_top_l:
+            st.button(
+                "✻ MIRA",
+                key="home_brand",
+                use_container_width=True,
+                on_click=_go_home,
+                args=(st,),
+            )
+        with rail_top_r:
+            st.button(
+                ":material/left_panel_close:",
+                key="rail_collapse",
+                help="Close sidebar",
+                use_container_width=True,
+                on_click=_toggle_rail,
+                args=(st,),
+            )
 
         st.button(
             ":material/edit_square:  New chat",
             key="new_chat",
             use_container_width=True,
-            on_click=_select_view,
-            args=(st, "Chat"),
+            on_click=_start_new_chat,
+            args=(st,),
         )
         for label, icon in _PRIMARY_VIEWS:
             _nav_button(st, label, icon, active)
@@ -149,8 +295,19 @@ def _render_rail(st: Any) -> tuple[str, str]:
         for label, icon in _MEMORY_VIEWS:
             _nav_button(st, label, icon, active)
 
-        recents = "".join(f'<div class="rail-recent">{escape(t)}</div>' for t in _RECENTS)
-        _unsafe(st, f'<p class="rail-section">Recents</p>{recents}')
+        _unsafe(st, '<p class="rail-section">History</p>')
+        active_thread = str(st.session_state.get(_CC_ACTIVE_THREAD_KEY, "nova"))
+        for thread in _HISTORY_THREADS:
+            thread_id = str(thread["id"])
+            prefix = "●" if thread_id == active_thread else "○"
+            st.button(
+                f"{prefix}  {thread['title']}\n\n{thread['subtitle']}",
+                key=f"history_{thread_id}",
+                use_container_width=True,
+                type="primary" if thread_id == active_thread else "secondary",
+                on_click=_select_history_thread,
+                args=(st, thread_id),
+            )
 
         _unsafe(
             st,
@@ -163,6 +320,22 @@ def _render_rail(st: Any) -> tuple[str, str]:
         )
         theme = _theme_control(st)
     return active, theme
+
+
+def _history_thread(thread_id: str) -> dict[str, object]:
+    for thread in _HISTORY_THREADS:
+        if thread["id"] == thread_id:
+            return thread
+    return _HISTORY_THREADS[0]
+
+
+def _key_slug(value: str) -> str:
+    """Return a small stable fragment for Streamlit widget keys."""
+    return value.replace(" ", "_")
+
+
+def _seed_messages(thread_id: str) -> list[dict[str, object]]:
+    return [dict(message) for message in _history_thread(thread_id)["messages"]]  # type: ignore[index]
 
 
 def _section_title(st: Any, title: str, subtitle: str) -> None:
@@ -181,9 +354,35 @@ def _section_title(st: Any, title: str, subtitle: str) -> None:
 
 
 def _render_chat(st: Any) -> None:
-    for message in CHAT_MESSAGES:
+    use_real_agent = st.toggle(
+        "Use real MIRA agent",
+        value=bool(st.session_state.get(_CC_USE_REAL_AGENT_KEY, False)),
+        key=_CC_USE_REAL_AGENT_KEY,
+        help=(
+            "Off uses deterministic demo data. On calls core.agent.Agent for actual "
+            "MIRA runtime behavior."
+        ),
+    )
+    mode = "Real backend" if use_real_agent else "Demo data"
+    _unsafe(
+        st,
+        f"""
+        <div class="chat-mode-row">
+          <span class="badge">{escape(mode)}</span>
+          <small class="muted">{escape(str(st.session_state.get(_CC_AGENT_STATUS_KEY, 'Ready')))}</small>
+        </div>
+        """,
+    )
+
+    for message in _chat_messages(st):
         _render_turn(st, str(message["role"]), str(message["content"]))
-    _render_brief(st)
+    active_thread = str(st.session_state.get(_CC_ACTIVE_THREAD_KEY, "nova"))
+    if active_thread == "nova":
+        _render_brief(st)
+    elif _chat_messages(st):
+        _render_history_context(st)
+    else:
+        _render_empty_chat(st)
 
     with st.container(key="cc_composer"):
         add, field, send = st.columns([0.07, 0.86, 0.07], vertical_alignment="center")
@@ -198,11 +397,59 @@ def _render_chat(st: Any) -> None:
             )
         with send:
             if st.button(":material/arrow_upward:", key="send_message"):
-                st.session_state["mira_last_action"] = "Message sent"
+                _send_chat_message(st, use_real_agent)
     _unsafe(
         st,
         '<p class="disclaimer">MIRA can make mistakes. Verify important details.</p>',
     )
+
+
+def _chat_messages(st: Any) -> list[dict[str, object]]:
+    messages = st.session_state.get(_CC_MESSAGES_KEY)
+    if isinstance(messages, list):
+        return messages
+    st.session_state[_CC_MESSAGES_KEY] = [dict(message) for message in CHAT_MESSAGES]
+    return st.session_state[_CC_MESSAGES_KEY]  # type: ignore[return-value]
+
+
+def _send_chat_message(st: Any, use_real_agent: bool) -> None:
+    message = str(st.session_state.get("mira_chat_input", "")).strip()
+    if not message:
+        st.session_state[_CC_AGENT_STATUS_KEY] = "Write a message first"
+        return
+
+    messages = _chat_messages(st)
+    messages.append({"role": "user", "content": message})
+    response = _respond_to_chat(message, use_real_agent)
+    messages.append({"role": "assistant", "content": str(response["answer"])})
+    st.session_state[_CC_AGENT_STATUS_KEY] = str(response["status"])
+    st.session_state["mira_last_action"] = "Message sent"
+
+
+def _respond_to_chat(user_message: str, use_real_agent: bool) -> dict[str, object]:
+    if not use_real_agent:
+        response = MockChatAgent().respond(user_message)
+        return {
+            "answer": response.get("answer", "Demo response unavailable."),
+            "status": f"Demo response · {response.get('retrieval_mode', 'quick')} retrieval",
+        }
+
+    try:
+        agent_module = importlib.import_module("core.agent")
+        agent = agent_module.Agent(DEFAULT_SESSION_ID)
+        response = agent.respond(user_message)
+    except Exception as error:  # pragma: no cover - depends on local runtime config
+        return {
+            "answer": (
+                "I tried to use the real MIRA runtime, but it is not ready for this "
+                f"turn yet: {error}"
+            ),
+            "status": "Real backend error",
+        }
+    return {
+        "answer": response.get("answer", "Real agent returned no answer."),
+        "status": f"Real backend · {response.get('retrieval_mode', 'unknown')} retrieval",
+    }
 
 
 def _render_turn(st: Any, role: str, content: str) -> None:
@@ -237,6 +484,37 @@ def _render_brief(st: Any) -> None:
     )
 
 
+def _render_history_context(st: Any) -> None:
+    title = str(st.session_state.get(_CC_THREAD_TITLE_KEY, "Conversation"))
+    status = str(st.session_state.get(_CC_AGENT_STATUS_KEY, "Loaded from history"))
+    _unsafe(
+        st,
+        f"""
+        <div class="turn bot">
+          <div class="bot-ava">✻</div>
+          <div class="bot-msg bot-msg-wide">
+            <div class="brief-card">
+              <div class="row-top"><strong>{escape(title)}</strong><span class="badge">History</span></div>
+              <p class="muted">Loaded conversation context · {escape(status)}</p>
+            </div>
+          </div>
+        </div>
+        """,
+    )
+
+
+def _render_empty_chat(st: Any) -> None:
+    _unsafe(
+        st,
+        """
+        <div class="empty-chat-card">
+          <strong>Start a new MIRA conversation</strong>
+          <p>Use demo mode for safe UI testing, or switch on the real agent when the backend is configured.</p>
+        </div>
+        """,
+    )
+
+
 # ---- Graph (3D) ------------------------------------------------------------
 
 
@@ -260,62 +538,357 @@ def _graph_data() -> dict[str, list[dict[str, object]]]:
         "atomic_fact": "#8a8f99",
     }
     raw_nodes = [
-        ("mira", "MIRA", "entity", 14),
-        ("you", "You", "entity", 11),
-        ("nova", "NovaDynamics", "entity", 9),
-        ("demo", "Final demo", "foresight", 8),
-        ("bench", "Official benchmark", "foresight", 8),
-        ("judge", "LLM-as-Judge", "observation", 6),
-        ("budget", "Budget control", "observation", 6),
-        ("refl1", "Prefers credible eval", "reflection", 7),
-        ("refl2", "Cost-conscious", "reflection", 7),
-        ("comm", "Evaluation cluster", "community", 10),
-        ("kelechi", "Kelechi", "entity", 6),
-        ("slack", "Slack bot", "observation", 5),
-        ("roadmap", "Q3 roadmap", "atomic_fact", 5),
-        ("sqlite", "SQLite source", "atomic_fact", 5),
+        (
+            "mira",
+            "MIRA",
+            "entity",
+            14,
+            "Memory-Integrated Reasoning Architecture",
+            "Central project entity tying observations, facts, graph edges, reflections, and retrieval behavior together.",
+            "High-confidence project context",
+            ["obs_001", "fact_arch_001", "graph_node_mira"],
+        ),
+        (
+            "you",
+            "You",
+            "entity",
+            11,
+            "Primary user / project owner",
+            "Used to connect preferences, corrections, assignments, and demo intent back to Jerry.",
+            "Active session identity",
+            ["obs_002", "entity_jerry"],
+        ),
+        (
+            "nova",
+            "NovaDynamics",
+            "entity",
+            9,
+            "Demo customer context",
+            "Example organization used to show meeting prep, retrieval traces, and source-backed synthesis.",
+            "Mock demo data",
+            ["obs_010", "demo_seed_nova"],
+        ),
+        (
+            "demo",
+            "Final demo",
+            "foresight",
+            8,
+            "Future-relevant event",
+            "Foresight record that should activate when demo preparation or deadlines become relevant.",
+            "Pending activation",
+            ["foresight_001", "obs_018"],
+        ),
+        (
+            "bench",
+            "Official benchmark",
+            "foresight",
+            8,
+            "Evaluation milestone",
+            "Tracks planned benchmark reporting separately from internal ablation studies.",
+            "Result pending",
+            ["eval_plan_001", "obs_022"],
+        ),
+        (
+            "judge",
+            "LLM-as-Judge",
+            "observation",
+            6,
+            "Evaluation method observation",
+            "Represents judge-based scoring for synthesis quality and answer faithfulness.",
+            "Needs calibration",
+            ["obs_024"],
+        ),
+        (
+            "budget",
+            "Budget control",
+            "observation",
+            6,
+            "Prompt/context budget signal",
+            "Connects context allocation, retrieval volume, and answer reliability.",
+            "Runtime constraint",
+            ["obs_031"],
+        ),
+        (
+            "refl1",
+            "Prefers credible eval",
+            "reflection",
+            7,
+            "Gated reflection",
+            "Higher-order pattern: Jerry wants claims backed by benchmarks, ablations, and evidence.",
+            "Evidence-backed insight",
+            ["reflection_004", "obs_040", "obs_041"],
+        ),
+        (
+            "refl2",
+            "Cost-conscious",
+            "reflection",
+            7,
+            "Gated reflection",
+            "Represents preference for useful memory without uncontrolled token or infrastructure cost.",
+            "Evidence-backed insight",
+            ["reflection_006", "obs_045"],
+        ),
+        (
+            "comm",
+            "Evaluation cluster",
+            "community",
+            10,
+            "Community summary",
+            "Cluster linking benchmarks, ablations, judge scoring, retrieval traces, and demo credibility.",
+            "Deep Mode context",
+            ["community_eval_001"],
+        ),
+        (
+            "kelechi",
+            "Kelechi",
+            "entity",
+            6,
+            "Team member entity",
+            "Used in ownership/review paths for infrastructure and database issues.",
+            "Collaborator context",
+            ["entity_kelechi", "obs_052"],
+        ),
+        (
+            "slack",
+            "Slack bot",
+            "observation",
+            5,
+            "Integration observation",
+            "Represents external surface area for bot/runtime interaction.",
+            "Future integration",
+            ["obs_060"],
+        ),
+        (
+            "roadmap",
+            "Q3 roadmap",
+            "atomic_fact",
+            5,
+            "Atomic fact",
+            "A structured fact candidate that can be retrieved directly or connected through the graph.",
+            "Source-backed fact",
+            ["fact_roadmap_001", "obs_065"],
+        ),
+        (
+            "sqlite",
+            "SQLite source",
+            "atomic_fact",
+            5,
+            "Atomic fact",
+            "SQLite is treated as source of truth while vector stores remain indexes.",
+            "Accepted architecture decision",
+            ["adr_0003", "fact_sqlite_001"],
+        ),
     ]
     nodes = [
-        {"id": nid, "name": name, "type": ntype, "val": val, "color": palette[ntype]}
-        for nid, name, ntype, val in raw_nodes
+        {
+            "id": nid,
+            "name": name,
+            "type": ntype,
+            "val": val,
+            "color": palette[ntype],
+            "headline": headline,
+            "summary": summary,
+            "status": status,
+            "evidence": evidence,
+        }
+        for nid, name, ntype, val, headline, summary, status, evidence in raw_nodes
     ]
     links = [
-        ("you", "mira"),
-        ("you", "nova"),
-        ("nova", "demo"),
-        ("demo", "bench"),
-        ("bench", "judge"),
-        ("bench", "budget"),
-        ("judge", "comm"),
-        ("budget", "comm"),
-        ("comm", "refl1"),
-        ("comm", "refl2"),
-        ("refl1", "you"),
-        ("refl2", "budget"),
-        ("mira", "kelechi"),
-        ("kelechi", "slack"),
-        ("mira", "roadmap"),
-        ("mira", "sqlite"),
-        ("nova", "comm"),
+        ("you", "mira", "WORKS_ON"),
+        ("you", "nova", "MENTIONS"),
+        ("nova", "demo", "LEADS_TO"),
+        ("demo", "bench", "LEADS_TO"),
+        ("bench", "judge", "EVALUATED_BY"),
+        ("bench", "budget", "CONSTRAINED_BY"),
+        ("judge", "comm", "PART_OF_COMMUNITY"),
+        ("budget", "comm", "PART_OF_COMMUNITY"),
+        ("comm", "refl1", "DERIVED_FROM"),
+        ("comm", "refl2", "DERIVED_FROM"),
+        ("refl1", "you", "DESCRIBES"),
+        ("refl2", "budget", "DESCRIBES"),
+        ("mira", "kelechi", "OWNED_WITH"),
+        ("kelechi", "slack", "IMPLEMENTS"),
+        ("mira", "roadmap", "HAS_FACT"),
+        ("mira", "sqlite", "HAS_FACT"),
+        ("nova", "comm", "PART_OF_COMMUNITY"),
     ]
-    return {"nodes": nodes, "links": [{"source": s, "target": t} for s, t in links]}
+    return {
+        "nodes": nodes,
+        "links": [{"source": s, "target": t, "type": edge_type} for s, t, edge_type in links],
+    }
 
 
 def _graph_3d_html(theme: str) -> str:
     link_color = "rgba(45,44,40,0.28)" if theme == "light" else "rgba(236,235,229,0.22)"
     label_text = "#2d2c28" if theme == "light" else "#f3f2ec"
+    surface = "rgba(255,255,255,0.92)" if theme == "light" else "rgba(31,30,29,0.92)"
+    border = "rgba(45,44,40,0.14)" if theme == "light" else "rgba(236,235,229,0.14)"
+    muted = "#777268" if theme == "light" else "#a6a197"
+    accent = "#cc785c" if theme == "light" else "#d97757"
     data_json = json.dumps(_graph_data())
     return f"""
-    <div id="mira-graph" style="width:100%;height:460px;border-radius:16px;overflow:hidden;"></div>
+    <style>
+      #mira-graph-shell {{
+        position: relative;
+        width: 100%;
+        height: 460px;
+        border-radius: 16px;
+        overflow: hidden;
+      }}
+      #mira-graph {{
+        width: 100%;
+        height: 460px;
+      }}
+      #mira-node-panel {{
+        position: absolute;
+        top: 18px;
+        right: 18px;
+        width: min(360px, calc(100% - 36px));
+        max-height: 424px;
+        overflow: auto;
+        padding: 16px;
+        border: 1px solid {border};
+        border-radius: 18px;
+        background: {surface};
+        color: {label_text};
+        font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        box-shadow: 0 20px 60px rgba(0,0,0,.22);
+        backdrop-filter: blur(18px);
+      }}
+      #mira-node-panel.empty {{
+        opacity: .82;
+      }}
+      .node-kicker {{
+        color: {accent};
+        font-size: 11px;
+        font-weight: 800;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }}
+      .node-title {{
+        margin: 6px 0 4px;
+        font-size: 20px;
+        font-weight: 850;
+        letter-spacing: -.02em;
+      }}
+      .node-headline {{
+        color: {muted};
+        font-size: 13px;
+        line-height: 1.45;
+      }}
+      .node-summary {{
+        margin: 14px 0;
+        font-size: 13px;
+        line-height: 1.55;
+      }}
+      .node-pill-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 12px 0;
+      }}
+      .node-pill {{
+        border: 1px solid {border};
+        border-radius: 999px;
+        padding: 5px 9px;
+        color: {muted};
+        font-size: 11px;
+      }}
+      .node-section {{
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid {border};
+      }}
+      .node-section strong {{
+        display: block;
+        margin-bottom: 8px;
+        font-size: 12px;
+        letter-spacing: .06em;
+        text-transform: uppercase;
+        color: {muted};
+      }}
+      .node-list {{
+        margin: 0;
+        padding-left: 18px;
+        color: {label_text};
+        font-size: 12px;
+        line-height: 1.6;
+      }}
+      .node-muted {{
+        color: {muted};
+        font-size: 12px;
+      }}
+    </style>
+    <div id="mira-graph-shell">
+      <div id="mira-graph"></div>
+      <aside id="mira-node-panel" class="empty">
+        <div class="node-kicker">Memory graph inspector</div>
+        <div class="node-title">Click a node</div>
+        <div class="node-headline">Open its source-backed memory details, connected edges, and evidence IDs.</div>
+      </aside>
+    </div>
     <script src="https://unpkg.com/3d-force-graph@1.73.4/dist/3d-force-graph.min.js"></script>
     <script>
       (function() {{
         const data = {data_json};
         const el = document.getElementById('mira-graph');
+        const panel = document.getElementById('mira-node-panel');
+        const overviewCamera = {{ z: 220 }};
+        const emptyPanelHtml = `
+          <div class="node-kicker">Memory graph inspector</div>
+          <div class="node-title">Click a node</div>
+          <div class="node-headline">Open its source-backed memory details, connected edges, and evidence IDs.</div>
+        `;
         if (!window.ForceGraph3D) {{
           el.innerHTML = '<p style="color:{label_text};font-family:sans-serif;padding:1rem">3D graph needs internet access to load the renderer.</p>';
           return;
         }}
+        const escapeHtml = value => String(value ?? '').replace(/[&<>"']/g, char => ({{
+          '&': '&amp;',
+          '<': '&lt;',
+          '>': '&gt;',
+          '"': '&quot;',
+          "'": '&#39;'
+        }}[char]));
+        const nodeName = value => typeof value === 'object' ? value.name : value;
+        const connectedLinks = node => data.links.filter(link =>
+          nodeName(link.source) === node.id || nodeName(link.target) === node.id
+        );
+        const renderNode = node => {{
+          const links = connectedLinks(node);
+          const evidence = (node.evidence || []).map(item => `<li>${{escapeHtml(item)}}</li>`).join('');
+          const edgeRows = links.map(link => {{
+            const source = nodeName(link.source);
+            const target = nodeName(link.target);
+            const other = source === node.id ? target : source;
+            const direction = source === node.id ? 'outgoing' : 'incoming';
+            return `<li><b>${{escapeHtml(link.type || 'RELATED')}}</b> · ${{escapeHtml(direction)}} · ${{escapeHtml(other)}}</li>`;
+          }}).join('');
+          panel.classList.remove('empty');
+          panel.innerHTML = `
+            <div class="node-kicker">${{escapeHtml(node.type)}} · ${{escapeHtml(node.status)}}</div>
+            <div class="node-title">${{escapeHtml(node.name)}}</div>
+            <div class="node-headline">${{escapeHtml(node.headline)}}</div>
+            <p class="node-summary">${{escapeHtml(node.summary)}}</p>
+            <div class="node-pill-row">
+              <span class="node-pill">id: ${{escapeHtml(node.id)}}</span>
+              <span class="node-pill">${{links.length}} connected edge${{links.length === 1 ? '' : 's'}}</span>
+            </div>
+            <div class="node-section">
+              <strong>Evidence IDs</strong>
+              ${{evidence ? `<ul class="node-list">${{evidence}}</ul>` : '<div class="node-muted">No evidence attached.</div>'}}
+            </div>
+            <div class="node-section">
+              <strong>Connected graph paths</strong>
+              ${{edgeRows ? `<ul class="node-list">${{edgeRows}}</ul>` : '<div class="node-muted">No connected paths.</div>'}}
+            </div>
+          `;
+        }};
+        const closeNode = () => {{
+          panel.classList.add('empty');
+          panel.innerHTML = emptyPanelHtml;
+          G.cameraPosition(overviewCamera, {{ x: 0, y: 0, z: 0 }}, 900);
+        }};
         const G = ForceGraph3D()(el)
           .backgroundColor('rgba(0,0,0,0)')
           .graphData(data)
@@ -327,9 +900,20 @@ def _graph_3d_html(theme: str) -> str:
           .linkWidth(0.8)
           .linkOpacity(0.5)
           .showNavInfo(false)
+          .onNodeClick(node => {{
+            renderNode(node);
+            const distance = 70;
+            const distRatio = 1 + distance / Math.hypot(node.x || 1, node.y || 1, node.z || 1);
+            G.cameraPosition(
+              {{ x: (node.x || 0) * distRatio, y: (node.y || 0) * distRatio, z: (node.z || 0) * distRatio }},
+              node,
+              900
+            );
+          }})
+          .onBackgroundClick(closeNode)
           .width(el.clientWidth)
           .height(460);
-        G.cameraPosition({{ z: 220 }});
+        G.cameraPosition(overviewCamera);
         window.addEventListener('resize', () => G.width(el.clientWidth));
       }})();
     </script>
