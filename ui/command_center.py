@@ -202,7 +202,7 @@ def _select_history_thread(st: Any, thread_id: str) -> None:
     st.session_state["mira_view"] = "Chat"
     st.session_state[_CC_ACTIVE_THREAD_KEY] = thread_id
     st.session_state[_CC_THREAD_TITLE_KEY] = str(thread["title"])
-    st.session_state[_CC_MESSAGES_KEY] = [dict(message) for message in thread["messages"]]  # type: ignore[index]
+    st.session_state[_CC_MESSAGES_KEY] = _copy_messages(thread.get("messages"))
     st.session_state[_CC_AGENT_STATUS_KEY] = str(thread["subtitle"])
 
 
@@ -335,7 +335,7 @@ def _key_slug(value: str) -> str:
 
 
 def _seed_messages(thread_id: str) -> list[dict[str, object]]:
-    return [dict(message) for message in _history_thread(thread_id)["messages"]]  # type: ignore[index]
+    return _copy_messages(_history_thread(thread_id).get("messages"))
 
 
 def _section_title(st: Any, title: str, subtitle: str) -> None:
@@ -407,9 +407,19 @@ def _render_chat(st: Any) -> None:
 def _chat_messages(st: Any) -> list[dict[str, object]]:
     messages = st.session_state.get(_CC_MESSAGES_KEY)
     if isinstance(messages, list):
-        return messages
-    st.session_state[_CC_MESSAGES_KEY] = [dict(message) for message in CHAT_MESSAGES]
-    return st.session_state[_CC_MESSAGES_KEY]  # type: ignore[return-value]
+        normalized = _copy_messages(messages)
+        st.session_state[_CC_MESSAGES_KEY] = normalized
+        return normalized
+    seeded = _copy_messages(CHAT_MESSAGES)
+    st.session_state[_CC_MESSAGES_KEY] = seeded
+    return seeded
+
+
+def _copy_messages(value: object) -> list[dict[str, object]]:
+    """Return a defensive list of chat message dictionaries."""
+    if not isinstance(value, list):
+        return []
+    return [dict(message) for message in value if isinstance(message, dict)]
 
 
 def _send_chat_message(st: Any, use_real_agent: bool) -> None:
