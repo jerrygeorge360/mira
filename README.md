@@ -106,6 +106,41 @@ session = create_session("jerry")
 print(handle_user_message(session, "Use 2026, not 2025, for all dates."))
 ```
 
+## FastAPI product backend
+
+MIRA also exposes a product API boundary for non-Streamlit clients:
+
+```bash
+set -a
+source .env
+set +a
+make api
+```
+
+The server runs:
+
+```bash
+uvicorn api.main:app --reload --host 0.0.0.0 --port ${PORT:-8000}
+```
+
+Initial endpoints:
+
+- `GET /health`
+- `POST /sessions`
+- `GET /sessions/{session_id}`
+- `POST /chat`
+- `GET /sessions/{session_id}/working-set`
+- `GET /memory/graph`
+- `GET /retrieval/traces/{trace_id}`
+- `GET /foresight`
+- `GET /reflections`
+- `GET /community-summaries`
+- `GET /worker/status`
+
+The API is intentionally thin: routes call `core.agent`, repositories, graph/retrieval
+read models, and worker status helpers. Memory logic remains in `core/`, not in HTTP route
+handlers.
+
 ## Docker local development
 
 Docker is optional, but it gives the team a repeatable clean-clone environment.
@@ -138,6 +173,7 @@ or `.env`; secrets are not baked into the image.
 
 - `install` — install requirements.
 - `run` — launch the Streamlit UI (`ui/app.py`).
+- `api` — launch the FastAPI product backend (`api.main:app`).
 - `test` — run pytest.
 - `lint`, `format`, `fix` — check or format with Ruff.
 - `type` — run strict mypy.
@@ -159,6 +195,7 @@ core/
   llm/         Qwen client, prompts, JSON parsing
   db/          SQLite source of truth, ChromaDB index, schema, repositories
 ui/            Streamlit app and graph visualization
+api/           FastAPI product backend adapter over the MIRA core runtime
 slack/         Slack bot and MCP memory server
 evaluation/    cases harness, LongMemEval/LoCoMo adapter, ablations, judge
 docs/          paper, architecture, ADRs, demo script, issues

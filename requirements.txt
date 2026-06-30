@@ -16,3 +16,7 @@ python-dotenv>=1.0
 
 # Sarah: Streamlit demo UI shell (ui/app.py)
 streamlit>=1.36
+
+# Jerry: FastAPI product backend adapter (api/main.py)
+fastapi>=0.111
+uvicorn[standard]>=0.30
