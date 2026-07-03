@@ -1,4 +1,4 @@
-.PHONY: help install run api slack worker test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
+.PHONY: help install run api slack worker provider-check test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api
@@ -12,6 +12,7 @@ help:
 		'  api        Run the MIRA FastAPI server' \
 		'  slack      Run the Slack bot entry point' \
 		'  worker     Run the slow-path background memory worker' \
+		'  provider-check  Smoke-check configured chat and embedding providers' \
 		'  test       Run the test suite' \
 		'  test-slack Run only the Slack bot tests' \
 		'  lint       Run Ruff checks and formatting check' \
@@ -73,6 +74,9 @@ ablation:
 
 worker:
 	$(PYTHON) -m scripts.run_worker --batch-size $${BATCH_SIZE:-20} --poll-interval $${POLL_INTERVAL:-2}
+
+provider-check:
+	$(PYTHON) -m scripts.check_provider --require-live-embeddings
 
 benchmark-cost:
 	$(PYTHON) -m scripts.run_benchmark \
