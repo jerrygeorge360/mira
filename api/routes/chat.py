@@ -16,7 +16,10 @@ def chat(request: ChatRequest) -> ChatResponse:
     """Run one real MIRA agent turn."""
     session_id = request.session_id or create_session(request.user_id, "API chat")
     try:
-        result = Agent(session_id).respond(request.message)
+        result = Agent(session_id).respond(
+            request.message,
+            routing_strategy=request.routing_strategy,
+        )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     except Exception as error:  # noqa: BLE001 - API must not leak raw tracebacks
