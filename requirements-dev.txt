@@ -5,3 +5,4 @@ ruff
 mypy
 bandit
 pre-commit
+httpx

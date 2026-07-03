@@ -270,6 +270,35 @@ opens a detail inspector with type/status, summary, evidence IDs, and connected 
 matches the architecture goal that graph edges are read paths for Relational Mode, not just a
 decorative visualization.
 
+## FastAPI product backend
+
+Modules: [`api/main.py`](../api/main.py), [`api/routes/`](../api/routes), and
+[`api/schemas/`](../api/schemas).
+
+The API server is MIRA's HTTP product boundary for Streamlit-as-client, future React/vanilla
+frontends, Slack/MCP adapters, and live validation harnesses. It is intentionally thin:
+
+```text
+HTTP request -> FastAPI route -> core.agent / repositories / memory read model
+```
+
+Routes must not own memory semantics. They validate/serialize request and response payloads,
+call existing core functions, and return clean API errors. The current server exposes health,
+chat, sessions, Session Working Set, memory graph, retrieval traces, foresight, reflections,
+community summaries, and worker status.
+
+The server runs locally with:
+
+```bash
+uvicorn api.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+or:
+
+```bash
+make api
+```
+
 ## Evaluation reporting
 
 Modules: [`evaluation/`](../evaluation), landing evaluation sections in

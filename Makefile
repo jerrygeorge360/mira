@@ -1,7 +1,7 @@
-.PHONY: help install run slack worker test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
+.PHONY: help install run api slack worker test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
 
 PYTHON ?= python3
-SOURCES := core ui slack evaluation scripts
+SOURCES := core ui slack evaluation scripts api
 
 help:
 	@printf '%s\n' \
@@ -9,6 +9,7 @@ help:
 		'  help       Show this help message' \
 		'  install    Install development and production requirements' \
 		'  run        Run the UI entry point' \
+		'  api        Run the MIRA FastAPI server' \
 		'  slack      Run the Slack bot entry point' \
 		'  worker     Run the slow-path background memory worker' \
 		'  test       Run the test suite' \
@@ -32,6 +33,9 @@ install:
 
 run:
 	$(PYTHON) -m ui.app
+
+api:
+	uvicorn api.main:app --reload --host 0.0.0.0 --port $${PORT:-8000}
 
 slack:
 	$(PYTHON) -m slack.bot
