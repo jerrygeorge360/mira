@@ -178,9 +178,7 @@ def test_runner_prints_progress_to_stderr(
     assert captured.out.startswith("# MIRA Benchmark Summary")
 
 
-def test_quiet_suppresses_progress_logs(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+def test_quiet_suppresses_progress_logs(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     """--quiet preserves the old no-progress stderr behavior for automation."""
     code = run_benchmark.main(_args(tmp_path, _dataset(tmp_path, 1), "--quiet"))
 

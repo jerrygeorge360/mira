@@ -186,10 +186,7 @@ def _embedding_api_key() -> str:
 
 
 def _embedding_base_url() -> str:
-    endpoint = (
-        os.environ.get(EMBEDDING_ENDPOINT_ENV)
-        or _derived_embedding_endpoint()
-    ).rstrip("/")
+    endpoint = (os.environ.get(EMBEDDING_ENDPOINT_ENV) or _derived_embedding_endpoint()).rstrip("/")
     suffix = "/embeddings"
     if endpoint.endswith(suffix):
         return endpoint[: -len(suffix)]

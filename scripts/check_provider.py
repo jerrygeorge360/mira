@@ -87,12 +87,7 @@ def _check_embeddings(*, require_live: bool) -> None:
         if source == "local"
         else os.environ.get(embeddings.EMBEDDING_MODEL_ENV, embeddings.DEFAULT_EMBEDDING_MODEL)
     )
-    print(
-        "embeddings ok "
-        f"source={source} "
-        f"model={model} "
-        f"dimensions={len(vector)}"
-    )
+    print(f"embeddings ok source={source} model={model} dimensions={len(vector)}")
 
 
 def _embedding_source(mode: str, using_deterministic: bool) -> str:

@@ -35,6 +35,7 @@ INDEX_COLLECTION = "community_summaries"
 # Fixed seed so background Leiden detection is reproducible for the slow path.
 LEIDEN_SEED = 0
 
+
 def detect_graph_communities() -> list[Community]:
     """Detect communities over active typed-graph edges (background work).
 

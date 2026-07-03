@@ -272,9 +272,9 @@ class Agent:
     def handle_turn(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> str:
         """Accept one user turn and return the model response text."""
         return str(
-            handle_user_message(
-                self.session_id, user_message, routing_strategy=routing_strategy
-            )["answer"]
+            handle_user_message(self.session_id, user_message, routing_strategy=routing_strategy)[
+                "answer"
+            ]
         )
 
     def respond(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> Response:
