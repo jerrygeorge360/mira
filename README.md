@@ -90,6 +90,16 @@ EMBEDDING_DIMENSIONS=1024
 EMBEDDING_MODE=auto
 ```
 
+To use Gemini through Google's OpenAI-compatible endpoint:
+
+```bash
+LLM_PROVIDER=gemini
+LLM_API_KEY=your_gemini_api_key
+LLM_CHAT_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+LLM_MODEL=gemini-3.5-flash
+LLM_RESPONSE_FORMAT=auto
+```
+
 Verify provider wiring before running the worker or benchmarks:
 
 ```bash
@@ -100,7 +110,7 @@ make provider-check
 ```
 
 `LLM_RESPONSE_FORMAT=auto` uses strict `json_schema` requests for providers that support
-them and JSON-object mode for DeepSeek/SiliconFlow. You can force
+them, including SiliconFlow and Gemini, and JSON-object mode for DeepSeek. You can force
 `LLM_RESPONSE_FORMAT=json_schema` for providers with OpenAI Structured Outputs support, or
 `LLM_RESPONSE_FORMAT=json_object` for providers that only support JSON mode.
 
