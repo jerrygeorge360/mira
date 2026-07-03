@@ -269,6 +269,7 @@ def test_schema_statements_are_idempotent() -> None:
 def test_repository_enum_helpers_validate_allowed_values() -> None:
     """Repository helpers accept only known enum-like values."""
     validate_enum_value("retrieval_mode", "quick")
+    validate_enum_value("retrieval_mode", "general")
 
     with pytest.raises(ValueError):
         validate_enum_value("retrieval_mode", "slow")

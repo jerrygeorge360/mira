@@ -21,6 +21,7 @@ RepositoryRecord = dict[str, object]
 
 DATABASE_PATH_ENV = "MIRA_DB_PATH"
 _DATABASE_PATH: Path | None = None
+_INITIALIZED_DATABASE_PATHS: set[Path] = set()
 
 ENUM_VALUES: dict[str, frozenset[str]] = {
     "session_record_status": frozenset({"active", "ended", "archived"}),
@@ -88,7 +89,7 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
         }
     ),
     "working_memory_status": frozenset({"active", "demoted", "expired", "superseded"}),
-    "retrieval_mode": frozenset({"quick", "deep", "relational", "auto"}),
+    "retrieval_mode": frozenset({"quick", "deep", "relational", "auto", "general"}),
 }
 
 JSON_COLUMNS: frozenset[str] = frozenset(
@@ -315,6 +316,7 @@ def configure_database(database_path: str | Path) -> None:
     global _DATABASE_PATH
     _DATABASE_PATH = Path(database_path)
     initialize_database(_DATABASE_PATH)
+    _INITIALIZED_DATABASE_PATHS.add(_DATABASE_PATH.resolve())
 
 
 def validate_enum_value(enum_name: str, value: str) -> None:
@@ -812,13 +814,21 @@ def _configured_database_path() -> Path:
 
 def _connect() -> sqlite3.Connection:
     database_path = _configured_database_path()
-    initialize_database(database_path)
+    _ensure_database_initialized(database_path)
     return connect_sqlite(database_path)
 
 
 def repository_connection() -> sqlite3.Connection:
     """Open a configured SQLite connection after ensuring the schema exists."""
     return _connect()
+
+
+def _ensure_database_initialized(database_path: Path) -> None:
+    resolved_path = database_path.resolve()
+    if resolved_path in _INITIALIZED_DATABASE_PATHS and database_path.exists():
+        return
+    initialize_database(database_path)
+    _INITIALIZED_DATABASE_PATHS.add(resolved_path)
 
 
 def _now() -> str:

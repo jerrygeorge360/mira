@@ -23,9 +23,10 @@ from core.db.sqlite import connect_sqlite
 
 
 @pytest.fixture
-def database_path(tmp_path: Path) -> Iterator[Path]:
+def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Configure SQLite storage and clear disposable vector collections."""
     path = tmp_path / "mira.sqlite3"
+    monkeypatch.setenv("CHROMA_DB_PATH", str(tmp_path / "chroma"))
     configure_database(path)
     chroma.configure_embedder(None)
     for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
