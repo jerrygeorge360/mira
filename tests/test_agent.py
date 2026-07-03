@@ -119,6 +119,69 @@ def test_retrieval_mode_is_reported(database_path: Path, fake_qwen: _CapturingQw
     assert response["retrieval_mode"] == "deep"
 
 
+def test_general_knowledge_question_skips_memory_retrieval(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """Ordinary world-knowledge questions are not forced through memory retrieval."""
+    session_id = create_session("jerry")
+
+    response = handle_user_message(session_id, "What is an apple?")
+
+    assert response["retrieval_mode"] == "general"
+    assert response["used_memory_items"] == []
+    assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[0]
+
+
+def test_followup_general_question_stays_general(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """A later definition question should not become memory-only because chat history exists."""
+    session_id = create_session("jerry")
+
+    handle_user_message(session_id, "What is an apple?")
+    handle_user_message(session_id, "Thanks.")
+    response = handle_user_message(session_id, "What is an orange?")
+
+    assert response["retrieval_mode"] == "general"
+    assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[-1]
+
+
+def test_memory_question_stays_memory_grounded(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """Personal/history questions still use memory-grounded answering."""
+    session_id = create_session("jerry")
+
+    response = handle_user_message(session_id, "What is my deadline?")
+
+    assert response["retrieval_mode"] == "quick"
+    assert "Answer mode:\nmemory_grounded" in fake_qwen.prompts[0]
+
+
+def test_accurate_router_can_choose_general_mode(
+    database_path: Path, fake_qwen: _CapturingQwen, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accurate routing can use an LLM route decision to bypass memory."""
+    session_id = create_session("jerry")
+    calls: list[dict[str, object]] = []
+
+    def _route(query: str, session_id: str | None, *, strategy: str = "fast") -> dict[str, object]:
+        calls.append({"query": query, "session_id": session_id, "strategy": strategy})
+        return {"mode": "general", "reason": "definition question"}
+
+    monkeypatch.setattr(agent, "route_retrieval", _route)
+
+    response = handle_user_message(
+        session_id,
+        "What is an orange?",
+        routing_strategy="accurate",
+    )
+
+    assert response["retrieval_mode"] == "general"
+    assert calls and calls[0]["strategy"] == "accurate"
+    assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[0]
+
+
 def test_agent_wrapper_chats(database_path: Path, fake_qwen: _CapturingQwen) -> None:
     """The Agent wrapper supports a basic chat call."""
     session_id = create_session("jerry")

@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import uuid4
 
+from core.db import chroma
 from core.db.repositories import (
     claim_pending_batch,
     list_session_items_by_status,
@@ -21,6 +22,7 @@ from core.db.repositories import (
     mark_failed,
     repository_connection,
 )
+from core.llm.embeddings import embed_text
 from core.memory.atomic_fact import extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
 from core.memory.community import (
@@ -276,6 +278,7 @@ def run_slow_path_for_observation(
     steps: tuple[tuple[str, Callable[[], dict[str, list[str]]]], ...] = (
         ("session_confirmation", lambda: _step_session_confirmation(observation_id, session_id)),
         ("durable_promotion", lambda: _step_durable_promotion(observation_id, session_id)),
+        ("embedding_index", lambda: _step_embedding_index(observation_id, content, observation)),
         ("atomic_fact_extraction", lambda: _step_atomic_facts(observation_id, content, context)),
         ("graph_update", lambda: _step_entities(observation_id, content)),
         ("contradiction_supersession", lambda: _step_changes(context)),
@@ -510,6 +513,25 @@ def _step_durable_promotion(observation_id: str, session_id: str | None) -> dict
             continue
         promoted.append(promote_session_item_to_durable_candidate(item_id))
     return {"working_memory": promoted}
+
+
+def _step_embedding_index(
+    observation_id: str,
+    content: str,
+    observation: dict[str, object],
+) -> dict[str, list[str]]:
+    chroma.add_embedding(
+        "observations",
+        "observations",
+        observation_id,
+        embed_text(content),
+        metadata={
+            "index_text_version": chroma.INDEX_TEXT_VERSION,
+            "role": str(observation.get("role", "")),
+            "source": str(observation.get("source", "")),
+        },
+    )
+    return {"observations": [observation_id]}
 
 
 def _step_atomic_facts(
