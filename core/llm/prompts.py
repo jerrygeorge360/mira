@@ -224,7 +224,7 @@ RETRIEVAL_ROUTER_SCHEMA: JsonSchema = {
     "required": ["mode", "reason"],
     "additionalProperties": False,
     "properties": {
-        "mode": {"enum": ["quick", "deep", "relational", "auto"]},
+        "mode": {"enum": ["general", "quick", "deep", "relational", "auto"]},
         "reason": {"type": "string"},
     },
 }
@@ -487,6 +487,8 @@ Community nodes:
 Classify the retrieval mode needed for the user query.
 
 Modes:
+- general: ordinary world knowledge, definitions, explanations, coding/how-to questions, or
+  non-personal procedural help that does not need user/project memory.
 - quick: direct facts, keyword, vector, recent memory.
 - deep: community summaries and broad synthesis.
 - relational: graph traversal, contradiction, supersession, causality, evidence.
@@ -541,11 +543,13 @@ Retrieved context:
             "used_memory_ids": ["memory_1"],
         },
         template="""Task definition:
-Generate a final answer using the provided prompt context.
+Generate a final answer for the user.
 
 Non-goals:
 - Do not expose hidden chain-of-thought.
-- Do not claim memory not present in context.
+- In memory_grounded mode, do not claim memory not present in context.
+- In general_knowledge mode, answer from ordinary model knowledge; use prompt context only
+  for local conversation continuity and do not pretend the answer came from memory.
 - {overclaiming_guardrail}
 
 Strict JSON schema:
@@ -556,6 +560,8 @@ Example:
 
 User message:
 {user_message}
+Answer mode:
+{answer_mode}
 Prompt context:
 {prompt_context}
 """,

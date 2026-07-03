@@ -55,6 +55,7 @@ def test_prompt_templates_render_with_inputs() -> None:
                 "context": [],
                 "retrieved_context": [],
                 "user_message": "Summarize this.",
+                "answer_mode": "general_knowledge",
                 "prompt_context": [],
             },
         )
