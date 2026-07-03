@@ -48,6 +48,7 @@ from core.session.working_set import (
 )
 
 Response = dict[str, object]
+RoutingStrategy = str
 
 LOGGER = logging.getLogger(__name__)
 
@@ -71,8 +72,71 @@ CONTINUE_MARKERS = (
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 STOPWORDS = frozenset({"a", "an", "the", "is", "are", "to", "of", "for", "on", "in", "and", "my"})
 
+GENERAL_KNOWLEDGE_MODE = "general_knowledge"
+MEMORY_GROUNDED_MODE = "memory_grounded"
+GENERAL_RETRIEVAL_MODE = "general"
 
-def handle_user_message(session_id: str, user_message: str) -> Response:
+MEMORY_QUERY_MARKERS = (
+    "my ",
+    "our ",
+    "about me",
+    "for me",
+    "who am i",
+    "what kind of",
+    "am i",
+    "you remember",
+    "remember",
+    "remind me",
+    "did i",
+    "did we",
+    "what did i",
+    "what did we",
+    "what have i",
+    "what have we",
+    "what do i",
+    "what do we",
+    "what was my",
+    "what is my",
+    "what's my",
+    "where did i",
+    "where is my",
+    "when did i",
+    "when is my",
+    "last time",
+    "previously",
+    "before",
+    "deadline",
+    "preference",
+    "prefer",
+    "project",
+    "task",
+)
+
+GENERAL_QUESTION_PREFIXES = (
+    "what is ",
+    "what's ",
+    "what are ",
+    "who is ",
+    "who are ",
+    "where is ",
+    "where are ",
+    "when is ",
+    "how does ",
+    "how do ",
+    "how can ",
+    "why does ",
+    "why is ",
+    "explain ",
+    "define ",
+)
+
+
+def handle_user_message(
+    session_id: str,
+    user_message: str,
+    *,
+    routing_strategy: RoutingStrategy = "fast",
+) -> Response:
     """Run one full MIRA turn and return a structured response object."""
     if not session_id:
         raise ValueError("session_id must not be empty")
@@ -94,23 +158,44 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
 
     # Bring durable memory back into a new or continuing session.
-    if _should_hydrate(prior_observations, user_message):
+    decision: dict[str, object] | None = None
+    if routing_strategy == "accurate":
+        decision = route_retrieval(user_message, session_id, strategy="accurate")
+    elif routing_strategy != "fast":
+        raise ValueError("routing_strategy must be one of: fast, accurate")
+
+    answer_mode = _answer_mode_from_decision(user_message, decision)
+    if answer_mode == MEMORY_GROUNDED_MODE and _should_hydrate(prior_observations, user_message):
         hydrated_ids = hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
         trace.record_hydration(hydrated_ids)
         log_session_hydration(session_id, hydrated_ids)
 
     # Routed retrieval of cross-session memory.
-    decision = route_retrieval(user_message, session_id)
-    retrieval_mode = str(decision["mode"])
-    log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
-    retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
+    if answer_mode == GENERAL_KNOWLEDGE_MODE:
+        retrieval_mode = GENERAL_RETRIEVAL_MODE
+        reason = (
+            str(decision.get("reason", ""))
+            if decision
+            else "general-knowledge query; memory skipped"
+        )
+        log_retrieval_route(session_id, retrieval_mode, reason)
+        retrieved: list[dict[str, object]] = []
+    else:
+        decision = decision or route_retrieval(user_message, session_id, strategy="fast")
+        retrieval_mode = str(decision["mode"])
+        log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
+        retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
     trace.record_retrieval(retrieval_mode, retrieved)
 
     # Hot memory: pull active working-memory items for prompt context.
     session_items = export_prompt_ready_session_items(session_id, SESSION_ITEMS_MAX)
     trace.record_session_items(session_items)
 
-    hot_memory_items = list_hot_memory_for_context(session_id, user_message, HOT_MEMORY_LIMIT)
+    hot_memory_items = (
+        []
+        if answer_mode == GENERAL_KNOWLEDGE_MODE
+        else list_hot_memory_for_context(session_id, user_message, HOT_MEMORY_LIMIT)
+    )
     trace.record_hot_memory(hot_memory_items)
 
     # Context pack + prompt.
@@ -126,7 +211,11 @@ def handle_user_message(session_id: str, user_message: str) -> Response:
     trace.record_prompt_sections(context_pack)
     prompt = render_prompt(
         "answer_generation",
-        {"user_message": user_message, "prompt_context": _render_context(context_pack)},
+        {
+            "user_message": user_message,
+            "answer_mode": answer_mode,
+            "prompt_context": _render_context(context_pack),
+        },
     )
 
     # Generation.
@@ -180,13 +269,17 @@ class Agent:
             raise ValueError("session_id must not be empty")
         self.session_id = session_id
 
-    def handle_turn(self, user_message: str) -> str:
+    def handle_turn(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> str:
         """Accept one user turn and return the model response text."""
-        return str(handle_user_message(self.session_id, user_message)["answer"])
+        return str(
+            handle_user_message(
+                self.session_id, user_message, routing_strategy=routing_strategy
+            )["answer"]
+        )
 
-    def respond(self, user_message: str) -> Response:
+    def respond(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> Response:
         """Accept one user turn and return the full structured response."""
-        return handle_user_message(self.session_id, user_message)
+        return handle_user_message(self.session_id, user_message, routing_strategy=routing_strategy)
 
     def reset_session(self) -> None:
         """Reset temporary session state without deleting durable memory."""
@@ -228,6 +321,35 @@ def _should_hydrate(prior_observations: list[dict[str, object]], user_message: s
         return True
     normalized = user_message.casefold()
     return any(marker in normalized for marker in CONTINUE_MARKERS)
+
+
+def _answer_mode_from_decision(
+    user_message: str,
+    decision: dict[str, object] | None,
+) -> str:
+    if decision:
+        if decision.get("mode") == GENERAL_RETRIEVAL_MODE:
+            return GENERAL_KNOWLEDGE_MODE
+        return MEMORY_GROUNDED_MODE
+    return _answer_mode(user_message)
+
+
+def _answer_mode(user_message: str) -> str:
+    normalized = f" {user_message.casefold().strip()} "
+    if _looks_memory_grounded(normalized):
+        return MEMORY_GROUNDED_MODE
+    if _looks_general_question(normalized):
+        return GENERAL_KNOWLEDGE_MODE
+    return MEMORY_GROUNDED_MODE
+
+
+def _looks_memory_grounded(normalized: str) -> bool:
+    return any(marker in normalized for marker in MEMORY_QUERY_MARKERS)
+
+
+def _looks_general_question(normalized: str) -> bool:
+    stripped = normalized.strip()
+    return any(stripped.startswith(prefix) for prefix in GENERAL_QUESTION_PREFIXES)
 
 
 def _recent_turn_records(prior_observations: list[dict[str, object]]) -> list[dict[str, object]]:

@@ -7,6 +7,9 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import pytest
+
+from core.llm.qwen import LLMRequestError
 from core.retrieval.auto import classify_retrieval_mode, route_retrieval
 
 
@@ -72,3 +75,37 @@ def test_empty_query_defaults_to_quick() -> None:
 
     assert decision["mode"] == "quick"
     assert decision["needs_sufficiency_check"] is True
+
+
+def test_accurate_strategy_uses_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Accurate routing can choose the no-memory general route."""
+
+    def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert schema_name == "retrieval_router_classification"
+        assert "What is an apple?" in messages[0]["content"]
+        return {"json": {"mode": "general", "reason": "definition question"}}
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
+
+    decision = route_retrieval("What is an apple?", None, strategy="accurate")
+
+    assert decision["mode"] == "general"
+    assert decision["reason"] == "definition question"
+
+
+def test_accurate_strategy_falls_back_to_fast_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    """LLM router failures fall back to the deterministic route."""
+
+    def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        raise LLMRequestError("provider unavailable")
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
+
+    decision = route_retrieval("What is my deadline?", None, strategy="accurate")
+
+    assert decision["mode"] == "quick"
+
+
+def test_invalid_strategy_is_rejected() -> None:
+    with pytest.raises(ValueError, match="strategy"):
+        route_retrieval("What is my deadline?", None, strategy="slow")

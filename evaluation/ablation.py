@@ -137,11 +137,13 @@ def _patched(module_path: str, attr: str, value: object) -> Iterator[bool]:
         setattr(module, attr, original)
 
 
-def _route_downgrade(disabled_modes: set[str]) -> Callable[[str, str | None], dict[str, object]]:
+def _route_downgrade(disabled_modes: set[str]) -> Callable[..., dict[str, object]]:
     original = importlib.import_module("core.retrieval.auto").route_retrieval
 
-    def wrapper(query: str, session_id: str | None) -> dict[str, object]:
-        decision: dict[str, object] = original(query, session_id)
+    def wrapper(
+        query: str, session_id: str | None, **kwargs: object
+    ) -> dict[str, object]:
+        decision: dict[str, object] = original(query, session_id, **kwargs)
         if decision.get("mode") in disabled_modes:
             return {
                 "mode": "quick",
