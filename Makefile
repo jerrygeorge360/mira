@@ -2,6 +2,7 @@
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api
+LONGMEMEVAL_DATASET ?= data/benchmarks/longmemeval.json
 
 help:
 	@printf '%s\n' \
@@ -81,6 +82,7 @@ provider-check:
 benchmark-cost:
 	$(PYTHON) -m scripts.run_benchmark \
 		--suite longmemeval \
+		--dataset $(LONGMEMEVAL_DATASET) \
 		--official \
 		--dry-run-cost \
 		--budget-usd $${BUDGET_USD:-15}
@@ -88,6 +90,7 @@ benchmark-cost:
 benchmark:
 	$(PYTHON) -m scripts.run_benchmark \
 		--suite longmemeval \
+		--dataset $(LONGMEMEVAL_DATASET) \
 		--official \
 		--live \
 		--judge hybrid \
@@ -99,6 +102,7 @@ benchmark:
 benchmark-subset:
 	$(PYTHON) -m scripts.run_benchmark \
 		--suite longmemeval \
+		--dataset $(LONGMEMEVAL_DATASET) \
 		--official \
 		--live \
 		--judge hybrid \

@@ -85,7 +85,8 @@ def test_runner_prints_markdown_table(tmp_path: Path, capsys: pytest.CaptureFixt
 def test_stub_mode_does_not_require_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The default stub mode runs without a DashScope API key."""
+    """The default stub mode runs without a provider API key."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     cases = _tiny_cases(tmp_path)
 
@@ -96,6 +97,7 @@ def test_live_mode_fails_clearly_without_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Live mode without a key fails with a clear error and non-zero exit."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     cases = _tiny_cases(tmp_path)
 
@@ -103,6 +105,7 @@ def test_live_mode_fails_clearly_without_api_key(
 
     assert exit_code == 2
     err = capsys.readouterr().err
+    assert "LLM_API_KEY" in err
     assert "DASHSCOPE_API_KEY" in err
     assert not (tmp_path / "results" / "ablation_results.json").exists()
 

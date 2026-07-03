@@ -28,3 +28,7 @@ build/
 # Generated ablation/evaluation outputs
 evaluation/results/
 *.results.json
+
+# Downloaded benchmark datasets
+data/benchmarks/longmemeval.json
+data/raw/

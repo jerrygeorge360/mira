@@ -6,7 +6,7 @@ Architecture area: evaluation.
 
 Wraps ``evaluation.ablation.run_ablation_study`` with a command-line interface so
 the study runs reproducibly without opening Python. It configures an isolated
-SQLite database, installs a deterministic offline LLM stub by default (live Qwen
+SQLite database, installs a deterministic offline LLM stub by default (live model
 only with ``--live`` and a key), runs the study, prints the Markdown comparison
 table, and writes the full JSON results plus a Markdown summary. It does not
 duplicate the ablation engine -- it only makes it runnable.
@@ -26,6 +26,7 @@ DEFAULT_OUT = "evaluation/results"
 DEFAULT_JSON_NAME = "ablation_results.json"
 DEFAULT_MD_NAME = "ablation_summary.md"
 
+LLM_API_KEY_ENV = "LLM_API_KEY"
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 
 
@@ -89,9 +90,9 @@ def _write_outputs(summary: dict[str, object], args: argparse.Namespace) -> None
 
 
 def _require_live_key() -> None:
-    if not os.environ.get(DASHSCOPE_API_KEY_ENV):
+    if not os.environ.get(LLM_API_KEY_ENV) and not os.environ.get(DASHSCOPE_API_KEY_ENV):
         raise RunnerError(
-            f"--live requires {DASHSCOPE_API_KEY_ENV} to be set; "
+            f"--live requires {LLM_API_KEY_ENV} or {DASHSCOPE_API_KEY_ENV} to be set; "
             "run without --live for deterministic offline mode"
         )
 
@@ -144,7 +145,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--live",
         dest="live",
         action="store_true",
-        help=f"Use real Qwen/DashScope (requires {DASHSCOPE_API_KEY_ENV}).",
+        help=f"Use the configured LLM provider (requires {LLM_API_KEY_ENV}).",
     )
     parser.set_defaults(live=False)
     return parser.parse_args(argv)

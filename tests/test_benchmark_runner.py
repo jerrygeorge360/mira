@@ -103,7 +103,8 @@ def test_official_subset_is_labeled_subset(tmp_path: Path) -> None:
 def test_stub_mode_does_not_require_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Stub mode runs offline without a DashScope key."""
+    """Stub mode runs offline without a provider key."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     assert run_benchmark.main(_args(tmp_path, _dataset(tmp_path, 1), "--judge", "hybrid")) == 0
 
@@ -112,6 +113,7 @@ def test_live_mode_fails_clearly_without_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """Live mode without a key fails clearly and writes nothing."""
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     dataset = _dataset(tmp_path, 1)
     argv = [
@@ -127,7 +129,22 @@ def test_live_mode_fails_clearly_without_api_key(
     code = run_benchmark.main(argv)
 
     assert code == 2
-    assert "DASHSCOPE_API_KEY" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "LLM_API_KEY" in err
+    assert "DASHSCOPE_API_KEY" in err
+
+
+def test_live_mode_installs_requested_model_temporarily(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Live benchmarks route agent calls through the requested OpenAI-compatible model."""
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_MODEL", "original-model")
+    args = run_benchmark._parse_args(["--live", "--model", "deepseek-chat"])
+
+    restore = run_benchmark._install_llm_mode(args)
+
+    assert run_benchmark.os.environ["LLM_MODEL"] == "deepseek-chat"
+    restore()
+    assert run_benchmark.os.environ["LLM_MODEL"] == "original-model"
 
 
 def test_slow_path_runs_after_import(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,16 +152,41 @@ def test_slow_path_runs_after_import(tmp_path: Path, monkeypatch: pytest.MonkeyP
     import core.memory.slow_path as sp
 
     calls = {"n": 0}
-    real = sp.run_slow_path_batch
+    real = sp.run_slow_path_for_observation
 
-    def _counting(batch_size: int) -> object:
+    def _counting(observation_id: str) -> object:
         calls["n"] += 1
-        return real(batch_size)
+        return real(observation_id)
 
-    monkeypatch.setattr(sp, "run_slow_path_batch", _counting)
+    monkeypatch.setattr(sp, "run_slow_path_for_observation", _counting)
     run_benchmark.main(_args(tmp_path, _dataset(tmp_path, 2)))
 
     assert calls["n"] >= 2  # at least once per imported example
+
+
+def test_runner_prints_progress_to_stderr(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Benchmark runs emit progress logs without mixing them into stdout."""
+    code = run_benchmark.main(_args(tmp_path, _dataset(tmp_path, 1), "--judge", "hybrid"))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[benchmark] loaded suite=longmemeval" in captured.err
+    assert "example 1/1 q0: running slow path" in captured.err
+    assert "slow path 1/" in captured.err
+    assert captured.out.startswith("# MIRA Benchmark Summary")
+
+
+def test_quiet_suppresses_progress_logs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--quiet preserves the old no-progress stderr behavior for automation."""
+    code = run_benchmark.main(_args(tmp_path, _dataset(tmp_path, 1), "--quiet"))
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert "[benchmark]" not in captured.err
 
 
 def test_gold_answer_not_leaked_into_generation(
@@ -217,4 +259,5 @@ def test_makefile_targets_point_to_runner() -> None:
     for target in ("benchmark:", "benchmark-cost:", "benchmark-subset:"):
         assert target in makefile
     assert "scripts.run_benchmark" in makefile
-    assert "benchmark          Run official-capable benchmark with budget cap" in makefile
+    assert "--dataset $(LONGMEMEVAL_DATASET)" in makefile
+    assert "LONGMEMEVAL_DATASET ?= data/benchmarks/longmemeval.json" in makefile
