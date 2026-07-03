@@ -23,9 +23,11 @@ from core.retrieval.quick import retrieve_quick
 
 
 @pytest.fixture
-def database_path(tmp_path: Path) -> Iterator[Path]:
+def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Configure Quick Mode tests to use an isolated SQLite database."""
     path = tmp_path / "mira.sqlite3"
+    monkeypatch.setenv("CHROMA_DB_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("EMBEDDING_MODE", "deterministic")
     configure_database(path)
     yield path
 
