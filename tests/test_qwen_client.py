@@ -126,10 +126,7 @@ def test_legacy_dashscope_endpoint_is_converted_to_openai_base_url(
     """The DashScope chat endpoint remains compatible with OpenAI(base_url=...)."""
     monkeypatch.setenv(qwen.DASHSCOPE_ENDPOINT_ENV, qwen.DEFAULT_DASHSCOPE_ENDPOINT)
 
-    assert (
-        qwen._load_base_url()
-        == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    )
+    assert qwen._load_base_url() == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
 def test_json_call_parses_valid_json(monkeypatch: pytest.MonkeyPatch) -> None:
