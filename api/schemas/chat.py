@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 RetrievalMode = Literal["auto"]
+RoutingStrategy = Literal["fast", "accurate"]
 
 
 class ChatRequest(BaseModel):
@@ -16,6 +17,7 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1)
     session_id: str | None = None
     retrieval_mode: RetrievalMode = "auto"
+    routing_strategy: RoutingStrategy = "fast"
 
 
 class ChatResponse(BaseModel):
