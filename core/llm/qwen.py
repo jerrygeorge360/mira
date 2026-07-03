@@ -149,17 +149,13 @@ def _attach_parsed_json(response: ResponseObject, schema_name: str) -> ResponseO
     try:
         parsed_json = coerce_or_reject_json(content)
     except StructuredJsonError as error:
-        raise LLMResponseError(
-            f"LLM response for {schema_name} was not valid JSON"
-        ) from error
+        raise LLMResponseError(f"LLM response for {schema_name} was not valid JSON") from error
     parsed_json = _coerce_schema_root(parsed_json, schema_name)
     required_keys = _required_keys_for_schema(schema_name)
     expected_object = _schema_expects_object(schema_name)
     if required_keys:
         if not isinstance(parsed_json, dict):
-            raise LLMResponseError(
-                f"LLM response for {schema_name} must be a JSON object"
-            )
+            raise LLMResponseError(f"LLM response for {schema_name} must be a JSON object")
         if not validate_required_keys(parsed_json, required_keys):
             missing_keys = sorted(key for key in required_keys if key not in parsed_json)
             present_keys = sorted(str(key) for key in parsed_json)
@@ -305,9 +301,7 @@ def _first_choice(raw_response: dict[str, object]) -> dict[str, Any]:
 def _load_api_key() -> str:
     api_key = os.environ.get(LLM_API_KEY_ENV) or os.environ.get(DASHSCOPE_API_KEY_ENV)
     if not api_key:
-        raise LLMConfigurationError(
-            f"Missing required environment variable: {LLM_API_KEY_ENV}"
-        )
+        raise LLMConfigurationError(f"Missing required environment variable: {LLM_API_KEY_ENV}")
     return api_key
 
 
