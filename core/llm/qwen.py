@@ -18,6 +18,7 @@ from core.llm.json_helpers import (
     coerce_or_reject_json,
     validate_required_keys,
 )
+from core.llm.profiles import LLM_PROFILE_ENV, active_profile
 from core.llm.prompts import get_output_schema
 
 LLM_API_KEY_ENV = "LLM_API_KEY"
@@ -76,8 +77,8 @@ def call_llm_chat(
     """Call an OpenAI-compatible chat completion endpoint."""
     _validate_messages(messages)
     _validate_timeout(timeout_s)
-    selected_model = model or os.environ.get(LLM_MODEL_ENV) or DEFAULT_LLM_MODEL
-    selected_provider = provider or os.environ.get(LLM_PROVIDER_ENV) or DEFAULT_LLM_PROVIDER
+    selected_model = model or _load_chat_model(provider)
+    selected_provider = provider or _load_provider()
     payload: dict[str, object] = {"model": selected_model, "messages": messages}
     if response_format is not None:
         payload["response_format"] = response_format
@@ -300,17 +301,37 @@ def _first_choice(raw_response: dict[str, object]) -> dict[str, Any]:
 
 
 def _load_api_key() -> str:
-    api_key = os.environ.get(LLM_API_KEY_ENV) or os.environ.get(DASHSCOPE_API_KEY_ENV)
+    profile = active_profile()
+    profile_api_key = os.environ.get(profile.api_key_env) if profile else None
+    api_key = (
+        os.environ.get(LLM_API_KEY_ENV) or profile_api_key or os.environ.get(DASHSCOPE_API_KEY_ENV)
+    )
     if not api_key:
         raise LLMConfigurationError(f"Missing required environment variable: {LLM_API_KEY_ENV}")
     return api_key
 
 
 def _load_chat_endpoint() -> str:
+    profile = active_profile()
     return (
         os.environ.get(LLM_CHAT_ENDPOINT_ENV)
+        or (profile.chat_endpoint if profile else None)
         or os.environ.get(DASHSCOPE_ENDPOINT_ENV)
         or DEFAULT_LLM_CHAT_ENDPOINT
+    )
+
+
+def _load_chat_model(provider: str | None = None) -> str:
+    profile = active_profile(provider)
+    return os.environ.get(LLM_MODEL_ENV) or (profile.chat_model if profile else DEFAULT_LLM_MODEL)
+
+
+def _load_provider() -> str:
+    profile = active_profile()
+    return (
+        os.environ.get(LLM_PROVIDER_ENV)
+        or os.environ.get(LLM_PROFILE_ENV)
+        or (profile.name if profile else DEFAULT_LLM_PROVIDER)
     )
 
 
@@ -326,14 +347,18 @@ def _response_format_for_schema(
     schema_name: str,
     provider: str | None,
 ) -> dict[str, object]:
-    mode = os.environ.get(LLM_RESPONSE_FORMAT_ENV, DEFAULT_LLM_RESPONSE_FORMAT).casefold()
+    profile = active_profile(provider)
+    mode = os.environ.get(
+        LLM_RESPONSE_FORMAT_ENV,
+        profile.response_format if profile else DEFAULT_LLM_RESPONSE_FORMAT,
+    ).casefold()
     if mode not in {"auto", "json_object", "json_schema"}:
         raise LLMConfigurationError(
             f"{LLM_RESPONSE_FORMAT_ENV} must be one of: auto, json_object, json_schema"
         )
     if mode == "json_object":
         return {"type": "json_object"}
-    selected_provider = provider or os.environ.get(LLM_PROVIDER_ENV) or DEFAULT_LLM_PROVIDER
+    selected_provider = provider or _load_provider()
     if mode == "auto" and selected_provider.casefold() in {"deepseek"}:
         return {"type": "json_object"}
     schema = _schema_for_response_format(schema_name)

@@ -12,6 +12,7 @@ from collections.abc import Iterator
 import pytest
 
 from core.llm import qwen
+from core.llm.profiles import LLM_PROFILE_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -20,10 +21,14 @@ def dashscope_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv(qwen.LLM_API_KEY_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_CHAT_ENDPOINT_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_PROVIDER_ENV, raising=False)
+    monkeypatch.delenv(LLM_PROFILE_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_MODEL_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_RESPONSE_FORMAT_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_API_KEY_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_ENDPOINT_ENV, raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
     yield
 
 
@@ -118,6 +123,31 @@ def test_gemini_openai_endpoint_is_converted_to_base_url(
     )
 
     assert qwen._load_base_url() == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def test_profile_supplies_gemini_chat_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A profile can select endpoint, model, provider, and provider-specific key."""
+    monkeypatch.setenv(LLM_PROFILE_ENV, "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key")
+
+    assert qwen._load_api_key() == "gemini-key"
+    assert qwen._load_chat_model() == "gemini-3.5-flash"
+    assert qwen._load_provider() == "gemini"
+    assert qwen._load_base_url() == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
+def test_explicit_chat_env_overrides_profile_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Manual env values remain stronger than profile presets."""
+    monkeypatch.setenv(LLM_PROFILE_ENV, "gemini")
+    monkeypatch.setenv(qwen.LLM_API_KEY_ENV, "manual-key")
+    monkeypatch.setenv(qwen.LLM_CHAT_ENDPOINT_ENV, "https://example.test/v1/chat/completions")
+    monkeypatch.setenv(qwen.LLM_MODEL_ENV, "custom-model")
+    monkeypatch.setenv(qwen.LLM_PROVIDER_ENV, "custom-provider")
+
+    assert qwen._load_api_key() == "manual-key"
+    assert qwen._load_chat_model() == "custom-model"
+    assert qwen._load_provider() == "custom-provider"
+    assert qwen._load_base_url() == "https://example.test/v1"
 
 
 def test_legacy_dashscope_endpoint_is_converted_to_openai_base_url(

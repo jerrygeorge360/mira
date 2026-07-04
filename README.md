@@ -66,38 +66,30 @@ cp .env.example .env      # add your LLM_API_KEY and provider endpoint
 make check
 ```
 
-`.env` is documented in [.env.example](.env.example). MIRA uses an OpenAI-compatible
-chat-completions adapter configured with `LLM_API_KEY`, `LLM_CHAT_ENDPOINT`,
-`LLM_MODEL`, optional `LLM_PROVIDER`, and `LLM_RESPONSE_FORMAT`. DashScope/Qwen remains
-the default example, and legacy `DASHSCOPE_API_KEY` / `DASHSCOPE_CHAT_ENDPOINT` variables
-still work as fallbacks. To use DeepSeek, for example, set `LLM_PROVIDER=deepseek`,
-`LLM_MODEL=deepseek-chat`, `LLM_CHAT_ENDPOINT=https://api.deepseek.com/chat/completions`,
-and `LLM_RESPONSE_FORMAT=auto`.
+`.env` is documented in [.env.example](.env.example). MIRA uses provider profiles for
+OpenAI-compatible chat-completions and embeddings. Set `LLM_PROFILE` to one of
+`dashscope`, `siliconflow`, `deepseek`, or `gemini`, then provide the matching
+provider key such as `GEMINI_API_KEY` or `SILICONFLOW_API_KEY`. Explicit values like
+`LLM_API_KEY`, `LLM_CHAT_ENDPOINT`, `LLM_MODEL`, `LLM_PROVIDER`, `EMBEDDING_ENDPOINT`,
+and `EMBEDDING_MODEL` still override profile defaults when you need manual control.
 
 To use SiliconFlow for both inference and embeddings:
 
 ```bash
-LLM_PROVIDER=siliconflow
-LLM_API_KEY=your_siliconflow_key
-LLM_CHAT_ENDPOINT=https://api.siliconflow.com/v1/chat/completions
-LLM_MODEL=Qwen/Qwen3-32B
+LLM_PROFILE=siliconflow
+SILICONFLOW_API_KEY=your_siliconflow_key
 LLM_RESPONSE_FORMAT=auto
 
-EMBEDDING_API_KEY=your_siliconflow_key
-EMBEDDING_ENDPOINT=https://api.siliconflow.com/v1/embeddings
-EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
-EMBEDDING_DIMENSIONS=1024
 EMBEDDING_MODE=auto
 ```
 
 To use Gemini through Google's OpenAI-compatible endpoint:
 
 ```bash
-LLM_PROVIDER=gemini
-LLM_API_KEY=your_gemini_api_key
-LLM_CHAT_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
-LLM_MODEL=gemini-3.5-flash
+LLM_PROFILE=gemini
+GEMINI_API_KEY=your_gemini_api_key
 LLM_RESPONSE_FORMAT=auto
+EMBEDDING_MODE=local
 ```
 
 Verify provider wiring before running the worker or benchmarks:
@@ -131,15 +123,15 @@ set +a
 make benchmark
 ```
 
-To run the benchmark with DeepSeek or another OpenAI-compatible provider, set the provider
-env vars and pass the model names:
+To run the benchmark with DeepSeek or another OpenAI-compatible provider, select the
+profile and pass the model names:
 
 ```bash
 set -a
 source .env
 set +a
-LLM_PROVIDER=deepseek \
-LLM_CHAT_ENDPOINT=https://api.deepseek.com/chat/completions \
+LLM_PROFILE=deepseek \
+DEEPSEEK_API_KEY=your_deepseek_key \
 MODEL=deepseek-chat \
 JUDGE_MODEL=deepseek-chat \
 make benchmark
@@ -254,13 +246,12 @@ The Compose app service mounts durable local data into `.docker-data/`:
 
 Chroma is used as a real persistent vector index when `chromadb` is installed and
 `CHROMA_DB_PATH` is set. It stores embeddings plus SQLite record pointers only;
-SQLite remains the source of truth. Embeddings use an OpenAI-compatible endpoint:
-set `EMBEDDING_ENDPOINT`, `EMBEDDING_MODEL`, and optionally `EMBEDDING_API_KEY`.
-If `EMBEDDING_API_KEY` is omitted, MIRA reuses `LLM_API_KEY`. You can use DeepSeek
-for chat while using another provider for embeddings. Keep `EMBEDDING_MODE=auto`
-for real embeddings; set `EMBEDDING_MODE=deterministic` only for local/offline
-hash-vector runs. `EMBEDDING_DIMENSIONS` is optional and is passed through to providers
-that support configurable vector dimensions, such as SiliconFlow's Qwen embedding models.
+SQLite remains the source of truth. Embeddings use the selected `LLM_PROFILE` when
+that profile has embedding defaults, such as DashScope or SiliconFlow. You can still
+override `EMBEDDING_ENDPOINT`, `EMBEDDING_MODEL`, `EMBEDDING_API_KEY`, and
+`EMBEDDING_DIMENSIONS` directly. Keep `EMBEDDING_MODE=auto` for cloud embeddings,
+`EMBEDDING_MODE=local` for FastEmbed, or `EMBEDDING_MODE=deterministic` only for
+offline hash-vector runs.
 
 To run checks inside the container:
 

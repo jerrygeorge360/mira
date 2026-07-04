@@ -19,6 +19,7 @@ EXPECTED_MODULES = (
     "core.llm.qwen",
     "core.llm.functions",
     "core.llm.prompts",
+    "core.llm.profiles",
     "core.memory.observation",
     "core.memory.atomic_fact",
     "core.memory.slow_path",

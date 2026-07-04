@@ -14,6 +14,7 @@ import sys
 from dotenv import load_dotenv
 
 from core.llm import embeddings
+from core.llm.profiles import active_profile
 from core.llm.qwen import DASHSCOPE_API_KEY_ENV, LLM_API_KEY_ENV, LLMClientError, call_llm_json
 
 
@@ -67,9 +68,12 @@ def _check_chat() -> None:
 
 def _check_embeddings(*, require_live: bool) -> None:
     mode = os.environ.get(embeddings.EMBEDDING_MODE_ENV, embeddings.DEFAULT_EMBEDDING_MODE)
+    profile = active_profile()
+    profile_api_key_env = profile.embedding_api_key_env or profile.api_key_env if profile else None
     has_credentials = bool(
         os.environ.get(embeddings.EMBEDDING_API_KEY_ENV)
         or os.environ.get(LLM_API_KEY_ENV)
+        or (os.environ.get(profile_api_key_env) if profile_api_key_env else None)
         or os.environ.get(DASHSCOPE_API_KEY_ENV)
     )
     mode = mode.casefold()
@@ -79,13 +83,16 @@ def _check_embeddings(*, require_live: bool) -> None:
 
     vector = embeddings.embed_text("MIRA provider smoke test", timeout_s=30)
     source = _embedding_source(mode, using_deterministic)
+    profile_model = profile.embedding_model if profile else None
     model = (
         os.environ.get(
             embeddings.LOCAL_EMBEDDING_MODEL_ENV,
             embeddings.DEFAULT_LOCAL_EMBEDDING_MODEL,
         )
         if source == "local"
-        else os.environ.get(embeddings.EMBEDDING_MODEL_ENV, embeddings.DEFAULT_EMBEDDING_MODEL)
+        else os.environ.get(embeddings.EMBEDDING_MODEL_ENV)
+        or profile_model
+        or embeddings.DEFAULT_EMBEDDING_MODEL
     )
     print(f"embeddings ok source={source} model={model} dimensions={len(vector)}")
 
