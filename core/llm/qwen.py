@@ -147,7 +147,7 @@ def _call_llm_json_chat(
 def _attach_parsed_json(response: ResponseObject, schema_name: str) -> ResponseObject:
     content = str(response["content"])
     try:
-        parsed_json = coerce_or_reject_json(content)
+        parsed_json: object = coerce_or_reject_json(content)
     except StructuredJsonError as error:
         raise LLMResponseError(f"LLM response for {schema_name} was not valid JSON") from error
     parsed_json = _coerce_schema_root(parsed_json, schema_name)
@@ -239,7 +239,7 @@ def _post_chat_completion(
     return dict(decoded)
 
 
-def _create_openai_client(timeout_s: int) -> object:
+def _create_openai_client(timeout_s: int) -> Any:
     from openai import OpenAI
 
     return OpenAI(

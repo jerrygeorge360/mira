@@ -141,11 +141,11 @@ def _post_embedding(text: str, model: str, timeout_s: int) -> list[float]:
             base_url=_embedding_base_url(),
             timeout=timeout_s,
         )
-        payload: dict[str, object] = {"model": model, "input": text}
         dimensions = _embedding_dimensions()
         if dimensions is not None:
-            payload["dimensions"] = dimensions
-        response = client.embeddings.create(**payload)
+            response = client.embeddings.create(model=model, input=text, dimensions=dimensions)
+        else:
+            response = client.embeddings.create(model=model, input=text)
     except ImportError as error:
         raise LLMConfigurationError(
             "Missing dependency: install the 'openai' package to use embeddings"

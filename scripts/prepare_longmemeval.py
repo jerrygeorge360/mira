@@ -16,6 +16,7 @@ import json
 import sys
 import urllib.request
 from pathlib import Path
+from typing import cast
 
 DEFAULT_OUT_DIR = Path("data/benchmarks")
 DEFAULT_OUT_NAME = "longmemeval.json"
@@ -32,10 +33,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     source = _download_json(args.variant, args.download_dir)
     converted = convert_longmemeval_dataset(source)
+    converted_examples = cast(list[dict[str, object]], converted["examples"])
     args.out_dir.mkdir(parents=True, exist_ok=True)
     output_path = args.out_dir / args.out_name
     output_path.write_text(json.dumps(converted, indent=2, ensure_ascii=True), encoding="utf-8")
-    print(f"saved {len(converted['examples'])} examples to {output_path}")
+    print(f"saved {len(converted_examples)} examples to {output_path}")
     return 0
 
 
@@ -138,7 +140,9 @@ def _session_id(raw_example: dict[str, object], index: int) -> str:
 def _download_json(variant: str, download_dir: Path) -> dict[str, object]:
     path = download_longmemeval(variant, download_dir)
     data = json.loads(path.read_text(encoding="utf-8"))
-    return data
+    if not isinstance(data, dict):
+        raise ValueError("downloaded LongMemEval file must be a JSON object")
+    return cast(dict[str, object], data)
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:

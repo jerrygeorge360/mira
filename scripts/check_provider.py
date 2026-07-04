@@ -14,7 +14,7 @@ import sys
 from dotenv import load_dotenv
 
 from core.llm import embeddings
-from core.llm.qwen import LLMClientError, call_llm_json
+from core.llm.qwen import DASHSCOPE_API_KEY_ENV, LLM_API_KEY_ENV, LLMClientError, call_llm_json
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,8 +69,8 @@ def _check_embeddings(*, require_live: bool) -> None:
     mode = os.environ.get(embeddings.EMBEDDING_MODE_ENV, embeddings.DEFAULT_EMBEDDING_MODE)
     has_credentials = bool(
         os.environ.get(embeddings.EMBEDDING_API_KEY_ENV)
-        or os.environ.get(embeddings.LLM_API_KEY_ENV)
-        or os.environ.get(embeddings.DASHSCOPE_API_KEY_ENV)
+        or os.environ.get(LLM_API_KEY_ENV)
+        or os.environ.get(DASHSCOPE_API_KEY_ENV)
     )
     mode = mode.casefold()
     using_deterministic = mode == "deterministic" or (mode == "auto" and not has_credentials)
