@@ -7,6 +7,7 @@ from collections.abc import Iterator
 import pytest
 
 from core.llm import embeddings
+from core.llm.profiles import LLM_PROFILE_ENV
 
 
 @pytest.fixture(autouse=True)
@@ -21,6 +22,9 @@ def embedding_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv(embeddings.LOCAL_EMBEDDING_PROVIDER_ENV, raising=False)
     monkeypatch.delenv(embeddings.LOCAL_EMBEDDING_MODEL_ENV, raising=False)
     monkeypatch.delenv(embeddings.LLM_API_KEY_ENV, raising=False)
+    monkeypatch.delenv(LLM_PROFILE_ENV, raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.delenv("SILICONFLOW_API_KEY", raising=False)
     embeddings._LOCAL_EMBEDDING_MODEL = None
     embeddings._LOCAL_EMBEDDING_MODEL_NAME = None
     yield
@@ -51,6 +55,37 @@ def test_embedding_dimensions_are_passed_to_provider(monkeypatch: pytest.MonkeyP
         "model": "Qwen/Qwen3-Embedding-0.6B",
         "timeout_s": 7,
         "dimensions": 1024,
+    }
+
+
+def test_siliconflow_profile_supplies_embedding_defaults(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_post_embedding(text: str, model: str, timeout_s: int) -> list[float]:
+        captured["text"] = text
+        captured["model"] = model
+        captured["timeout_s"] = timeout_s
+        captured["dimensions"] = embeddings._embedding_dimensions()
+        captured["base_url"] = embeddings._embedding_base_url()
+        captured["api_key"] = embeddings._embedding_api_key()
+        return [0.1, 0.2]
+
+    monkeypatch.setenv(LLM_PROFILE_ENV, "siliconflow")
+    monkeypatch.setenv("SILICONFLOW_API_KEY", "siliconflow-key")
+    monkeypatch.setattr(embeddings, "_post_embedding", fake_post_embedding)
+
+    result = embeddings.embed_text("semantic memory", timeout_s=9)
+
+    assert result == [0.1, 0.2]
+    assert captured == {
+        "text": "semantic memory",
+        "model": "Qwen/Qwen3-Embedding-0.6B",
+        "timeout_s": 9,
+        "dimensions": 1024,
+        "base_url": "https://api.siliconflow.com/v1",
+        "api_key": "siliconflow-key",
     }
 
 

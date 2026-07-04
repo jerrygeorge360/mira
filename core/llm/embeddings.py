@@ -8,6 +8,7 @@ import os
 import re
 import time
 
+from core.llm.profiles import active_profile
 from core.llm.qwen import (
     DASHSCOPE_API_KEY_ENV,
     DASHSCOPE_ENDPOINT_ENV,
@@ -173,9 +174,13 @@ def _post_embedding(text: str, model: str, timeout_s: int) -> list[float]:
 
 
 def _embedding_api_key() -> str:
+    profile = active_profile()
+    profile_api_key_env = profile.embedding_api_key_env or profile.api_key_env if profile else None
+    profile_api_key = os.environ.get(profile_api_key_env) if profile_api_key_env else None
     api_key = (
         os.environ.get(EMBEDDING_API_KEY_ENV)
         or os.environ.get(LLM_API_KEY_ENV)
+        or profile_api_key
         or os.environ.get(DASHSCOPE_API_KEY_ENV)
     )
     if not api_key:
@@ -186,7 +191,12 @@ def _embedding_api_key() -> str:
 
 
 def _embedding_base_url() -> str:
-    endpoint = (os.environ.get(EMBEDDING_ENDPOINT_ENV) or _derived_embedding_endpoint()).rstrip("/")
+    profile = active_profile()
+    endpoint = (
+        os.environ.get(EMBEDDING_ENDPOINT_ENV)
+        or (profile.embedding_endpoint if profile else None)
+        or _derived_embedding_endpoint()
+    ).rstrip("/")
     suffix = "/embeddings"
     if endpoint.endswith(suffix):
         return endpoint[: -len(suffix)]
@@ -194,8 +204,10 @@ def _embedding_base_url() -> str:
 
 
 def _derived_embedding_endpoint() -> str:
+    profile = active_profile()
     chat_endpoint = (
         os.environ.get(LLM_CHAT_ENDPOINT_ENV)
+        or (profile.chat_endpoint if profile else None)
         or os.environ.get(DASHSCOPE_ENDPOINT_ENV)
         or DEFAULT_DASHSCOPE_ENDPOINT
     ).rstrip("/")
@@ -206,7 +218,10 @@ def _derived_embedding_endpoint() -> str:
 
 
 def _embedding_model() -> str:
-    return os.environ.get(EMBEDDING_MODEL_ENV, DEFAULT_EMBEDDING_MODEL)
+    profile = active_profile()
+    return os.environ.get(EMBEDDING_MODEL_ENV) or (
+        profile.embedding_model if profile and profile.embedding_model else DEFAULT_EMBEDDING_MODEL
+    )
 
 
 def _local_embedding_model() -> str:
@@ -215,8 +230,9 @@ def _local_embedding_model() -> str:
 
 def _embedding_dimensions() -> int | None:
     raw_value = os.environ.get(EMBEDDING_DIMENSIONS_ENV)
+    profile = active_profile()
     if raw_value is None or not raw_value.strip():
-        return None
+        return profile.embedding_dimensions if profile else None
     try:
         dimensions = int(raw_value)
     except ValueError as error:
@@ -235,9 +251,12 @@ def _fallback_mode() -> str:
 
 
 def _has_embedding_credentials() -> bool:
+    profile = active_profile()
+    profile_api_key_env = profile.embedding_api_key_env or profile.api_key_env if profile else None
     return bool(
         os.environ.get(EMBEDDING_API_KEY_ENV)
         or os.environ.get(LLM_API_KEY_ENV)
+        or (os.environ.get(profile_api_key_env) if profile_api_key_env else None)
         or os.environ.get(DASHSCOPE_API_KEY_ENV)
     )
 
