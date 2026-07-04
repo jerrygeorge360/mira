@@ -112,7 +112,8 @@ def call_llm_json(
             if attempt == MAX_JSON_VALIDATION_ATTEMPTS:
                 break
             active_messages = _repair_messages(messages, schema_name, error)
-    assert validation_error is not None
+    if validation_error is None:
+        raise LLMResponseError(f"LLM response for {schema_name} failed validation")
     raise validation_error
 
 
