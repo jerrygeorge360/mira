@@ -22,6 +22,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,8 @@ JudgeCallAdapter = Callable[[list[dict[str, str]], str], dict[str, object]]
 Ledger = dict[str, Any]
 CostEstimate = dict[str, Any]
 
+LLM_API_KEY_ENV = "LLM_API_KEY"
+LLM_MODEL_ENV = "LLM_MODEL"
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DEFAULT_DATASET = "data/benchmarks/longmemeval.json"
 DEFAULT_OUT = "evaluation/results/benchmarks"
@@ -83,6 +86,10 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     examples = iter_examples(dataset)
     if args.limit is not None:
         examples = examples[: args.limit]
+    _progress(
+        args,
+        f"loaded suite={args.suite} dataset={dataset_path} examples={len(examples)}",
+    )
 
     estimate = _estimate_cost(examples, args)
     if args.dry_run_cost:
@@ -94,6 +101,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         Path(tempfile.mkdtemp(prefix="mira-benchmark-")) / "benchmark.sqlite3"
     )
     configure_database(database_path)
+    _progress(args, f"using db={database_path}")
 
     restore = _install_llm_mode(args)
     try:
@@ -103,6 +111,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
     summary = _summarize(args, dataset_path, status, official, results, ledger)
     _write_outputs(summary, args)
+    _progress(args, f"wrote results to {args.out}")
     return summary
 
 
@@ -120,29 +129,51 @@ def _run_examples(
     completed = _resume_completed(args) if args.resume else set()
     ledger = _new_ledger(args, estimate)
     results: list[dict[str, object]] = []
+    total_examples = len(examples)
+    _progress(
+        args,
+        "starting benchmark "
+        f"mode={'live' if args.live else 'stub'} judge={args.judge} "
+        f"budget=${args.budget_usd:.2f} estimate=${float(estimate['estimated_cost_usd']):.4f}",
+    )
 
-    for example in examples:
+    for index, example in enumerate(examples, start=1):
         question_id = str(example.get("question_id", "unknown"))
         if question_id in completed:
             ledger["examples_skipped"] = int(ledger["examples_skipped"]) + 1
+            _progress(args, f"example {index}/{total_examples} {question_id}: skipped resume")
             continue
         if float(ledger["estimated_cost_usd"]) >= args.budget_usd:
             ledger["stopped_for_budget"] = True
             ledger["examples_skipped"] = int(ledger["examples_skipped"]) + 1
+            _progress(args, f"example {index}/{total_examples} {question_id}: skipped budget")
             continue
 
         # 1. Import conversation; 2. run slow path so durable memory forms.
+        turn_count = _turn_count(example)
+        _progress(
+            args,
+            f"example {index}/{total_examples} {question_id}: importing {turn_count} turns",
+        )
         import_conversations(example)
+        _progress(args, f"example {index}/{total_examples} {question_id}: running slow path")
         _run_slow_path(ledger, args)
 
         # 3. Ask MIRA (gold answer is NOT passed in -- anti-leakage).
         question = str(example.get("question", ""))
+        _progress(args, f"example {index}/{total_examples} {question_id}: answering")
         captured = _answer_with_cache(cache, example, question, ledger, args)
 
         # 4. Judge (deterministic / llm / hybrid) with caching.
+        _progress(args, f"example {index}/{total_examples} {question_id}: judging")
         verdict = _judge_with_cache(cache, example, captured, ledger, args)
         results.append(_example_result(example, captured, verdict, args))
         ledger["examples_completed"] = int(ledger["examples_completed"]) + 1
+        _progress(
+            args,
+            f"example {index}/{total_examples} {question_id}: done "
+            f"cost=${float(ledger['actual_cost_usd']):.4f}",
+        )
 
     return results, ledger
 
@@ -216,11 +247,35 @@ def _judge_with_cache(
 
 
 def _run_slow_path(ledger: Ledger, args: argparse.Namespace) -> None:
-    from core.memory.slow_path import run_slow_path_batch
+    from core.db.repositories import claim_pending_batch, mark_done, mark_failed
+    from core.memory.slow_path import run_slow_path_for_observation
 
-    batch = run_slow_path_batch(10_000)
-    for _ in batch:
+    queue_records = claim_pending_batch(10_000)
+    total = len(queue_records)
+    if total == 0:
+        _progress(args, "slow path: no pending observations")
+        return
+    started = time.monotonic()
+    _progress(args, f"slow path: claimed {total} observations")
+    for index, record in enumerate(queue_records, start=1):
+        observation_id = str(record["observation_id"])
+        queue_id = str(record["id"])
+        _progress(args, f"slow path {index}/{total}: observation={observation_id} start")
+        result = run_slow_path_for_observation(observation_id)
+        if result["succeeded"]:
+            mark_done(queue_id)
+            status = "done"
+        else:
+            error = str(result.get("error_message") or "slow-path step failed")
+            mark_failed(queue_id, error)
+            status = f"failed: {error}"
         _charge(ledger, "slow_path", "", "", args, tokens=(800, 120))
+        elapsed = time.monotonic() - started
+        _progress(
+            args,
+            f"slow path {index}/{total}: observation={observation_id} {status} "
+            f"elapsed={elapsed:.1f}s cost=${float(ledger['actual_cost_usd']):.4f}",
+        )
 
 
 # --- status, cost, ledger ---------------------------------------------------
@@ -435,6 +490,12 @@ def _write_outputs(summary: dict[str, object], args: argparse.Namespace) -> None
     )
 
 
+def _progress(args: argparse.Namespace, message: str) -> None:
+    if getattr(args, "quiet", False):
+        return
+    print(f"[benchmark] {message}", file=sys.stderr, flush=True)
+
+
 def _save_judge_artifacts(
     args: argparse.Namespace, judge_input: Any, verdict: dict[str, object]
 ) -> None:
@@ -458,7 +519,7 @@ def _save_judge_artifacts(
 def _install_llm_mode(args: argparse.Namespace) -> Restore:
     if args.live:
         _require_live_key()
-        return lambda: None
+        return _install_live_model(args.model)
 
     from core import agent
     from core.memory import slow_path
@@ -479,6 +540,19 @@ def _install_llm_mode(args: argparse.Namespace) -> Restore:
     return restore
 
 
+def _install_live_model(model: str) -> Restore:
+    original_model = os.environ.get(LLM_MODEL_ENV)
+    os.environ[LLM_MODEL_ENV] = model
+
+    def restore() -> None:
+        if original_model is None:
+            os.environ.pop(LLM_MODEL_ENV, None)
+            return
+        os.environ[LLM_MODEL_ENV] = original_model
+
+    return restore
+
+
 def _get_attr(module: object, name: str) -> object:
     return getattr(module, name)
 
@@ -488,9 +562,10 @@ def _set_attr(module: object, name: str, value: object) -> None:
 
 
 def _require_live_key() -> None:
-    if not os.environ.get(DASHSCOPE_API_KEY_ENV):
+    if not os.environ.get(LLM_API_KEY_ENV) and not os.environ.get(DASHSCOPE_API_KEY_ENV):
         raise RunnerError(
-            f"--live requires {DASHSCOPE_API_KEY_ENV}; run with --stub for offline mode"
+            f"--live requires {LLM_API_KEY_ENV} or {DASHSCOPE_API_KEY_ENV}; "
+            "run with --stub for offline mode"
         )
 
 
@@ -751,6 +826,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--save-judge-prompts", action="store_true")
+    parser.add_argument("--quiet", action="store_true")
     official = parser.add_mutually_exclusive_group()
     official.add_argument("--official", dest="official", action="store_true")
     official.add_argument("--prototype", dest="prototype", action="store_true")

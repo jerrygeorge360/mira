@@ -14,6 +14,10 @@ services:
     ports:
       - "8501:8501"
     environment:
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CHAT_ENDPOINT: ${LLM_CHAT_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-qwen-plus}
+      LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_CHAT_ENDPOINT: ${DASHSCOPE_CHAT_ENDPOINT:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions}
       MIRA_DB_PATH: /data/sqlite/mira.db
@@ -44,6 +48,10 @@ services:
       - --poll-interval
       - "2"
     environment:
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_CHAT_ENDPOINT: ${LLM_CHAT_ENDPOINT:-}
+      LLM_MODEL: ${LLM_MODEL:-qwen-plus}
+      LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
       DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
       DASHSCOPE_CHAT_ENDPOINT: ${DASHSCOPE_CHAT_ENDPOINT:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions}
       MIRA_DB_PATH: /data/sqlite/mira.db

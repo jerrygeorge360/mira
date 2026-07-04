@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from core.db import chroma
 from core.db.repositories import (
     configure_database,
     create_session,
@@ -25,11 +26,17 @@ from core.memory.slow_path import run_slow_path_batch, run_slow_path_for_observa
 
 
 @pytest.fixture
-def database_path(tmp_path: Path) -> Iterator[Path]:
+def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Configure the orchestrator tests to use an isolated database."""
     path = tmp_path / "mira.sqlite3"
+    monkeypatch.setenv("CHROMA_DB_PATH", str(tmp_path / "chroma"))
+    monkeypatch.setenv("EMBEDDING_MODE", "deterministic")
     configure_database(path)
+    for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
+        chroma.delete_collection(collection)
     yield path
+    for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
+        chroma.delete_collection(collection)
 
 
 def _count(query: str, *params: object) -> int:
@@ -112,6 +119,12 @@ def test_orchestrator_processes_queued_observation(
     )
     assert len(find_edges_by_type("MENTIONS")) == 1
     assert _queue_status(observation_id) == "done"
+    vector_results = chroma.query_embeddings(
+        "observations",
+        slow_path.embed_text("Jerry prefers the TypeScript backend."),
+        top_k=1,
+    )
+    assert vector_results[0]["sqlite_id"] == observation_id
 
 
 def test_orchestrator_records_supersession(

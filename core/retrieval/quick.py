@@ -7,12 +7,11 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
-import hashlib
-import math
 import re
 
 from core.db import chroma
 from core.db.repositories import repository_connection
+from core.llm.embeddings import embed_text
 from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
 
 Evidence = dict[str, object]
@@ -257,15 +256,7 @@ def _ranking_key(evidence: Evidence) -> tuple[float, float, float, float, str]:
 
 
 def _query_embedding(query: str) -> list[float]:
-    tokens = _tokens(query)
-    vector = [0.0] * 8
-    for token in tokens:
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        vector[digest[0] % len(vector)] += 1.0
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm == 0.0:
-        return [1.0, *([0.0] * 7)]
-    return [value / norm for value in vector]
+    return embed_text(query)
 
 
 def _fetch_record(table: str, record_id: str) -> dict[str, object] | None:

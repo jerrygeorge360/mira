@@ -12,7 +12,7 @@ import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.dependencies import configure_runtime_database
+from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.routes import chat, health, memory, retrieval, sessions, worker
 
 DEFAULT_CORS_ORIGINS = (
@@ -24,6 +24,7 @@ DEFAULT_CORS_ORIGINS = (
 
 def create_app() -> FastAPI:
     """Create and configure the MIRA FastAPI app."""
+    load_runtime_environment()
     configure_runtime_database()
     app = FastAPI(title="MIRA API", version="0.1.0")
     app.add_middleware(

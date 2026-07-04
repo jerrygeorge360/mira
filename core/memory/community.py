@@ -17,12 +17,11 @@ from __future__ import annotations
 import hashlib
 import importlib
 import logging
-import math
-import re
 
 from core.db import chroma
 from core.db.repositories import create_community_summary as create_community_summary_record
 from core.db.repositories import repository_connection
+from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
 
@@ -32,13 +31,9 @@ CommunitySummary = dict[str, object]
 LOGGER = logging.getLogger(__name__)
 
 MIN_COMMUNITY_SIZE = 2
-EMBEDDING_DIMENSIONS = 8
 INDEX_COLLECTION = "community_summaries"
 # Fixed seed so background Leiden detection is reproducible for the slow path.
 LEIDEN_SEED = 0
-
-TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
-STOPWORDS = frozenset({"a", "an", "the", "is", "are", "of", "to", "and", "for", "in", "on"})
 
 
 def detect_graph_communities() -> list[Community]:
@@ -228,22 +223,7 @@ def _community_id(member_node_ids: list[str]) -> str:
 
 
 def _embed_text(text: str) -> list[float]:
-    vector = [0.0] * EMBEDDING_DIMENSIONS
-    for token in _tokens(text):
-        digest = hashlib.sha256(token.encode("utf-8")).digest()
-        vector[digest[0] % EMBEDDING_DIMENSIONS] += 1.0
-    norm = math.sqrt(sum(value * value for value in vector))
-    if norm == 0.0:
-        return [1.0, *([0.0] * (EMBEDDING_DIMENSIONS - 1))]
-    return [value / norm for value in vector]
-
-
-def _tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in TOKEN_PATTERN.findall(value.casefold())
-        if len(token) > 1 and token not in STOPWORDS
-    }
+    return embed_text(text)
 
 
 def _find(parent: dict[str, str], node_id: str) -> str:

@@ -78,6 +78,7 @@ def test_expected_modules_exist() -> None:
 def test_application_modules_import_without_third_party() -> None:
     """Ensure scaffold modules import without optional third-party packages."""
     third_party_allowlist: dict[str, frozenset[str]] = {
+        "core.llm.qwen": frozenset({"openai"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     for module_name in EXPECTED_MODULES:
@@ -92,6 +93,7 @@ def test_application_modules_import_without_third_party() -> None:
 def test_application_imports_are_standard_library_only() -> None:
     """Ensure application imports remain standard-library or local-only."""
     third_party_allowlist: dict[str, frozenset[str]] = {
+        "core.llm.qwen": frozenset({"openai"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     allowed_modules = sys.stdlib_module_names | LOCAL_IMPORT_ROOTS

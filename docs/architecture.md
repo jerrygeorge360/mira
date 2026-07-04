@@ -17,7 +17,7 @@ handle_user_message(session_id, user_message)
   5. retrieval        core/retrieval/{quick,deep,relational}.py
   6. context merge    core/context/merger.py          recent turns + SWS + hot + retrieved + ambient
   7. budget + prompt  core/context/budget.py          trim to token budget, render answer prompt
-  8. generation       core/llm/qwen.py                call Qwen (answer_generation schema)
+  8. generation       core/llm/qwen.py                call configured LLM (answer_generation schema)
   9. persist reply    core/memory/observation.py      persist + enqueue assistant turn
  10. trace + logs     core/memory/trace.py, core/observability.py
 ```
@@ -263,7 +263,7 @@ The chat surface is the bridge to actual usage. Demo mode calls
 [`MockChatAgent`](../ui/chat.py); real mode calls
 `core.agent.Agent(DEFAULT_SESSION_ID).respond(...)`, which enters the runtime path described
 at the top of this document. Real mode therefore requires a configured SQLite database,
-DashScope/Qwen credentials, and the relevant retrieval/memory components.
+provider credentials, and the relevant retrieval/memory components.
 
 The graph panel is an inspectable representation of the typed memory graph. Clicking a node
 opens a detail inspector with type/status, summary, evidence IDs, and connected paths. This

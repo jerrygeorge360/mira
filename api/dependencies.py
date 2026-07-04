@@ -17,6 +17,13 @@ from core.db.repositories import configure_database, repository_connection
 DATABASE_PATH_ENV = "MIRA_DB_PATH"
 
 
+def load_runtime_environment() -> bool:
+    """Load local .env values for API runtime without overriding shell values."""
+    from dotenv import load_dotenv
+
+    return bool(load_dotenv(dotenv_path=".env", override=False))
+
+
 def configure_runtime_database() -> None:
     """Configure the repository database from environment defaults."""
     configure_database(os.environ.get(DATABASE_PATH_ENV, "./mira.db"))

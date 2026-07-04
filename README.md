@@ -39,7 +39,7 @@ user turn
   └─ hydrate durable memory (new session / "continue …")
   └─ route retrieval (Auto → Quick | Deep | Relational) + sufficiency check
   └─ merge context (recent turns · session items · hot memory · retrieved · ambient)
-  └─ build prompt under token budget → call Qwen
+  └─ build prompt under token budget → call configured LLM provider
   └─ persist assistant turn + enqueue → structured response + trace
 
 asynchronous slow path (per queued observation)
@@ -62,13 +62,106 @@ Python 3.11 is required.
 python3.11 -m venv .venv
 source .venv/bin/activate
 make install
-cp .env.example .env      # add your DASHSCOPE_API_KEY
+cp .env.example .env      # add your LLM_API_KEY and provider endpoint
 make check
 ```
 
-`.env` is documented in [.env.example](.env.example). The DashScope key must match its
-region: MIRA defaults the endpoint to the international host
-(`DASHSCOPE_CHAT_ENDPOINT=https://dashscope-intl.aliyuncs.com/...`).
+`.env` is documented in [.env.example](.env.example). MIRA uses an OpenAI-compatible
+chat-completions adapter configured with `LLM_API_KEY`, `LLM_CHAT_ENDPOINT`,
+`LLM_MODEL`, optional `LLM_PROVIDER`, and `LLM_RESPONSE_FORMAT`. DashScope/Qwen remains
+the default example, and legacy `DASHSCOPE_API_KEY` / `DASHSCOPE_CHAT_ENDPOINT` variables
+still work as fallbacks. To use DeepSeek, for example, set `LLM_PROVIDER=deepseek`,
+`LLM_MODEL=deepseek-chat`, `LLM_CHAT_ENDPOINT=https://api.deepseek.com/chat/completions`,
+and `LLM_RESPONSE_FORMAT=auto`.
+
+To use SiliconFlow for both inference and embeddings:
+
+```bash
+LLM_PROVIDER=siliconflow
+LLM_API_KEY=your_siliconflow_key
+LLM_CHAT_ENDPOINT=https://api.siliconflow.com/v1/chat/completions
+LLM_MODEL=Qwen/Qwen3-32B
+LLM_RESPONSE_FORMAT=auto
+
+EMBEDDING_API_KEY=your_siliconflow_key
+EMBEDDING_ENDPOINT=https://api.siliconflow.com/v1/embeddings
+EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
+EMBEDDING_DIMENSIONS=1024
+EMBEDDING_MODE=auto
+```
+
+To use Gemini through Google's OpenAI-compatible endpoint:
+
+```bash
+LLM_PROVIDER=gemini
+LLM_API_KEY=your_gemini_api_key
+LLM_CHAT_ENDPOINT=https://generativelanguage.googleapis.com/v1beta/openai/chat/completions
+LLM_MODEL=gemini-3.5-flash
+LLM_RESPONSE_FORMAT=auto
+```
+
+Verify provider wiring before running the worker or benchmarks:
+
+```bash
+set -a
+source .env
+set +a
+make provider-check
+```
+
+`LLM_RESPONSE_FORMAT=auto` uses strict `json_schema` requests for providers that support
+them, including SiliconFlow and Gemini, and JSON-object mode for DeepSeek. You can force
+`LLM_RESPONSE_FORMAT=json_schema` for providers with OpenAI Structured Outputs support, or
+`LLM_RESPONSE_FORMAT=json_object` for providers that only support JSON mode.
+
+Prepare the benchmark dataset this repo expects with:
+
+```bash
+python3 -m scripts.prepare_longmemeval --variant oracle
+```
+
+That writes the converted file to `data/benchmarks/longmemeval.json`.
+
+Run the live LongMemEval-style benchmark with:
+
+```bash
+set -a
+source .env
+set +a
+make benchmark
+```
+
+To run the benchmark with DeepSeek or another OpenAI-compatible provider, set the provider
+env vars and pass the model names:
+
+```bash
+set -a
+source .env
+set +a
+LLM_PROVIDER=deepseek \
+LLM_CHAT_ENDPOINT=https://api.deepseek.com/chat/completions \
+MODEL=deepseek-chat \
+JUDGE_MODEL=deepseek-chat \
+make benchmark
+```
+
+For a smaller live run, use:
+
+```bash
+set -a
+source .env
+set +a
+LIMIT=20 make benchmark-subset
+```
+
+To estimate cost without live model calls:
+
+```bash
+make benchmark-cost
+```
+
+All three targets use `LONGMEMEVAL_DATASET`, which defaults to
+`data/benchmarks/longmemeval.json`.
 
 ## Demo
 
@@ -92,7 +185,7 @@ Most visual panels are intentionally backed by deterministic demo data so the te
 rehearse the story without waiting for organic long conversations. The chat surface has an
 explicit **Use real MIRA agent** toggle: demo mode calls a deterministic mock agent; real
 mode calls `core.agent.Agent(DEFAULT_SESSION_ID).respond(...)` and therefore requires the
-database, DashScope/Qwen credentials, and runtime memory components to be configured.
+database, provider credentials, and runtime memory components to be configured.
 
 The judge/user walkthrough is in [docs/demo-script.md](docs/demo-script.md). You can also
 drive the runtime directly without the UI:
@@ -159,6 +252,16 @@ The Compose app service mounts durable local data into `.docker-data/`:
 - SQLite: `.docker-data/sqlite/mira.db` mounted as `MIRA_DB_PATH=/data/sqlite/mira.db`
 - Chroma: `.docker-data/chroma` mounted as `CHROMA_DB_PATH=/data/chroma`
 
+Chroma is used as a real persistent vector index when `chromadb` is installed and
+`CHROMA_DB_PATH` is set. It stores embeddings plus SQLite record pointers only;
+SQLite remains the source of truth. Embeddings use an OpenAI-compatible endpoint:
+set `EMBEDDING_ENDPOINT`, `EMBEDDING_MODEL`, and optionally `EMBEDDING_API_KEY`.
+If `EMBEDDING_API_KEY` is omitted, MIRA reuses `LLM_API_KEY`. You can use DeepSeek
+for chat while using another provider for embeddings. Keep `EMBEDDING_MODE=auto`
+for real embeddings; set `EMBEDDING_MODE=deterministic` only for local/offline
+hash-vector runs. `EMBEDDING_DIMENSIONS` is optional and is passed through to providers
+that support configurable vector dimensions, such as SiliconFlow's Qwen embedding models.
+
 To run checks inside the container:
 
 ```bash
@@ -166,7 +269,7 @@ docker compose run --rm app make check
 ```
 
 Environment variables are documented in [.env.example](.env.example). Docker Compose uses
-safe defaults for local paths and reads secrets such as `DASHSCOPE_API_KEY` from your shell
+safe defaults for local paths and reads secrets such as `LLM_API_KEY` from your shell
 or `.env`; secrets are not baked into the image.
 
 ## Makefile commands
@@ -180,6 +283,9 @@ or `.env`; secrets are not baked into the image.
 - `security` — run Bandit.
 - `check` — run lint, type, security, and tests.
 - `precommit` — run all pre-commit hooks.
+- `benchmark` — run the live LongMemEval-style benchmark against `data/benchmarks/longmemeval.json`.
+- `benchmark-cost` — estimate benchmark cost against `data/benchmarks/longmemeval.json`.
+- `benchmark-subset` — run the live benchmark on a limited subset of `data/benchmarks/longmemeval.json`.
 - `clean` — remove generated caches and reports.
 
 ## Repository layout
@@ -192,7 +298,7 @@ core/
   session/     session micro-path, Session Working Set, confirmation, hydration
   retrieval/   Quick, Deep, Relational, Auto router, sufficiency
   context/     prompt builder, budget, merger, ambient context
-  llm/         Qwen client, prompts, JSON parsing
+  llm/         OpenAI-compatible client, prompts, JSON parsing
   db/          SQLite source of truth, ChromaDB index, schema, repositories
 ui/            Streamlit app and graph visualization
 api/           FastAPI product backend adapter over the MIRA core runtime

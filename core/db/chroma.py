@@ -11,14 +11,18 @@ Architecture area: retrieval.
 from __future__ import annotations
 
 import importlib
+import json
 import math
+import os
 from collections.abc import Callable, Sequence
 from typing import Any
 
 from core.db.repositories import repository_connection
+from core.llm.embeddings import embed_text
 
 SUPPORTED_COLLECTIONS = frozenset({"observations", "reflections", "community_summaries"})
 INDEX_TEXT_VERSION = 1
+CHROMA_DB_PATH_ENV = "CHROMA_DB_PATH"
 
 EmbeddingProvider = Callable[[str], list[float]]
 
@@ -27,7 +31,8 @@ _FALLBACK_STORE: dict[str, dict[str, dict[str, object]]] = {
 }
 _CHROMA_CLIENT: Any | None = None
 _CHROMA_CLIENT_INITIALIZED = False
-_EMBEDDING_PROVIDER: EmbeddingProvider | None = None
+_CHROMA_CLIENT_PATH: str | None = None
+_EMBEDDING_PROVIDER: EmbeddingProvider | None = embed_text
 
 
 def add_embedding(
@@ -46,7 +51,7 @@ def add_embedding(
     pointer_metadata = {
         "sqlite_table": sqlite_table,
         "sqlite_id": sqlite_id,
-        "metadata": dict(metadata or {}),
+        "metadata_json": json.dumps(dict(metadata or {}), sort_keys=True),
     }
     client = _load_chroma_client()
     if client is None:
@@ -109,7 +114,7 @@ def query_embeddings(
                 "sqlite_table": str(pointer["sqlite_table"]),
                 "sqlite_id": str(pointer.get("sqlite_id", sqlite_id)),
                 "distance": _as_float(distance),
-                "metadata": _as_metadata_dict(pointer.get("metadata", {})),
+                "metadata": _decode_pointer_metadata(pointer),
             }
         )
     return output
@@ -125,7 +130,7 @@ def delete_collection(collection: str) -> None:
     try:
         client.delete_collection(name=collection)
     except Exception as error:  # pragma: no cover - depends on installed Chroma version
-        if error.__class__.__name__ != "InvalidCollectionException":
+        if error.__class__.__name__ not in {"InvalidCollectionException", "NotFoundError"}:
             raise
 
 
@@ -201,15 +206,20 @@ def _fallback_collection(collection: str) -> dict[str, dict[str, object]]:
 
 
 def _load_chroma_client() -> Any | None:
-    global _CHROMA_CLIENT_INITIALIZED, _CHROMA_CLIENT
-    if _CHROMA_CLIENT_INITIALIZED:
+    global _CHROMA_CLIENT_INITIALIZED, _CHROMA_CLIENT, _CHROMA_CLIENT_PATH
+    configured_path = os.environ.get(CHROMA_DB_PATH_ENV)
+    if _CHROMA_CLIENT_INITIALIZED and configured_path == _CHROMA_CLIENT_PATH:
         return _CHROMA_CLIENT
     _CHROMA_CLIENT_INITIALIZED = True
+    _CHROMA_CLIENT_PATH = configured_path
     try:
         chromadb = importlib.import_module("chromadb")
     except ModuleNotFoundError:
         _CHROMA_CLIENT = None
         return None
+    if configured_path:
+        _CHROMA_CLIENT = chromadb.PersistentClient(path=configured_path)
+        return _CHROMA_CLIENT
     if hasattr(chromadb, "EphemeralClient"):
         _CHROMA_CLIENT = chromadb.EphemeralClient()
         return _CHROMA_CLIENT
@@ -292,6 +302,16 @@ def _as_metadata_dict(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("metadata must be a dictionary")
     return {str(key): item for key, item in value.items()}
+
+
+def _decode_pointer_metadata(pointer: dict[str, object]) -> dict[str, object]:
+    metadata_json = pointer.get("metadata_json")
+    if metadata_json is None:
+        return _as_metadata_dict(pointer.get("metadata", {}))
+    if not isinstance(metadata_json, str):
+        raise ValueError("metadata_json must be a string")
+    decoded = json.loads(metadata_json)
+    return _as_metadata_dict(decoded)
 
 
 def _as_float(value: object) -> float:

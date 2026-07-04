@@ -20,7 +20,13 @@ from __future__ import annotations
 
 import re
 
+from core.llm.prompts import render_prompt
+from core.llm.qwen import LLMClientError, call_qwen_json
+
 Decision = dict[str, object]
+RoutingStrategy = str
+ROUTING_STRATEGIES = frozenset({"fast", "accurate"})
+ROUTER_MODES = frozenset({"general", "quick", "deep", "relational", "auto"})
 
 RELATIONAL_MARKERS = (
     "switch",
@@ -98,7 +104,12 @@ QUICK_FACT_MARKERS = (
 TRANSITION_PATTERN = re.compile(r"\bfrom\s+\w[\w.+-]*\s+to\s+\w[\w.+-]*")
 
 
-def route_retrieval(query: str, session_id: str | None) -> Decision:
+def route_retrieval(
+    query: str,
+    session_id: str | None,
+    *,
+    strategy: RoutingStrategy = "fast",
+) -> Decision:
     """Classify a query into Quick, Deep, or Relational retrieval.
 
     Returns the chosen ``mode`` with a human-readable ``reason`` and a
@@ -108,6 +119,16 @@ def route_retrieval(query: str, session_id: str | None) -> Decision:
     session-aware routing; the decision is query-driven.
     """
     del session_id  # Reserved for future session-aware routing.
+    if strategy not in ROUTING_STRATEGIES:
+        raise ValueError("strategy must be one of: fast, accurate")
+    if strategy == "accurate":
+        decision = _llm_route_retrieval(query)
+        if decision is not None:
+            return decision
+    return _deterministic_route_retrieval(query)
+
+
+def _deterministic_route_retrieval(query: str) -> Decision:
     normalized = _normalize(query)
     if not normalized.strip():
         return _decision("quick", "empty query defaults to quick facts", 0.3, ambiguous=True)
@@ -135,6 +156,32 @@ def route_retrieval(query: str, session_id: str | None) -> Decision:
 def classify_retrieval_mode(query: str) -> str:
     """Classify a query into Quick, Deep, or Relational retrieval (mode only)."""
     return str(route_retrieval(query, None)["mode"])
+
+
+def _llm_route_retrieval(query: str) -> Decision | None:
+    prompt = render_prompt("retrieval_router_classification", {"query": query, "context": []})
+    try:
+        response = call_qwen_json(
+            [{"role": "user", "content": prompt}],
+            schema_name="retrieval_router_classification",
+        )
+    except LLMClientError:
+        return None
+
+    payload = response.get("json", {})
+    if not isinstance(payload, dict):
+        return None
+    mode = str(payload.get("mode", "")).casefold()
+    if mode == "auto":
+        return _decision(
+            "quick",
+            _reason(payload, "LLM router returned auto; running quick first"),
+            0.45,
+            ambiguous=True,
+        )
+    if mode not in ROUTER_MODES:
+        return None
+    return _decision(mode, _reason(payload, "LLM router decision"), 0.9)
 
 
 def _relational_reason(normalized: str) -> str | None:
@@ -174,6 +221,13 @@ def _decision(mode: str, reason: str, confidence: float, *, ambiguous: bool = Fa
         "confidence": confidence,
         "needs_sufficiency_check": ambiguous,
     }
+
+
+def _reason(payload: dict[object, object], fallback: str) -> str:
+    reason = payload.get("reason")
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return fallback
 
 
 def _normalize(value: str) -> str:

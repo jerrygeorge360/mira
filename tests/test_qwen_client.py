@@ -108,16 +108,25 @@ def test_chat_endpoint_is_converted_to_openai_base_url(
     assert qwen._load_base_url() == "https://api.deepseek.com"
 
 
+def test_gemini_openai_endpoint_is_converted_to_base_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini's OpenAI-compatible endpoint works with OpenAI(base_url=...)."""
+    monkeypatch.setenv(
+        qwen.LLM_CHAT_ENDPOINT_ENV,
+        "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
+    )
+
+    assert qwen._load_base_url() == "https://generativelanguage.googleapis.com/v1beta/openai"
+
+
 def test_legacy_dashscope_endpoint_is_converted_to_openai_base_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The DashScope chat endpoint remains compatible with OpenAI(base_url=...)."""
     monkeypatch.setenv(qwen.DASHSCOPE_ENDPOINT_ENV, qwen.DEFAULT_DASHSCOPE_ENDPOINT)
 
-    assert (
-        qwen._load_base_url()
-        == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
-    )
+    assert qwen._load_base_url() == "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 
 
 def test_json_call_parses_valid_json(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,6 +198,36 @@ def test_siliconflow_auto_mode_uses_json_schema_response_format(
 
     monkeypatch.setenv(qwen.LLM_API_KEY_ENV, "test-key")
     monkeypatch.setenv(qwen.LLM_PROVIDER_ENV, "siliconflow")
+    monkeypatch.setattr(qwen, "_post_chat_completion", fake_post_chat_completion)
+
+    response = qwen.call_qwen_json(
+        [{"role": "user", "content": "extract facts"}],
+        "atomic_fact_extraction",
+    )
+
+    assert response["json"] == {"facts": []}
+    response_format = captured_payload["response_format"]
+    assert isinstance(response_format, dict)
+    assert response_format["type"] == "json_schema"
+    assert response_format["json_schema"]["name"] == "atomic_fact_extraction"
+    assert response_format["json_schema"]["strict"] is True
+
+
+def test_gemini_auto_mode_uses_json_schema_response_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Gemini OpenAI compatibility supports strict JSON schema requests."""
+    captured_payload: dict[str, object] = {}
+
+    def fake_post_chat_completion(
+        payload: dict[str, object],
+        timeout_s: int,
+    ) -> dict[str, object]:
+        captured_payload.update(payload)
+        return _chat_response('{"facts": []}', model="gemini-3.5-flash")
+
+    monkeypatch.setenv(qwen.LLM_API_KEY_ENV, "test-key")
+    monkeypatch.setenv(qwen.LLM_PROVIDER_ENV, "gemini")
     monkeypatch.setattr(qwen, "_post_chat_completion", fake_post_chat_completion)
 
     response = qwen.call_qwen_json(
