@@ -66,6 +66,23 @@ def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) 
     assert "content" not in results[0]
 
 
+def test_vector_store_status_reports_collection_counts(database_path: Path) -> None:
+    session_id = create_session("user-1")
+    observation_id = save_observation(session_id, "user", "Vector status should count this.")
+    chroma.add_embedding(
+        "observations",
+        "observations",
+        observation_id,
+        [1.0, 0.0],
+        metadata={"source": "test"},
+    )
+
+    status = chroma.vector_store_status()
+
+    assert status["collections"]["observations"] == 1
+    assert "backend" in status
+
+
 def test_delete_collection_removes_index_but_not_sqlite_record(database_path: Path) -> None:
     """Deleting a Chroma collection does not delete the canonical SQLite row."""
     session_id = create_session("user-1")

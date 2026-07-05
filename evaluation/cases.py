@@ -37,6 +37,7 @@ EVALUATION_CATEGORIES = frozenset(
         "foresight_activation",
         "deep_mode_synthesis",
         "retrieval_sufficiency",
+        "routing_intent",
     }
 )
 
@@ -89,6 +90,22 @@ def score_case(expected: dict[str, object], actual: dict[str, object]) -> Score:
                 actual.get("retrieval_mode") == expected_mode,
                 actual.get("retrieval_mode"),
             )
+        )
+    if "intent" in expected:
+        decision = actual.get("routing_decision")
+        observed = decision.get("intent") if isinstance(decision, dict) else None
+        checks.append(
+            _check(f"intent=={expected['intent']}", observed == expected["intent"], observed)
+        )
+    if "used_memory" in expected:
+        trace = actual.get("retrieval_trace")
+        observed = trace.get("used_memory") if isinstance(trace, dict) else None
+        checks.append(_check("used_memory", observed == expected["used_memory"], observed))
+    if "route" in expected:
+        trace = actual.get("retrieval_trace")
+        observed = trace.get("route") if isinstance(trace, dict) else None
+        checks.append(
+            _check(f"route=={expected['route']}", observed == expected["route"], observed)
         )
     if "used_session_items_nonempty" in expected:
         expected_nonempty = bool(expected["used_session_items_nonempty"])

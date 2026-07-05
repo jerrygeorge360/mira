@@ -24,6 +24,7 @@ from core.memory.graph import (
     create_graph_node,
     find_edges_by_type,
     get_neighbors,
+    inspect_memory_graph,
 )
 
 
@@ -77,6 +78,36 @@ def test_mentions_edge_links_observation_to_entity(database_path: Path) -> None:
     assert edges[0]["id"] == edge_id
     assert edges[0]["source_observations"] == [observation_id]
     assert edges[0]["confidence"] == 0.95
+
+
+def test_graph_inspection_reports_counts_and_edge_provenance(database_path: Path) -> None:
+    """Graph inspection exposes visible nodes, edges, labels, and evidence observations."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "MIRA mentions SQLite.")
+    observation_node_id = create_graph_node(
+        "observation",
+        "MIRA mentions SQLite.",
+        "observations",
+        observation_id,
+    )
+    entity_node_id = create_graph_node("entity", "SQLite", "entities", "entity_sqlite")
+    edge_id = create_graph_edge(
+        observation_node_id,
+        entity_node_id,
+        "MENTIONS",
+        confidence=0.95,
+        source_observations=[observation_id],
+    )
+
+    snapshot = inspect_memory_graph(entity="SQLite")
+
+    assert snapshot["counts"]["nodes"] == 2
+    assert snapshot["counts"]["active_edges"] == 1
+    assert snapshot["counts"]["visible_nodes"] == 2
+    assert snapshot["edges"][0]["id"] == edge_id
+    assert snapshot["edges"][0]["source_observations"] == [observation_id]
+    assert snapshot["edges"][0]["source_label"] == "MIRA mentions SQLite."
+    assert snapshot["edges"][0]["target_label"] == "SQLite"
 
 
 def test_derived_from_edge_links_reflection_to_evidence(database_path: Path) -> None:

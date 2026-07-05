@@ -8,3 +8,5 @@ Module docstrings use issue-family placeholders until final tracker numbers are 
 - ISSUE-400: prompt construction.
 - ISSUE-500: persistence.
 - ISSUE-600–900: UI, Slack, evaluation, tests, and scripts.
+- ISSUE-1200+: runtime inspection surfaces (`graph-inspect`, `slow-path-status`,
+  `memory-search`, `local-eval`) and local architecture diagnostics.

@@ -484,6 +484,49 @@ def get_slow_path_queue_status() -> dict[str, int]:
     return counts
 
 
+def get_slow_path_health(limit: int = 10) -> dict[str, object]:
+    """Return queue, processing, and durable artifact health for inspection."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    with repository_connection() as connection:
+        unprocessed = connection.execute(
+            "SELECT COUNT(*) AS count FROM observations WHERE processed_at IS NULL"
+        ).fetchone()
+        artifacts = {
+            table: int(
+                connection.execute(
+                    f"SELECT COUNT(*) AS count FROM {table}"  # nosec B608
+                ).fetchone()["count"]
+            )
+            for table in (
+                "atomic_facts",
+                "entities",
+                "graph_nodes",
+                "graph_edges",
+                "working_memory",
+                "foresight_records",
+                "reflections",
+                "community_summaries",
+            )
+        }
+        failed_rows = connection.execute(
+            """
+            SELECT id, observation_id, status, attempt_count, last_error, updated_at
+            FROM slow_path_queue
+            WHERE status IN ('failed', 'dead_letter')
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return {
+        "queue": get_slow_path_queue_status(),
+        "unprocessed_observations": 0 if unprocessed is None else int(unprocessed["count"]),
+        "artifacts": artifacts,
+        "recent_failures": [dict(row) for row in failed_rows],
+    }
+
+
 def _reached(max_iterations: int | None, iterations: int) -> bool:
     return max_iterations is not None and iterations >= max_iterations
 

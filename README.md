@@ -191,6 +191,81 @@ session = create_session("jerry")
 print(handle_user_message(session, "Use 2026, not 2025, for all dates."))
 ```
 
+## Runtime inspection and local evaluation
+
+MIRA now exposes small command-line probes for the parts that are easiest to
+misunderstand while developing: routing, graph state, slow-path ingestion, vector
+search, and local regressions.
+
+Inspect the memory graph:
+
+```bash
+make graph-inspect PYTHON=.venv/bin/python
+ENTITY=SQLite make graph-inspect PYTHON=.venv/bin/python
+```
+
+The output is JSON with graph counts, visible nodes/edges, edge labels, and
+`source_observations` provenance. Use this when checking whether slow-path entity
+extraction or graph updates actually created durable graph records.
+
+Inspect slow-path health:
+
+```bash
+make slow-path-status PYTHON=.venv/bin/python
+```
+
+This reports queue counts, unprocessed observations, recent failed/dead-letter jobs,
+and durable artifact counts for atomic facts, graph nodes/edges, working memory,
+foresight, reflections, and community summaries.
+
+Search vector memory:
+
+```bash
+QUERY="what did I say about oranges?" make memory-search PYTHON=.venv/bin/python
+```
+
+This embeds the query, prints the embedding dimension, searches Chroma collections,
+and resolves each Chroma pointer back to SQLite. Chroma is only an index: if a result
+shows `"record_found": false`, the vector store contains a stale pointer to a SQLite
+record that is no longer in the active `MIRA_DB_PATH`. Rebuild or clear Chroma when
+switching SQLite databases.
+
+Run the small local memory regression suite:
+
+```bash
+make local-eval PYTHON=.venv/bin/python
+```
+
+The local suite uses an isolated temporary SQLite database and a deterministic answer
+stub by default, so it is cheap and fast compared with LongMemEval. It checks routing
+intent, whether memory was used, retrieval mode, session corrections, contradiction and
+supersession behavior, foresight, and retrieval sufficiency. Use `--live` through the
+script if you explicitly want provider calls:
+
+```bash
+python -m scripts.run_local_eval --live
+```
+
+Each normal agent response also returns a routing/debug object:
+
+```json
+{
+  "routing_decision": {
+    "intent": "general_knowledge",
+    "used_memory": false,
+    "route": "direct_llm",
+    "mode": "general",
+    "reason": "general knowledge question; no user memory required"
+  },
+  "retrieval_trace": {
+    "retrieved": []
+  }
+}
+```
+
+For personal-memory questions, `used_memory` should be `true` and `retrieved` should
+show the SQLite-backed memory records that entered prompt construction.
+
 ## FastAPI product backend
 
 MIRA also exposes a product API boundary for non-Streamlit clients:
@@ -268,6 +343,12 @@ or `.env`; secrets are not baked into the image.
 - `install` — install requirements.
 - `run` — launch the Streamlit UI (`ui/app.py`).
 - `api` — launch the FastAPI product backend (`api.main:app`).
+- `provider-check` — smoke-check configured chat and embedding providers.
+- `worker` — run the slow-path background memory worker.
+- `graph-inspect` — print a JSON snapshot of graph nodes, edges, and provenance.
+- `slow-path-status` — print queue health, failures, and slow-path artifact counts.
+- `memory-search` — embed `QUERY` and search vector memory through Chroma pointers.
+- `local-eval` — run the small isolated local memory regression suite.
 - `test` — run pytest.
 - `lint`, `format`, `fix` — check or format with Ruff.
 - `type` — run strict mypy.
@@ -317,14 +398,15 @@ typed stub. (Run `make check` to validate everything marked implemented.)
 | Tier policy (cold/warm/hot promotion & demotion) | ✅ Implemented |
 | Retrieval: Quick, Deep, Relational, Auto router, sufficiency check | ✅ Implemented |
 | Context merge, token budget, ambient context | ✅ Implemented |
-| Agent runtime (`handle_user_message`) + answer trace | ✅ Implemented |
+| Agent runtime (`handle_user_message`) + answer/routing trace | ✅ Implemented |
 | Structured logging / secret redaction | ✅ Implemented |
-| Evaluation: cases harness, LongMemEval/LoCoMo adapter, ablations | ✅ Implemented |
+| Evaluation: local cases harness, LongMemEval/LoCoMo adapter, ablations | ✅ Implemented |
 | Evaluation judge: deterministic, LLM, and hybrid judge modes | ✅ Implemented |
 | Premium Streamlit UI shell + Memory Command Center | ✅ Implemented (demo-first, real-agent chat toggle) |
 | MCP memory server skeleton, Slack bot, Docker setup | ✅ Implemented |
 | Cross-session slow-path **step** functions | ✅ Implemented |
 | Async slow-path **orchestrator**, worker loop, and queue status helpers | ✅ Implemented |
+| Runtime inspection: graph, slow-path, vector search, local eval commands | ✅ Implemented |
 | Public retrieval **dispatcher** (`router.route_retrieval`) | 🟡 Stub — classifier done in `retrieval/auto.py` |
 | Vector search boundary (`retrieval/vector.py`) | 🟡 Stub — Chroma index helpers live in `core/db/chroma.py` |
 | Standalone prompt builder facade (`context/prompt_builder.py`) | 🟡 Stub — agent renders centralized prompts inline |

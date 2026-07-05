@@ -35,7 +35,11 @@ from core.observability import (
     log_retrieval_route,
     log_session_hydration,
 )
-from core.retrieval.auto import route_retrieval
+from core.retrieval.auto import (
+    GENERAL_KNOWLEDGE_INTENT,
+    PROCEDURAL_INTENT,
+    route_retrieval,
+)
 from core.retrieval.deep import retrieve_deep
 from core.retrieval.quick import retrieve_quick
 from core.retrieval.relational import relational_retrieve
@@ -76,60 +80,6 @@ GENERAL_KNOWLEDGE_MODE = "general_knowledge"
 MEMORY_GROUNDED_MODE = "memory_grounded"
 GENERAL_RETRIEVAL_MODE = "general"
 
-MEMORY_QUERY_MARKERS = (
-    "my ",
-    "our ",
-    "about me",
-    "for me",
-    "who am i",
-    "what kind of",
-    "am i",
-    "you remember",
-    "remember",
-    "remind me",
-    "did i",
-    "did we",
-    "what did i",
-    "what did we",
-    "what have i",
-    "what have we",
-    "what do i",
-    "what do we",
-    "what was my",
-    "what is my",
-    "what's my",
-    "where did i",
-    "where is my",
-    "when did i",
-    "when is my",
-    "last time",
-    "previously",
-    "before",
-    "deadline",
-    "preference",
-    "prefer",
-    "project",
-    "task",
-)
-
-GENERAL_QUESTION_PREFIXES = (
-    "what is ",
-    "what's ",
-    "what are ",
-    "who is ",
-    "who are ",
-    "where is ",
-    "where are ",
-    "when is ",
-    "how does ",
-    "how do ",
-    "how can ",
-    "why does ",
-    "why is ",
-    "explain ",
-    "define ",
-)
-
 
 def handle_user_message(
     session_id: str,
@@ -158,30 +108,22 @@ def handle_user_message(
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
 
     # Bring durable memory back into a new or continuing session.
-    decision: dict[str, object] | None = None
-    if routing_strategy == "accurate":
-        decision = route_retrieval(user_message, session_id, strategy="accurate")
-    elif routing_strategy != "fast":
+    if routing_strategy not in {"fast", "accurate"}:
         raise ValueError("routing_strategy must be one of: fast, accurate")
+    decision = route_retrieval(user_message, session_id, strategy=routing_strategy)
 
     answer_mode = _answer_mode_from_decision(user_message, decision)
-    if answer_mode == MEMORY_GROUNDED_MODE and _should_hydrate(prior_observations, user_message):
+    if _decision_uses_memory(decision) and _should_hydrate(prior_observations, user_message):
         hydrated_ids = hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
         trace.record_hydration(hydrated_ids)
         log_session_hydration(session_id, hydrated_ids)
 
     # Routed retrieval of cross-session memory.
-    if answer_mode == GENERAL_KNOWLEDGE_MODE:
+    if not _decision_uses_memory(decision):
         retrieval_mode = GENERAL_RETRIEVAL_MODE
-        reason = (
-            str(decision.get("reason", ""))
-            if decision
-            else "general-knowledge query; memory skipped"
-        )
-        log_retrieval_route(session_id, retrieval_mode, reason)
+        log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
         retrieved: list[dict[str, object]] = []
     else:
-        decision = decision or route_retrieval(user_message, session_id, strategy="fast")
         retrieval_mode = str(decision["mode"])
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
         retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
@@ -237,6 +179,7 @@ def handle_user_message(
         query=user_message,
         retrieval_mode=retrieval_mode,
         retrieved=retrieved,
+        routing_decision=decision,
         used_session_items=used_session_items,
         used_memory_items=used_memory_items,
         recent_turns=recent_turns,
@@ -256,6 +199,8 @@ def handle_user_message(
         "retrieval_mode": retrieval_mode,
         "used_session_items": used_session_items,
         "used_memory_items": used_memory_items,
+        "routing_decision": dict(decision),
+        "retrieval_trace": _retrieval_trace(decision, retrieval_mode, retrieved),
         "trace_id": trace_id,
     }
 
@@ -325,31 +270,45 @@ def _should_hydrate(prior_observations: list[dict[str, object]], user_message: s
 
 def _answer_mode_from_decision(
     user_message: str,
-    decision: dict[str, object] | None,
+    decision: dict[str, object],
 ) -> str:
-    if decision:
-        if decision.get("mode") == GENERAL_RETRIEVAL_MODE:
-            return GENERAL_KNOWLEDGE_MODE
-        return MEMORY_GROUNDED_MODE
-    return _answer_mode(user_message)
-
-
-def _answer_mode(user_message: str) -> str:
-    normalized = f" {user_message.casefold().strip()} "
-    if _looks_memory_grounded(normalized):
-        return MEMORY_GROUNDED_MODE
-    if _looks_general_question(normalized):
+    del user_message
+    if (
+        decision.get("intent") == GENERAL_KNOWLEDGE_INTENT
+        or decision.get("mode") == GENERAL_RETRIEVAL_MODE
+    ):
         return GENERAL_KNOWLEDGE_MODE
+    if decision.get("intent") == PROCEDURAL_INTENT:
+        return MEMORY_GROUNDED_MODE
     return MEMORY_GROUNDED_MODE
 
 
-def _looks_memory_grounded(normalized: str) -> bool:
-    return any(marker in normalized for marker in MEMORY_QUERY_MARKERS)
+def _decision_uses_memory(decision: dict[str, object]) -> bool:
+    return bool(decision.get("used_memory", decision.get("mode") != GENERAL_RETRIEVAL_MODE))
 
 
-def _looks_general_question(normalized: str) -> bool:
-    stripped = normalized.strip()
-    return any(stripped.startswith(prefix) for prefix in GENERAL_QUESTION_PREFIXES)
+def _retrieval_trace(
+    decision: dict[str, object],
+    retrieval_mode: str,
+    retrieved: list[dict[str, object]],
+) -> dict[str, object]:
+    return {
+        "intent": decision.get("intent"),
+        "used_memory": _decision_uses_memory(decision),
+        "route": decision.get("route", retrieval_mode),
+        "retrieval_mode": retrieval_mode,
+        "reason": decision.get("reason", ""),
+        "confidence": decision.get("confidence"),
+        "needs_sufficiency_check": decision.get("needs_sufficiency_check", False),
+        "retrieved": [
+            {
+                "source": item.get("source"),
+                "id": item.get("id") or item.get("source_id"),
+                "score": item.get("score"),
+            }
+            for item in retrieved
+        ],
+    }
 
 
 def _recent_turn_records(prior_observations: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -415,6 +374,7 @@ def _log_traces(
     query: str,
     retrieval_mode: str,
     retrieved: list[dict[str, object]],
+    routing_decision: dict[str, object],
     used_session_items: list[str],
     used_memory_items: list[str],
     recent_turns: list[dict[str, object]],
@@ -429,6 +389,10 @@ def _log_traces(
                 {"source": item.get("source"), "id": item.get("id") or item.get("source_id")}
                 for item in retrieved
             ],
+            "sufficiency_json": {
+                "routing_decision": routing_decision,
+                "retrieved_count": len(retrieved),
+            },
         }
     )
     prompt_log_id = create_prompt_log(
