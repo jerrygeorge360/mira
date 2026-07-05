@@ -8,6 +8,8 @@ Run the deterministic demo seed before the walkthrough:
 
 ```bash
 python -m scripts.seed_demo --reset
+make slow-path-status PYTHON=.venv/bin/python
+make graph-inspect PYTHON=.venv/bin/python
 make run
 ```
 
@@ -21,7 +23,8 @@ Use the Streamlit navigation in this order:
 6. Retrieval Trace
 7. Evaluation Dashboard
 
-No hidden manual setup is required beyond the seed command and launching the UI.
+No hidden manual setup is required beyond the seed command, the quick inspection checks, and
+launching the UI. The inspection commands catch stale local state before rehearsal starts.
 
 ## Five-minute narrative
 
@@ -60,6 +63,18 @@ shows time-aware memory by activating the hackathon deadline. Retrieval Trace
 finishes the story by showing why the answer happened: route, evidence,
 sufficiency, and prompt sections.
 
+For a live runtime sanity check outside the UI, run:
+
+```bash
+QUERY="MongoDB PostgreSQL" make memory-search PYTHON=.venv/bin/python
+make local-eval PYTHON=.venv/bin/python
+```
+
+`memory-search` should return Chroma pointers with `record_found=true` after a fresh seed.
+If it returns `record_found=false`, clear or rebuild Chroma for the active SQLite database.
+`local-eval` should pass the small routing/memory regression suite without paid provider
+calls.
+
 ## Feature checklist
 
 - [ ] User correction updates Session Working Set immediately.
@@ -70,6 +85,8 @@ sufficiency, and prompt sections.
 - [ ] Deep Mode uses community summaries.
 - [ ] Foresight activates from the hackathon deadline.
 - [ ] Retrieval Trace explains the answer.
+- [ ] `graph-inspect`, `slow-path-status`, and `memory-search` agree with the seeded state.
+- [ ] `local-eval` passes before a live benchmark or judge rehearsal.
 
 ## Rehearsal notes
 

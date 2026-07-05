@@ -15,3 +15,7 @@ Use a lightweight session micro-path during interaction and an asynchronous cros
 ## Consequences
 
 The micro-path stays fast and provisional; the slow path owns confirmation, enrichment, and tier movement.
+Slow-path health must be inspectable independently of answer generation. `make slow-path-status`
+reports queue counts, recent failures, unprocessed observations, and durable artifact counts so
+worker stalls, failed enrichment, and missing graph/fact outputs are visible without opening
+SQLite manually.

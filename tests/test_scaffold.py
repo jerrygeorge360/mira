@@ -64,6 +64,10 @@ EXPECTED_MODULES = (
     "evaluation.longmemeval",
     "evaluation.ablation",
     "evaluation.cases",
+    "scripts.inspect_graph",
+    "scripts.run_local_eval",
+    "scripts.search_memory",
+    "scripts.slow_path_status",
     "scripts.test_qwen",
     "scripts.seed_demo",
 )
@@ -80,6 +84,10 @@ def test_application_modules_import_without_third_party() -> None:
     """Ensure scaffold modules import without optional third-party packages."""
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
+        "scripts.inspect_graph": frozenset({"dotenv"}),
+        "scripts.run_local_eval": frozenset({"dotenv"}),
+        "scripts.search_memory": frozenset({"dotenv"}),
+        "scripts.slow_path_status": frozenset({"dotenv"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     for module_name in EXPECTED_MODULES:
@@ -95,6 +103,10 @@ def test_application_imports_are_standard_library_only() -> None:
     """Ensure application imports remain standard-library or local-only."""
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
+        "scripts.inspect_graph": frozenset({"dotenv"}),
+        "scripts.run_local_eval": frozenset({"dotenv"}),
+        "scripts.search_memory": frozenset({"dotenv"}),
+        "scripts.slow_path_status": frozenset({"dotenv"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     allowed_modules = sys.stdlib_module_names | LOCAL_IMPORT_ROOTS

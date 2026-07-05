@@ -13,13 +13,13 @@ handle_user_message(session_id, user_message)
   1. fast path        core/memory/observation.py     persist + enqueue user turn
   2. session micro-path core/session/micro_path.py    extract -> validate -> Session Working Set
   3. hydration        core/session/hydration.py       seed durable memory on new/continue sessions
-  4. routing          core/retrieval/auto.py          choose Quick | Deep | Relational
+  4. routing          core/retrieval/auto.py          choose direct_llm | Quick | Deep | Relational
   5. retrieval        core/retrieval/{quick,deep,relational}.py
   6. context merge    core/context/merger.py          recent turns + SWS + hot + retrieved + ambient
   7. budget + prompt  core/context/budget.py          trim to token budget, render answer prompt
   8. generation       core/llm/qwen.py                call configured LLM (answer_generation schema)
   9. persist reply    core/memory/observation.py      persist + enqueue assistant turn
- 10. trace + logs     core/memory/trace.py, core/observability.py
+ 10. trace + logs     core/memory/trace.py, retrieval_log.sufficiency_json, observability
 ```
 
 A note on framing: **the LLM context window is an execution buffer, not the memory store.**
@@ -33,7 +33,7 @@ by the fast path, so a long conversation is handled by retrieval-gated prompt re
 | Store | Module(s) | Responsibility |
 | --- | --- | --- |
 | **SQLite** (source of truth) | [`core/db/sqlite.py`](../core/db/sqlite.py), [`core/db/schema.py`](../core/db/schema.py), [`core/db/repositories.py`](../core/db/repositories.py) | Authoritative text + structured records: observations, atomic facts, reflections, foresight, communities, working memory, session items, graph nodes/edges, logs. All writes go through typed repository functions with enum validation. |
-| **ChromaDB** (vector index) | [`core/db/chroma.py`](../core/db/chroma.py) | Rebuildable embedding index whose entries point back to SQLite row IDs. Deleting a collection must never delete canonical records. Lazy-imported; absent Chroma degrades gracefully. |
+| **ChromaDB** (vector index) | [`core/db/chroma.py`](../core/db/chroma.py) | Rebuildable embedding index whose entries point back to SQLite row IDs. Deleting a collection must never delete canonical records. Lazy-imported; absent Chroma degrades gracefully. `vector_store_status()` reports backend/path/counts; `make memory-search` verifies query embeddings and SQLite pointer health. |
 | **Typed graph** | [`core/memory/graph.py`](../core/memory/graph.py) | The single typed temporal graph is **persisted in SQLite** (`graph_nodes` / `graph_edges`) and traversed with repository queries (`get_neighbors`, `find_edges_by_type`). Community detection loads edges into an in-process `igraph` view for Leiden; a NetworkX view (per the paper) is the planned in-process algorithm layer. |
 
 Engineering rule: nothing except `core/db/` writes SQL directly. Other modules call
@@ -132,6 +132,16 @@ Work is claimed from the queue via `claim_pending_batch`, then completed with `m
 `mark_failed` ([`core/db/repositories.py`](../core/db/repositories.py)). One failed
 observation does not stop the rest of the batch.
 
+Runtime inspection:
+
+```bash
+make slow-path-status PYTHON=.venv/bin/python
+```
+
+This calls `get_slow_path_health()` and reports queue counts, unprocessed observations,
+recent failed/dead-letter jobs, and durable artifact counts. It is the first command to run
+when the worker appears quiet or when answers are not reflecting newly saved observations.
+
 ## Graph model
 
 Module: [`core/memory/graph.py`](../core/memory/graph.py); contradiction logic in
@@ -152,6 +162,17 @@ Traversal: `get_neighbors(node_id, edge_types, depth)` and `find_edges_by_type`.
 staleness pass ([`reflection.py`](../core/memory/reflection.py)
 `find_reflections_derived_from`) propagate invalidation when evidence is superseded.
 
+Runtime inspection:
+
+```bash
+make graph-inspect PYTHON=.venv/bin/python
+ENTITY=SQLite make graph-inspect PYTHON=.venv/bin/python
+```
+
+This calls `inspect_memory_graph()` and returns graph counts, visible nodes/edges,
+source/target labels, metadata, and `source_observations`. It is intentionally read-only:
+the graph remains a SQLite-backed memory structure, not a UI-only visualization.
+
 ## Retrieval modes
 
 Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
@@ -168,9 +189,12 @@ Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
   runs community detection live.
 - **Relational** (`relational_retrieve`) — bounded graph traversal of `MENTIONS`,
   `DERIVED_FROM`, `CAUSED_BY`, `SUPERSEDED_BY`, `CONTRADICTS` from anchor entities.
-- **Auto** (`route_retrieval`) — deterministic classifier: Relational first
-  (entity-centered change/conflict/causal/comparison), Deep second (broad/identity), Quick
-  default; ambiguous queries set `needs_sufficiency_check`.
+- **Auto** (`route_retrieval`) — deterministic or LLM-assisted classifier that returns a
+  traceable decision object. General knowledge questions route to `mode=general`,
+  `route=direct_llm`, `intent=general_knowledge`, and `used_memory=false`. Personal,
+  procedural, mixed, and relationship questions route through memory with `used_memory=true`.
+  Relational remains ordered before Deep, and ambiguous memory queries set
+  `needs_sufficiency_check`.
 - **Sufficiency** (`check_retrieval_sufficiency`, `resolve_with_one_retry`) — reports
   missing terms and a rewrite query; permits exactly one retry, then answers with
   uncertainty.
@@ -180,6 +204,27 @@ mode, limit)`) is still a **stub**; the agent currently dispatches inline via
 `_dispatch_retrieval`. The vector search boundary [`vector.py`](../core/retrieval/vector.py)
 is also a **stub**; Chroma indexing and rebuild helpers live in
 [`core/db/chroma.py`](../core/db/chroma.py).
+
+Every agent response includes the routing decision and retrieval trace:
+
+```json
+{
+  "routing_decision": {
+    "intent": "personal_memory",
+    "used_memory": true,
+    "route": "quick",
+    "mode": "quick",
+    "reason": "specific factual lookup ('what is my')"
+  },
+  "retrieval_trace": {
+    "retrieval_mode": "quick",
+    "retrieved": [{"source": "atomic_facts", "id": "...", "score": 0.8}]
+  }
+}
+```
+
+Use this trace before debugging the model answer: it says whether MIRA intentionally used
+memory, which route it selected, why, and which SQLite-backed records entered retrieval.
 
 ## Prompt builder
 
@@ -238,6 +283,23 @@ Background, graph-derived warm memory — **not** transcript compression.
 deterministic connected-components fallback), `summarize_community` produces a title +
 summary linked to member nodes, and `store_community_summary` persists it and indexes
 `title + summary` in Chroma for Deep Mode. Detection never runs during a query.
+
+## Vector memory inspection
+
+Module: [`core/db/chroma.py`](../core/db/chroma.py); CLI:
+[`scripts/search_memory.py`](../scripts/search_memory.py).
+
+Chroma stores embeddings and SQLite pointers only. It can drift from SQLite when a developer
+switches `MIRA_DB_PATH`, resets SQLite, or reuses an old `CHROMA_DB_PATH`. The inspection
+command makes that drift explicit:
+
+```bash
+QUERY="what did I say about oranges?" make memory-search PYTHON=.venv/bin/python
+```
+
+Output includes `embedding_dimensions`, vector-store backend/path/counts, Chroma distances,
+SQLite pointer ids, metadata, and `record_found`. If `record_found=false`, Chroma has a
+stale pointer and should be rebuilt or cleared for the active SQLite database.
 
 ## UI and demo surfaces
 
@@ -312,6 +374,16 @@ MIRA keeps **official benchmark results** separate from **ablation studies**:
 - Ablation studies remove one MIRA component at a time and measure the drop. Example
   components include Session Working Set, keyword retrieval, typed graph traversal,
   foresight records, and reflections/community summaries.
+- Local regressions run a small isolated suite against a temporary SQLite database and
+  deterministic answer stub by default:
+
+  ```bash
+  make local-eval PYTHON=.venv/bin/python
+  ```
+
+  These cases check routing intent, memory usage, retrieval mode, session corrections,
+  contradiction/supersession behavior, foresight, and retrieval sufficiency. Use
+  `python -m scripts.run_local_eval --live` only when you explicitly want provider calls.
 
 This separation matters because a benchmark score answers "how well does MIRA work as a
 whole?", while an ablation answers "which architectural component caused the improvement?".

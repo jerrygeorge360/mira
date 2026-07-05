@@ -129,6 +129,9 @@ def test_general_knowledge_question_skips_memory_retrieval(
 
     assert response["retrieval_mode"] == "general"
     assert response["used_memory_items"] == []
+    assert response["routing_decision"]["intent"] == "general_knowledge"
+    assert response["retrieval_trace"]["used_memory"] is False
+    assert response["retrieval_trace"]["route"] == "direct_llm"
     assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[0]
 
 
@@ -155,6 +158,8 @@ def test_memory_question_stays_memory_grounded(
     response = handle_user_message(session_id, "What is my deadline?")
 
     assert response["retrieval_mode"] == "quick"
+    assert response["routing_decision"]["intent"] == "personal_memory"
+    assert response["retrieval_trace"]["used_memory"] is True
     assert "Answer mode:\nmemory_grounded" in fake_qwen.prompts[0]
 
 

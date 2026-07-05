@@ -74,6 +74,9 @@ Retrieval offers four modes: **Quick** (direct facts via vector + keyword + atom
 lookup), **Deep** (graph-derived community summaries for broad synthesis), **Relational**
 (query-time graph traversal for change, conflict, causality, and evidence), and **Auto**
 (routing among the three with a structured sufficiency check that permits one retry).
+In the implementation, Auto also emits a traceable routing decision (`intent`, `route`,
+`used_memory`, confidence, and reason), allowing general knowledge questions to bypass
+memory while personal, procedural, mixed, and relational questions remain memory-grounded.
 
 Stores: **SQLite** is the source of truth for text content; **ChromaDB** is a rebuildable
 vector index that points back to SQLite row IDs; the **typed temporal graph** stores node
@@ -81,13 +84,18 @@ types, edge types, bi-temporal validity, and evidence links; the **Session Worki
 temporary runtime state with hot-level prompt priority but is not durable until the slow
 path confirms it.
 
+The repository includes runtime inspection commands for implementation validation:
+`graph-inspect` exposes typed graph provenance, `slow-path-status` reports worker and queue
+health, `memory-search` verifies Chroma pointers against SQLite records, and `local-eval`
+runs a small isolated regression suite before larger external benchmarks.
+
 ## Scope
 
 MIRA implements episodic, semantic, and working memory. Full procedural memory remains
 future work; MIRA instead implements proto-procedural self-knowledge reflections that can
 influence behavior once promoted into working memory. The project scope is a text-only,
-single-user memory system using Qwen, SQLite, ChromaDB, an in-process typed graph,
-Streamlit/Pyvis visualization, and a Slack/MCP interface, evaluated on
+single-user memory system using OpenAI-compatible model providers, SQLite, ChromaDB, an
+in-process typed graph, Streamlit/Pyvis visualization, and a Slack/MCP interface, evaluated on
 LongMemEval/LoCoMo-style tasks. It excludes multimodal memory, multi-user memory sharing,
 per-user adapters, and production-scale deployment.
 

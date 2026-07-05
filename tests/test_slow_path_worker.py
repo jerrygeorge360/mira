@@ -110,6 +110,27 @@ def test_failed_step_marks_item_failed(database_path: Path) -> None:
     assert queue_record["last_error"] == "parse failed"
 
 
+def test_slow_path_health_reports_queue_failures(database_path: Path) -> None:
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "This extraction will fail.")
+    queue_id = enqueue_observation(observation_id)
+    register_slow_path_step(
+        MockWorkerStep(
+            "atomic_fact_extraction",
+            failed_observation_ids=[observation_id],
+            error_message="parse failed",
+        )
+    )
+    run_slow_path_once(batch_size=10)
+
+    health = slow_path.get_slow_path_health()
+
+    assert health["queue"]["failed"] == 1
+    assert health["unprocessed_observations"] == 1
+    assert health["recent_failures"][0]["id"] == queue_id
+    assert health["recent_failures"][0]["last_error"] == "parse failed"
+
+
 def test_retry_path_reprocesses_failed_items(database_path: Path) -> None:
     """Failed jobs are claimable again and can later be marked done."""
     session_id = create_session("jerry")

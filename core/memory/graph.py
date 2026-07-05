@@ -206,6 +206,49 @@ def find_edges_by_type(edge_type: str) -> list[dict[str, object]]:
     return [_public_edge(dict(row)) for row in rows]
 
 
+def inspect_memory_graph(
+    *,
+    entity: str | None = None,
+    limit: int = 50,
+) -> dict[str, object]:
+    """Return a read-only graph snapshot with provenance-focused edge details."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    node_filter = ""
+    parameters: list[object] = []
+    if entity:
+        node_filter = "WHERE label LIKE ?"
+        parameters.append(f"%{entity}%")
+    with repository_connection() as connection:
+        node_rows = connection.execute(
+            f"""
+            SELECT *
+            FROM graph_nodes
+            {node_filter}
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,  # nosec B608
+            (*parameters, limit),
+        ).fetchall()
+        total_nodes = connection.execute("SELECT COUNT(*) AS count FROM graph_nodes").fetchone()
+        total_edges = connection.execute(
+            "SELECT COUNT(*) AS count FROM graph_edges WHERE invalidated_at IS NULL"
+        ).fetchone()
+    nodes = [_public_node(dict(row)) for row in node_rows]
+    node_ids = {str(node["id"]) for node in nodes}
+    edges = _edges_for_nodes(node_ids, limit) if node_ids else []
+    return {
+        "counts": {
+            "nodes": 0 if total_nodes is None else int(total_nodes["count"]),
+            "active_edges": 0 if total_edges is None else int(total_edges["count"]),
+            "visible_nodes": len(nodes),
+            "visible_edges": len(edges),
+        },
+        "nodes": nodes,
+        "edges": edges,
+    }
+
+
 def add_typed_edge(
     source_id: str,
     target_id: str,
@@ -325,6 +368,47 @@ def _public_edge(row: dict[str, object]) -> dict[str, object]:
     metadata = edge.get("metadata_json")
     edge["metadata_json"] = _json_object(metadata) if metadata is not None else {}
     return edge
+
+
+def _public_node(row: dict[str, object]) -> dict[str, object]:
+    node = dict(row)
+    metadata = node.get("metadata_json")
+    node["metadata_json"] = _json_object(metadata) if metadata is not None else {}
+    return node
+
+
+def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
+    placeholders = ", ".join("?" for _ in node_ids)
+    sorted_ids = sorted(node_ids)
+    with repository_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT edge.*,
+                   source.label AS source_label,
+                   target.label AS target_label
+            FROM graph_edges AS edge
+            JOIN graph_nodes AS source ON source.id = edge.source_node_id
+            JOIN graph_nodes AS target ON target.id = edge.target_node_id
+            WHERE edge.invalidated_at IS NULL
+              AND (
+                edge.source_node_id IN ({placeholders})
+                OR edge.target_node_id IN ({placeholders})
+              )
+            ORDER BY edge.created_at DESC
+            LIMIT ?
+            """,  # nosec B608
+            (*sorted_ids, *sorted_ids, limit),
+        ).fetchall()
+    edges: list[dict[str, object]] = []
+    for row in rows:
+        record = dict(row)
+        source_label = record.pop("source_label")
+        target_label = record.pop("target_label")
+        edge = _public_edge(record)
+        edge["source_label"] = source_label
+        edge["target_label"] = target_label
+        edges.append(edge)
+    return edges
 
 
 def _infer_entity_type(name: str) -> str:

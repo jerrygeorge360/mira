@@ -120,6 +120,26 @@ def query_embeddings(
     return output
 
 
+def collection_count(collection: str) -> int:
+    """Return the number of vector pointers currently stored for one collection."""
+    _validate_collection(collection)
+    client = _load_chroma_client()
+    if client is None:
+        return len(_fallback_collection(collection))
+    return int(client.get_or_create_collection(name=collection).count())
+
+
+def vector_store_status() -> dict[str, object]:
+    """Return collection counts and backend metadata for diagnostics."""
+    return {
+        "backend": "chroma" if _load_chroma_client() is not None else "fallback",
+        "path": os.environ.get(CHROMA_DB_PATH_ENV),
+        "collections": {
+            collection: collection_count(collection) for collection in sorted(SUPPORTED_COLLECTIONS)
+        },
+    }
+
+
 def delete_collection(collection: str) -> None:
     """Delete a vector collection without touching canonical SQLite records."""
     _validate_collection(collection)

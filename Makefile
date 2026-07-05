@@ -1,4 +1,4 @@
-.PHONY: help install run api slack worker provider-check test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
+.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search local-eval test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api
@@ -14,6 +14,10 @@ help:
 		'  slack      Run the Slack bot entry point' \
 		'  worker     Run the slow-path background memory worker' \
 		'  provider-check  Smoke-check configured chat and embedding providers' \
+		'  graph-inspect   Print a JSON snapshot of the memory graph' \
+		'  slow-path-status Print slow-path queue and artifact health' \
+		'  memory-search   Embed a query and search vector memory' \
+		'  local-eval      Run the small local memory regression suite' \
 		'  test       Run the test suite' \
 		'  test-slack Run only the Slack bot tests' \
 		'  lint       Run Ruff checks and formatting check' \
@@ -78,6 +82,18 @@ worker:
 
 provider-check:
 	$(PYTHON) -m scripts.check_provider --require-live-embeddings
+
+graph-inspect:
+	$(PYTHON) -m scripts.inspect_graph --limit $${LIMIT:-50} $${ENTITY:+--entity "$$ENTITY"}
+
+slow-path-status:
+	$(PYTHON) -m scripts.slow_path_status --limit $${LIMIT:-10}
+
+memory-search:
+	$(PYTHON) -m scripts.search_memory "$${QUERY:?set QUERY='your search text'}" --limit $${LIMIT:-5} $${REBUILD:+--rebuild}
+
+local-eval:
+	$(PYTHON) -m scripts.run_local_eval --cases $${CASES:-evaluation/memory_cases.json}
 
 benchmark-cost:
 	$(PYTHON) -m scripts.run_benchmark \

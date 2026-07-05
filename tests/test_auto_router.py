@@ -40,7 +40,20 @@ def test_specific_fact_routes_quick() -> None:
     decision = route_retrieval("What is my deadline?", None)
 
     assert decision["mode"] == "quick"
+    assert decision["intent"] == "personal_memory"
+    assert decision["used_memory"] is True
+    assert decision["route"] == "quick"
     assert decision["needs_sufficiency_check"] is False
+
+
+def test_general_knowledge_routes_direct_llm() -> None:
+    """Public definition questions bypass memory retrieval."""
+    decision = route_retrieval("What is an apple?", None)
+
+    assert decision["mode"] == "general"
+    assert decision["intent"] == "general_knowledge"
+    assert decision["used_memory"] is False
+    assert decision["route"] == "direct_llm"
 
 
 def test_ambiguous_query_runs_quick_first_with_sufficiency() -> None:
