@@ -66,6 +66,25 @@ def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) 
     assert "content" not in results[0]
 
 
+def test_reset_vector_store_clears_all_collections(database_path: Path) -> None:
+    """Resetting empties every collection so vectors cannot leak across runs."""
+    session_id = create_session("user-1")
+    observation_id = save_observation(session_id, "user", "Leakable vector state.")
+    chroma.add_embedding(
+        "observations",
+        "observations",
+        observation_id,
+        [1.0, 0.0, 0.0],
+        metadata={"source": "test"},
+    )
+    assert chroma.collection_count("observations") == 1
+
+    chroma.reset_vector_store()
+
+    for collection in chroma.SUPPORTED_COLLECTIONS:
+        assert chroma.collection_count(collection) == 0
+
+
 def test_vector_store_status_reports_collection_counts(database_path: Path) -> None:
     session_id = create_session("user-1")
     observation_id = save_observation(session_id, "user", "Vector status should count this.")

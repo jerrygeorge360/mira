@@ -1,6 +1,6 @@
 """Deterministic demo-data seeding for MIRA.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-049.
 Architecture area: demo.
 

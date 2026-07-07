@@ -1,13 +1,12 @@
 """MIRA Streamlit UI shell: navigation across inspectable memory pages.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-043.
 Architecture area: UI.
 
-This is the navigation shell only. It registers the seven demo pages and renders
-the selected one; each page is a placeholder backed by mock data so the UI runs
-before the backend is wired and so Sarah can build pages independently. No
-backend memory logic lives here (Non-Goal) -- pages call no core modules yet.
+The command-center surface can run against deterministic demo data or the real
+MIRA agent. Smaller legacy pages stay lightweight but call the same UI/read-model
+components where durable memory data exists.
 
 Streamlit is imported lazily so importing this module stays dependency-free; the
 render functions take an injected ``st`` so they are testable without Streamlit.
@@ -26,6 +25,7 @@ from ui.command_center import render_command_center
 from ui.foresight_view import render_foresight_timeline
 from ui.graph_viz import render_graph
 from ui.landing import render_landing
+from ui.memory_inspector import render_memory_inspector
 from ui.retrieval_trace import render_retrieval_trace
 from ui.session_view import render_session_working_set
 
@@ -41,12 +41,7 @@ class Page:
     render: Callable[[Any], None]
 
 
-# --- Mock data (placeholder only; replaced by real backend wiring per page) ---
-
-_MOCK_MEMORY = [
-    {"tier": "hot", "type": "project_constraint", "content": "SQLite is the source of truth."},
-    {"tier": "warm", "type": "reflection", "content": "Project prefers repository helpers."},
-]
+# --- Deterministic demo data for pages that do not require a populated database. ---
 _MOCK_BENCHMARK_RESULTS = [
     {
         "benchmark": "LongMemEval",
@@ -108,7 +103,7 @@ _MOCK_ABLATION_RESULTS = [
     },
 ]
 
-_PLACEHOLDER = "Placeholder page with mock data — backend wiring is a follow-up issue."
+_DEMO_NOTE = "Deterministic demo data keeps this page usable without a populated memory database."
 
 
 def _render_chat(st: Any) -> None:
@@ -120,10 +115,7 @@ def _render_session_working_set(st: Any) -> None:
 
 
 def _render_memory_inspector(st: Any) -> None:
-    st.title("🗄️ Memory Inspector")
-    st.caption("Durable cold/warm/hot memory items.")
-    st.dataframe(_MOCK_MEMORY)
-    st.info(_PLACEHOLDER)
+    render_memory_inspector(DEFAULT_SESSION_ID, st)
 
 
 def _render_graph_viewer(st: Any) -> None:
@@ -153,7 +145,7 @@ def _render_evaluation_dashboard(st: Any) -> None:
     st.dataframe(_MOCK_BENCHMARK_RESULTS)
     st.subheader("Ablation studies")
     st.dataframe(_MOCK_ABLATION_RESULTS)
-    st.info(_PLACEHOLDER)
+    st.info(_DEMO_NOTE)
 
 
 PAGES: tuple[Page, ...] = (

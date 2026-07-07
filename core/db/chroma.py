@@ -177,8 +177,20 @@ def configure_embedder(embedder: EmbeddingProvider | None) -> None:
 
 
 def index_memory(memory_id: str, text: str, metadata: dict[str, object]) -> None:
-    """Deprecated adapter kept to avoid silently treating Chroma as source-of-truth storage."""
-    raise NotImplementedError("Use add_embedding() with an externally generated embedding")
+    """Compatibility adapter for indexing observation text into Chroma."""
+    if not memory_id:
+        raise ValueError("memory_id must not be empty")
+    if not text.strip():
+        raise ValueError("text must not be empty")
+    from core.llm.embeddings import embed_text
+
+    add_embedding(
+        "observations",
+        "observations",
+        memory_id,
+        embed_text(text),
+        metadata=metadata,
+    )
 
 
 def remove_from_index(memory_id: str) -> None:
@@ -189,6 +201,23 @@ def remove_from_index(memory_id: str) -> None:
             _fallback_collection(collection).pop(memory_id, None)
             continue
         client.get_or_create_collection(name=collection).delete(ids=[memory_id])
+
+
+def reset_vector_store() -> None:
+    """Clear all vector state so it cannot leak across isolated runs.
+
+    Empties every supported collection in both the in-process fallback store and
+    a live Chroma backend, then drops the cached client so the next access opens
+    a fresh one. Canonical SQLite records are never touched. This exists for the
+    evaluation harness, where durable vectors from one case must not become
+    hidden fixtures for the next through retrieval.
+    """
+    global _CHROMA_CLIENT, _CHROMA_CLIENT_INITIALIZED, _CHROMA_CLIENT_PATH
+    for collection in SUPPORTED_COLLECTIONS:
+        delete_collection(collection)
+    _CHROMA_CLIENT = None
+    _CHROMA_CLIENT_INITIALIZED = False
+    _CHROMA_CLIENT_PATH = None
 
 
 def _validate_collection(collection: str) -> None:

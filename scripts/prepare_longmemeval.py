@@ -1,6 +1,6 @@
 """Download and convert the official LongMemEval data into MIRA's benchmark format.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-123.
 Architecture area: evaluation.
 

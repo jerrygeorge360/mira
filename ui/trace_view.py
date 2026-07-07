@@ -1,6 +1,6 @@
 """Answer trace page for MIRA's inspectable memory claim.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-601.
 Architecture area: UI.
 

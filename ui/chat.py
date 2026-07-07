@@ -1,6 +1,6 @@
 """Interactive chat UI surface for mocked or real MIRA agent sessions.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-044.
 Architecture area: UI.
 """

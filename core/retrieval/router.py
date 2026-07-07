@@ -1,15 +1,63 @@
-"""Public routing interface for Quick, Deep, Relational, and Auto modes.
+"""Public retrieval dispatcher for Quick, Deep, Relational, and Auto modes.
 
 Ownership: Jerry.
 Related issue: ISSUE-308.
 Architecture area: retrieval.
 """
 
+from __future__ import annotations
+
+from core.db.repositories import repository_connection
+from core.retrieval.auto import route_retrieval as choose_retrieval_mode
+from core.retrieval.deep import retrieve_deep
+from core.retrieval.quick import retrieve_quick
+from core.retrieval.relational import relational_retrieve
+
+SUPPORTED_MODES = frozenset({"auto", "quick", "deep", "relational"})
+
 
 def route_retrieval(
     query: str,
     mode: str = "auto",
     limit: int = 8,
+    session_id: str | None = None,
 ) -> list[dict[str, object]]:
     """Route a query through the requested public retrieval mode."""
-    raise NotImplementedError
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    selected_mode = mode.casefold().strip()
+    if selected_mode not in SUPPORTED_MODES:
+        raise ValueError("mode must be one of: auto, quick, deep, relational")
+    if selected_mode == "auto":
+        decision = choose_retrieval_mode(query, session_id)
+        selected_mode = str(decision.get("mode", "quick"))
+        if selected_mode == "general":
+            return []
+    if selected_mode == "deep":
+        return retrieve_deep(query, session_id, limit)
+    if selected_mode == "relational":
+        anchors = _matching_graph_node_ids(query, limit)
+        if anchors:
+            return relational_retrieve(anchors, set(), limit)
+        return retrieve_quick(query, session_id, limit)
+    return retrieve_quick(query, session_id, limit)
+
+
+def _matching_graph_node_ids(query: str, limit: int) -> list[str]:
+    terms = [term for term in query.split() if len(term) > 2]
+    if not terms:
+        return []
+    with repository_connection() as connection:
+        matches: list[str] = []
+        for term in terms:
+            rows = connection.execute(
+                """
+                SELECT id FROM graph_nodes
+                WHERE label LIKE ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (f"%{term}%", limit),
+            ).fetchall()
+            matches.extend(str(row["id"]) for row in rows)
+    return list(dict.fromkeys(matches))[:limit]

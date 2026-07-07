@@ -12,19 +12,16 @@ assistant turn -> trace logs -> structured response.
 
 from __future__ import annotations
 
-import logging
-import re
-
 from core.context.ambient import build_ambient_context
 from core.context.budget import estimate_tokens
 from core.context.merger import merge_context_sources
+from core.context.prompt_builder import build_prompt_from_context
 from core.db.repositories import (
     create_prompt_log,
     create_retrieval_log,
     list_observations,
-    repository_connection,
 )
-from core.llm.prompts import render_prompt
+from core.llm.functions import maybe_structured_tool_call, tool_result_context_record
 from core.llm.qwen import call_qwen_json
 from core.memory.observation import persist_turn_fast_path
 from core.memory.tiers import list_hot_memory_for_context
@@ -40,9 +37,7 @@ from core.retrieval.auto import (
     PROCEDURAL_INTENT,
     route_retrieval,
 )
-from core.retrieval.deep import retrieve_deep
-from core.retrieval.quick import retrieve_quick
-from core.retrieval.relational import relational_retrieve
+from core.retrieval.router import route_retrieval as retrieve_by_mode
 from core.session.hydration import hydrate_session_from_memory
 from core.session.micro_path import run_session_micro_path
 from core.session.working_set import (
@@ -53,8 +48,6 @@ from core.session.working_set import (
 
 Response = dict[str, object]
 RoutingStrategy = str
-
-LOGGER = logging.getLogger(__name__)
 
 RECENT_TURNS = 6
 RETRIEVAL_LIMIT = 8
@@ -72,9 +65,6 @@ CONTINUE_MARKERS = (
     "last time",
     "carry on",
 )
-
-TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
-STOPWORDS = frozenset({"a", "an", "the", "is", "are", "to", "of", "for", "on", "in", "and", "my"})
 
 GENERAL_KNOWLEDGE_MODE = "general_knowledge"
 MEMORY_GROUNDED_MODE = "memory_grounded"
@@ -126,7 +116,16 @@ def handle_user_message(
     else:
         retrieval_mode = str(decision["mode"])
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
-        retrieved = _dispatch_retrieval(retrieval_mode, user_message, session_id, RETRIEVAL_LIMIT)
+        retrieved = retrieve_by_mode(
+            user_message,
+            mode=retrieval_mode,
+            limit=RETRIEVAL_LIMIT,
+            session_id=session_id,
+        )
+
+    tool_calls = _structured_tool_calls(session_id, user_message)
+    if tool_calls:
+        retrieved.extend(tool_result_context_record(tool_call) for tool_call in tool_calls)
     trace.record_retrieval(retrieval_mode, retrieved)
 
     # Hot memory: pull active working-memory items for prompt context.
@@ -151,14 +150,7 @@ def handle_user_message(
         retrieved_items=retrieved,
     )
     trace.record_prompt_sections(context_pack)
-    prompt = render_prompt(
-        "answer_generation",
-        {
-            "user_message": user_message,
-            "answer_mode": answer_mode,
-            "prompt_context": _render_context(context_pack),
-        },
-    )
+    prompt = build_prompt_from_context(user_message, context_pack, answer_mode=answer_mode)
 
     # Generation.
     try:
@@ -201,6 +193,7 @@ def handle_user_message(
         "used_memory_items": used_memory_items,
         "routing_decision": dict(decision),
         "retrieval_trace": _retrieval_trace(decision, retrieval_mode, retrieved),
+        "tool_calls": tool_calls,
         "trace_id": trace_id,
     }
 
@@ -232,22 +225,6 @@ class Agent:
             item_id = item.get("id")
             if isinstance(item_id, str):
                 expire_session_item(self.session_id, item_id, "session reset")
-
-
-def _dispatch_retrieval(
-    mode: str,
-    query: str,
-    session_id: str | None,
-    limit: int,
-) -> list[dict[str, object]]:
-    if mode == "deep":
-        return retrieve_deep(query, session_id, limit)
-    if mode == "relational":
-        anchors = _matching_graph_node_ids(query, limit)
-        if anchors:
-            return relational_retrieve(anchors, set(), limit)
-        return retrieve_quick(query, session_id, limit)
-    return retrieve_quick(query, session_id, limit)
 
 
 def _generate_answer(prompt: str) -> str:
@@ -287,6 +264,11 @@ def _decision_uses_memory(decision: dict[str, object]) -> bool:
     return bool(decision.get("used_memory", decision.get("mode") != GENERAL_RETRIEVAL_MODE))
 
 
+def _structured_tool_calls(session_id: str, user_message: str) -> list[dict[str, object]]:
+    result = maybe_structured_tool_call(session_id, user_message)
+    return [] if result is None else [result]
+
+
 def _retrieval_trace(
     decision: dict[str, object],
     retrieval_mode: str,
@@ -319,28 +301,6 @@ def _recent_turn_records(prior_observations: list[dict[str, object]]) -> list[di
     ]
 
 
-def _render_context(context_pack: list[dict[str, object]]) -> str:
-    lines: list[str] = []
-    for section in context_pack:
-        name = str(section.get("section", "context"))
-        if name == "current_user_message":
-            continue
-        rendered = _stringify_content(section.get("content"))
-        if rendered:
-            lines.append(f"[{name}] {rendered}")
-    return "\n".join(lines)
-
-
-def _stringify_content(content: object) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, dict):
-        return "; ".join(f"{key}={value}" for key, value in content.items() if value is not None)
-    if content is None:
-        return ""
-    return str(content)
-
-
 def _memory_ids(retrieved: list[dict[str, object]]) -> list[str]:
     ids: list[str] = []
     seen: set[str] = set()
@@ -350,21 +310,6 @@ def _memory_ids(retrieved: list[dict[str, object]]) -> list[str]:
             seen.add(identifier)
             ids.append(identifier)
     return ids
-
-
-def _matching_graph_node_ids(query: str, limit: int) -> list[str]:
-    query_tokens = _tokens(query)
-    if not query_tokens:
-        return []
-    node_ids: list[str] = []
-    with repository_connection() as connection:
-        rows = connection.execute("SELECT id, label FROM graph_nodes").fetchall()
-    for row in rows:
-        if query_tokens & _tokens(str(row["label"])):
-            node_ids.append(str(row["id"]))
-        if len(node_ids) >= limit:
-            break
-    return node_ids
 
 
 def _log_traces(
@@ -409,11 +354,3 @@ def _log_traces(
         }
     )
     return retrieval_log_id, prompt_log_id
-
-
-def _tokens(value: str) -> set[str]:
-    return {
-        token
-        for token in TOKEN_PATTERN.findall(value.casefold())
-        if len(token) > 1 and token not in STOPWORDS
-    }

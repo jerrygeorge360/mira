@@ -9,15 +9,26 @@ from __future__ import annotations
 
 import re
 
-from core.db import chroma
 from core.db.repositories import repository_connection
-from core.llm.embeddings import embed_text
 from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
+from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 ACTIVE_STATUS_SCORE = {"active": 1.0, "pending": 0.8, "resolved": 0.4}
+FORESIGHT_QUERY_MARKERS = frozenset(
+    {
+        "deadline",
+        "due",
+        "time-sensitive",
+        "time sensitive",
+        "remind",
+        "upcoming",
+        "next",
+        "schedule",
+    }
+)
 
 
 def retrieve_quick(query: str, session_id: str | None, limit: int) -> list[Evidence]:
@@ -45,30 +56,25 @@ def quick_retrieve(query: str, limit: int = 8) -> list[Evidence]:
 
 
 def _semantic_candidates(query: str, limit: int) -> list[Evidence]:
-    embedding = _query_embedding(query)
     candidates: list[Evidence] = []
-    for collection in ("observations", "reflections"):
-        try:
-            pointers = chroma.query_embeddings(collection, embedding, top_k=limit)
-        except ValueError:
+    pointers = vector_search(query, limit=limit, collections=("observations", "reflections"))
+    for pointer in pointers:
+        record = _fetch_record(str(pointer["sqlite_table"]), str(pointer["sqlite_id"]))
+        if record is None:
             continue
-        for pointer in pointers:
-            record = _fetch_record(str(pointer["sqlite_table"]), str(pointer["sqlite_id"]))
-            if record is None:
-                continue
-            candidates.append(
-                _evidence(
-                    source=str(pointer["sqlite_table"]),
-                    source_id=str(pointer["sqlite_id"]),
-                    content=_record_content(str(pointer["sqlite_table"]), record),
-                    semantic_score=max(0.0, 1.0 - _float(pointer.get("distance"), 1.0)),
-                    keyword_score=0.0,
-                    recency=_recency_score(record),
-                    confidence=_confidence(record),
-                    status=str(record.get("status", "active")),
-                    record=record,
-                )
+        candidates.append(
+            _evidence(
+                source=str(pointer["sqlite_table"]),
+                source_id=str(pointer["sqlite_id"]),
+                content=_record_content(str(pointer["sqlite_table"]), record),
+                semantic_score=max(0.0, 1.0 - _float(pointer.get("distance"), 1.0)),
+                keyword_score=0.0,
+                recency=_recency_score(record),
+                confidence=_confidence(record),
+                status=str(record.get("status", "active")),
+                record=record,
             )
+        )
     return candidates
 
 
@@ -118,12 +124,13 @@ def _foresight_candidates(query: str, session_id: str | None) -> list[Evidence]:
     tokens = _tokens(query)
     if not tokens:
         return []
+    is_foresight_query = _is_foresight_query(query)
     rows = _fetch_foresight_rows(session_id)
     candidates: list[Evidence] = []
     for record in rows:
         content = str(record["content"])
         keyword_score = _lexical_score(tokens, content)
-        if keyword_score <= 0.0:
+        if keyword_score <= 0.0 and not is_foresight_query:
             continue
         candidates.append(
             _evidence(
@@ -131,7 +138,7 @@ def _foresight_candidates(query: str, session_id: str | None) -> list[Evidence]:
                 source_id=str(record["id"]),
                 content=content,
                 semantic_score=0.0,
-                keyword_score=keyword_score,
+                keyword_score=max(keyword_score, 0.9 if is_foresight_query else 0.0),
                 recency=_recency_score(record),
                 confidence=1.0,
                 status=str(record["status"]),
@@ -255,10 +262,6 @@ def _ranking_key(evidence: Evidence) -> tuple[float, float, float, float, str]:
     )
 
 
-def _query_embedding(query: str) -> list[float]:
-    return embed_text(query)
-
-
 def _fetch_record(table: str, record_id: str) -> dict[str, object] | None:
     if table not in {"observations", "reflections"}:
         return None
@@ -360,6 +363,11 @@ def _tokens(value: str) -> set[str]:
         for token in TOKEN_PATTERN.findall(value.casefold())
         if len(token) > 1 and token not in stopwords
     }
+
+
+def _is_foresight_query(query: str) -> bool:
+    normalized = query.casefold()
+    return any(marker in normalized for marker in FORESIGHT_QUERY_MARKERS)
 
 
 def _float(value: object, default: float = 0.0) -> float:

@@ -15,6 +15,7 @@ the user has already made in the current session.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 from datetime import datetime, timezone
@@ -120,6 +121,10 @@ def _hot_memory_candidates(session_id: str, query: str, limit: int) -> list[Hydr
         session_type, explicitness = MEMORY_TYPE_TO_SESSION.get(
             str(item.get("memory_type")), ("decision", "agent_inference")
         )
+        source_item = _source_session_item(item)
+        if source_item is not None:
+            session_type = str(source_item["type"])
+            explicitness = str(source_item["explicitness_label"])
         candidates.append(
             _candidate(
                 content=str(item["content"]),
@@ -127,6 +132,7 @@ def _hot_memory_candidates(session_id: str, query: str, limit: int) -> list[Hydr
                 scope=str(item.get("scope") or "project"),
                 priority=_float(item.get("priority"), 0.7),
                 explicitness=explicitness,
+                source_observations=_source_observations_from_item(source_item),
             )
         )
     return candidates
@@ -322,6 +328,22 @@ def _fetch_rows(statement: str, parameters: tuple[object, ...]) -> list[dict[str
     return [dict(row) for row in rows]
 
 
+def _source_session_item(item: dict[str, object]) -> dict[str, object] | None:
+    if item.get("source_record_type") != "session_working_set":
+        return None
+    source_id = item.get("source_record_id")
+    if not isinstance(source_id, str) or not source_id:
+        return None
+    rows = _fetch_rows("SELECT * FROM session_working_set WHERE id = ?", (source_id,))
+    return rows[0] if rows else None
+
+
+def _source_observations_from_item(item: dict[str, object] | None) -> list[str]:
+    if item is None:
+        return []
+    return _json_string_list(item.get("source_observations_json"))
+
+
 def _overlap(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
@@ -340,6 +362,18 @@ def _string_list(value: object) -> list[str]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, str) and item]
     return []
+
+
+def _json_string_list(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            decoded = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+        return _string_list(decoded)
+    return _string_list(value)
 
 
 def _float(value: object, default: float = 0.0) -> float:

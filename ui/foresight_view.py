@@ -1,6 +1,6 @@
 """Foresight timeline view for the MIRA UI.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-048.
 Architecture area: UI.
 

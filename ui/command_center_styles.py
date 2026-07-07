@@ -1,7 +1,7 @@
 # ruff: noqa: E501
 """Custom CSS for the MIRA Memory Command Center (Claude-style).
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-130.
 Architecture area: UI.
 

@@ -39,7 +39,7 @@ Keep commits focused and reference the related issue where useful.
 
 - **Jerry:** architecture, core memory, retrieval, context, and LLM integration.
 - **Kelechi:** database, queues, deployment, infrastructure, and CI hardening.
-- **Sarah:** UI, graph visualization, evaluation, and demo tooling.
+- **MIRA contributors:** UI, graph visualization, evaluation, and demo tooling.
 
 Ownership identifies the first reviewer and coordinator; it does not prevent
 cross-team contribution. Changes spanning ownership areas should involve every affected

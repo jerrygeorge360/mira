@@ -15,11 +15,12 @@ handle_user_message(session_id, user_message)
   3. hydration        core/session/hydration.py       seed durable memory on new/continue sessions
   4. routing          core/retrieval/auto.py          choose direct_llm | Quick | Deep | Relational
   5. retrieval        core/retrieval/{quick,deep,relational}.py
-  6. context merge    core/context/merger.py          recent turns + SWS + hot + retrieved + ambient
-  7. budget + prompt  core/context/budget.py          trim to token budget, render answer prompt
-  8. generation       core/llm/qwen.py                call configured LLM (answer_generation schema)
-  9. persist reply    core/memory/observation.py      persist + enqueue assistant turn
- 10. trace + logs     core/memory/trace.py, retrieval_log.sufficiency_json, observability
+  6. structured tools core/llm/functions.py           invoke only explicit workflow tools
+  7. context merge    core/context/merger.py          recent turns + SWS + hot + retrieved + ambient
+  8. budget + prompt  core/context/budget.py          trim to token budget, render answer prompt
+  9. generation       core/llm/qwen.py                call configured LLM (answer_generation schema)
+ 10. persist reply    core/memory/observation.py      persist + enqueue assistant turn
+ 11. trace + logs     core/memory/trace.py, retrieval_log.sufficiency_json, observability
 ```
 
 A note on framing: **the LLM context window is an execution buffer, not the memory store.**
@@ -34,7 +35,7 @@ by the fast path, so a long conversation is handled by retrieval-gated prompt re
 | --- | --- | --- |
 | **SQLite** (source of truth) | [`core/db/sqlite.py`](../core/db/sqlite.py), [`core/db/schema.py`](../core/db/schema.py), [`core/db/repositories.py`](../core/db/repositories.py) | Authoritative text + structured records: observations, atomic facts, reflections, foresight, communities, working memory, session items, graph nodes/edges, logs. All writes go through typed repository functions with enum validation. |
 | **ChromaDB** (vector index) | [`core/db/chroma.py`](../core/db/chroma.py) | Rebuildable embedding index whose entries point back to SQLite row IDs. Deleting a collection must never delete canonical records. Lazy-imported; absent Chroma degrades gracefully. `vector_store_status()` reports backend/path/counts; `make memory-search` verifies query embeddings and SQLite pointer health. |
-| **Typed graph** | [`core/memory/graph.py`](../core/memory/graph.py) | The single typed temporal graph is **persisted in SQLite** (`graph_nodes` / `graph_edges`) and traversed with repository queries (`get_neighbors`, `find_edges_by_type`). Community detection loads edges into an in-process `igraph` view for Leiden; a NetworkX view (per the paper) is the planned in-process algorithm layer. |
+| **Typed graph** | [`core/memory/graph.py`](../core/memory/graph.py) | The single typed temporal graph is **persisted in SQLite** (`graph_nodes` / `graph_edges`) and traversed with repository queries (`get_neighbors`, `find_edges_by_type`). Community detection loads edges into an in-process `igraph` view for Leiden. `build_networkx_memory_graph()` exposes a read-only NetworkX `MultiDiGraph` projection for algorithms and diagnostics; SQLite remains the source of truth. |
 
 Engineering rule: nothing except `core/db/` writes SQL directly. Other modules call
 repository functions or the per-subsystem helpers below.
@@ -152,6 +153,10 @@ One typed graph over `graph_nodes` (types: `observation`, `entity`, `reflection`
 `valid_from`/`valid_until`, confidence, and `source_observations`). Edge families include
 `MENTIONS`, `DERIVED_FROM`, `SUPERSEDED_BY`, `CONTRADICTS`, and causal/relational types.
 Traversal: `get_neighbors(node_id, edge_types, depth)` and `find_edges_by_type`.
+Algorithm view: `build_networkx_memory_graph()` loads active SQLite nodes/edges into a
+NetworkX `MultiDiGraph`, and `graph_algorithm_summary()` reports small diagnostics such as
+weakly connected components, largest component size, and high-degree nodes. This projection is
+read-only: writes still go through SQLite/repository helpers.
 
 - `SUPERSEDED_BY` — acknowledged change ("switched from Python to Rust"); old belief kept as
   history, no longer current.
@@ -200,10 +205,10 @@ Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
   uncertainty.
 
 The public dispatcher [`router.py`](../core/retrieval/router.py) (`route_retrieval(query,
-mode, limit)`) is still a **stub**; the agent currently dispatches inline via
-`_dispatch_retrieval`. The vector search boundary [`vector.py`](../core/retrieval/vector.py)
-is also a **stub**; Chroma indexing and rebuild helpers live in
-[`core/db/chroma.py`](../core/db/chroma.py).
+mode, limit, session_id=None)`) is the reusable facade the agent uses for evidence retrieval
+after Auto has selected a mode. The vector search boundary
+[`vector.py`](../core/retrieval/vector.py) embeds the query and searches Chroma-backed SQLite
+pointers; Quick Mode calls this facade for observation/reflection semantic candidates.
 
 Every agent response includes the routing decision and retrieval trace:
 
@@ -226,6 +231,17 @@ Every agent response includes the routing decision and retrieval trace:
 Use this trace before debugging the model answer: it says whether MIRA intentionally used
 memory, which route it selected, why, and which SQLite-backed records entered retrieval.
 
+## Structured workflow functions
+
+Module: [`core/llm/functions.py`](../core/llm/functions.py).
+
+MIRA does not expose a broad provider-side tool-calling abstraction by default. Structured
+functions are added only when there is a concrete agent workflow that needs a typed runtime call.
+The implemented workflow is `inspect_memory`: explicit requests such as "what do you remember?"
+or "show memory status" produce a structured memory snapshot from the active read models. The
+agent converts that result into a `structured_tool` context record, includes it in
+`retrieval_trace.retrieved`, and returns the raw result under `tool_calls`.
+
 ## Prompt builder
 
 Modules: [`core/context/merger.py`](../core/context/merger.py),
@@ -237,19 +253,21 @@ ambient_context, retrieved_items)` is the integration point between session and
 cross-session memory; it applies session-conflict rules so corrections win. `budget.py`
 (`allocate_prompt_budget`, `trim_context_sections`, `estimate_tokens`) trims low-priority
 retrieved memories and old turns first — never the current message, safety instructions, or
-critical session corrections. The standalone `prompt_builder.build_prompt` is a **stub**;
-the agent assembles the answer prompt inline from the merged pack via the centralized
-`answer_generation` template ([`core/llm/prompts.py`](../core/llm/prompts.py)).
+critical session corrections. `prompt_builder.build_prompt` is a reusable facade that merges
+legacy inputs, trims them to budget, and renders the centralized `answer_generation` template.
+The agent uses `build_prompt_from_context` after it has already built and traced the context
+pack ([`core/llm/prompts.py`](../core/llm/prompts.py)).
 
 ## Memory tiers
 
-Module: [`core/memory/tiers.py`](../core/memory/tiers.py); durable hot pool
-[`core/memory/working.py`](../core/memory/working.py) is a **stub**.
+Modules: [`core/memory/tiers.py`](../core/memory/tiers.py) and
+[`core/memory/working.py`](../core/memory/working.py).
 
 Tiers decide what *competes for prompt injection*, not what exists.
 `evaluate_promotion_candidate(record_type, record_id)` scores importance, relevance, scope,
 validity, confidence, explicitness, and foresight urgency; `promote_to_hot_memory`,
-`demote_hot_memory_item`, and `list_hot_memory_for_context` manage the hot pool. Demotion
+`demote_hot_memory_item`, and `list_hot_memory_for_context` manage the hot pool.
+`working.py` exposes a small compatibility facade for promoting and listing hot memory. Demotion
 triggers include stale/resolved/expired/superseded/low-relevance and capacity limits. Cold
 history is never deleted.
 
@@ -383,7 +401,12 @@ MIRA keeps **official benchmark results** separate from **ablation studies**:
 
   These cases check routing intent, memory usage, retrieval mode, session corrections,
   contradiction/supersession behavior, foresight, and retrieval sufficiency. Use
-  `python -m scripts.run_local_eval --live` only when you explicitly want provider calls.
+  `python -m scripts.run_local_eval --live` only when you explicitly want provider calls. The
+  runner prints `[local-eval]` progress logs to stderr by default; pass `--quiet` for automation.
+  Add `--run-slow-path` to drain the worker queue after each interaction when you want local eval
+  to resemble a long-running system with background distillation enabled. Add `--debug-trace` to
+  write a Markdown forensic report with routing, prompt sections, session items, and slow-path
+  step outputs for each interaction.
 
 This separation matters because a benchmark score answers "how well does MIRA work as a
 whole?", while an ablation answers "which architectural component caused the improvement?".

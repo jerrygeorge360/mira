@@ -1,6 +1,6 @@
 """Manual, official-capable LongMemEval / LoCoMo-style benchmark runner.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-123.
 Architecture area: evaluation.
 
