@@ -1,6 +1,6 @@
 """LLM-as-Judge and deterministic scoring for MIRA benchmark evaluation.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-123.
 Architecture area: evaluation.
 

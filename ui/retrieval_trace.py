@@ -1,6 +1,6 @@
 """Retrieval / answer trace viewer for the MIRA UI.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-047.
 Architecture area: UI.
 

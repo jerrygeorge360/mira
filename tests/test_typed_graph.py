@@ -20,10 +20,12 @@ from core.db.repositories import (
     save_observation,
 )
 from core.memory.graph import (
+    build_networkx_memory_graph,
     create_graph_edge,
     create_graph_node,
     find_edges_by_type,
     get_neighbors,
+    graph_algorithm_summary,
     inspect_memory_graph,
 )
 
@@ -181,6 +183,75 @@ def test_traversal_by_edge_type_works(database_path: Path) -> None:
     assert len(neighbors) == 1
     assert neighbors[0]["node"]["id"] == sqlite_node_id
     assert neighbors[0]["edge"]["edge_type"] == "MENTIONS"
+
+
+def test_networkx_view_projects_sqlite_graph(database_path: Path) -> None:
+    """NetworkX view exposes SQLite graph nodes/edges without becoming source of truth."""
+    pytest.importorskip("networkx")
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "MIRA uses SQLite.")
+    observation_node_id = create_graph_node(
+        "observation",
+        "MIRA uses SQLite.",
+        "observations",
+        observation_id,
+    )
+    sqlite_node_id = create_graph_node("entity", "SQLite", "entities", "entity_sqlite")
+    edge_id = create_graph_edge(
+        observation_node_id,
+        sqlite_node_id,
+        "MENTIONS",
+        confidence=0.9,
+        source_observations=[observation_id],
+    )
+
+    graph = build_networkx_memory_graph()
+
+    assert graph.number_of_nodes() == 2
+    assert graph.number_of_edges() == 1
+    assert graph.nodes[sqlite_node_id]["label"] == "SQLite"
+    assert graph.edges[observation_node_id, sqlite_node_id, edge_id]["edge_type"] == "MENTIONS"
+    assert graph.edges[observation_node_id, sqlite_node_id, edge_id]["source_observations"] == [
+        observation_id
+    ]
+
+
+def test_networkx_algorithm_summary_is_read_only(database_path: Path) -> None:
+    """NetworkX diagnostics summarize graph structure without mutating SQLite."""
+    pytest.importorskip("networkx")
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "MIRA mentions SQLite and Chroma.")
+    observation_node_id = create_graph_node(
+        "observation",
+        "MIRA mentions SQLite and Chroma.",
+        "observations",
+        observation_id,
+    )
+    sqlite_node_id = create_graph_node("entity", "SQLite", "entities", "entity_sqlite")
+    chroma_node_id = create_graph_node("entity", "Chroma", "entities", "entity_chroma")
+    create_graph_edge(
+        observation_node_id,
+        sqlite_node_id,
+        "MENTIONS",
+        confidence=0.9,
+        source_observations=[observation_id],
+    )
+    create_graph_edge(
+        observation_node_id,
+        chroma_node_id,
+        "MENTIONS",
+        confidence=0.9,
+        source_observations=[observation_id],
+    )
+
+    summary = graph_algorithm_summary()
+
+    assert summary["nodes"] == 3
+    assert summary["edges"] == 2
+    assert summary["weakly_connected_components"] == 1
+    assert summary["largest_component_size"] == 3
+    assert summary["top_degree_nodes"][0]["id"] == observation_node_id
+    assert _graph_node(sqlite_node_id)["label"] == "SQLite"
 
 
 def test_invalid_confidence_is_rejected(database_path: Path) -> None:

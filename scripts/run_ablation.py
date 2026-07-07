@@ -1,6 +1,6 @@
 """One-command runner for MIRA's ablation study.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-122.
 Architecture area: evaluation.
 

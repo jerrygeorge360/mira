@@ -185,10 +185,18 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "confidence",
             "status",
             "source_observation_id",
+            "canonical_subject_id",
+            "canonical_predicate_id",
             "created_at",
             "valid_from",
             "valid_until",
         }
+    ),
+    "canonical_subjects": frozenset(
+        {"id", "canonical_form", "aliases_json", "confidence", "created_at"}
+    ),
+    "canonical_predicates": frozenset(
+        {"id", "canonical_form", "aliases_json", "confidence", "created_at"}
     ),
     "entities": frozenset(
         {"id", "name", "entity_type", "aliases_json", "created_at", "updated_at"}
@@ -317,6 +325,11 @@ def configure_database(database_path: str | Path) -> None:
     _DATABASE_PATH = Path(database_path)
     initialize_database(_DATABASE_PATH)
     _INITIALIZED_DATABASE_PATHS.add(_DATABASE_PATH.resolve())
+
+
+def current_database_path() -> Path | None:
+    """Return the database path set via ``configure_database``, or ``None`` if unset."""
+    return _DATABASE_PATH
 
 
 def validate_enum_value(enum_name: str, value: str) -> None:
@@ -619,8 +632,16 @@ def list_session_items_by_status(session_id: str, status: str) -> list[Repositor
     )
 
 
+CANONICAL_LOW_CONFIDENCE = 0.3
+
+
 def create_atomic_fact(fact: RepositoryRecord) -> str:
-    """Create an atomic fact and return its identifier."""
+    """Create an atomic fact and return its identifier.
+
+    The raw extracted subject/predicate are stored verbatim for provenance, while
+    canonical registry ids are resolved so downstream change detection can pair facts
+    across inconsistent extraction wording.
+    """
     record = _prepare_record(fact)
     record.setdefault("status", "active")
     _require_fields(
@@ -629,7 +650,60 @@ def create_atomic_fact(fact: RepositoryRecord) -> str:
         {"subject", "predicate", "object", "confidence", "status", "source_observation_id"},
     )
     _validate_record_enums(record, {"status": "fact_status"})
+    record.setdefault(
+        "canonical_subject_id",
+        resolve_canonical_form("canonical_subjects", str(record["subject"])),
+    )
+    record.setdefault(
+        "canonical_predicate_id",
+        resolve_canonical_form("canonical_predicates", str(record["predicate"])),
+    )
     return _insert_with_generated_id("atomic_facts", record)
+
+
+def resolve_canonical_form(table: str, raw_value: str) -> str | None:
+    """Resolve a raw subject/predicate to a canonical registry id.
+
+    Matches the normalized raw value against each registry row's canonical form and its
+    aliases (case-insensitively). When nothing matches, a new low-confidence bucket is
+    created from the raw form rather than failing silently, so unmapped wording is
+    visible and reviewable instead of producing a silent zero-candidate outcome.
+    """
+    if table not in ("canonical_subjects", "canonical_predicates"):
+        raise ValueError(f"Unknown canonical registry table: {table}")
+    normalized = _normalize_canonical(raw_value)
+    if not normalized:
+        return None
+    with _connect() as connection:
+        rows = connection.execute(
+            f"SELECT id, canonical_form, aliases_json FROM {table}"  # noqa: S608  # nosec B608
+        ).fetchall()
+    for row in rows:
+        if normalized == row["canonical_form"]:
+            return str(row["id"])
+        aliases = json.loads(row["aliases_json"]) if row["aliases_json"] else []
+        if any(normalized == _normalize_canonical(str(alias)) for alias in aliases):
+            return str(row["id"])
+    return _insert_with_generated_id(
+        table,
+        {"canonical_form": normalized, "aliases_json": [], "confidence": CANONICAL_LOW_CONFIDENCE},
+    )
+
+
+def canonical_form_for_id(table: str, canonical_id: str | None) -> str | None:
+    """Return the canonical_form string for a registry id, or None if absent."""
+    if not canonical_id or table not in ("canonical_subjects", "canonical_predicates"):
+        return None
+    with _connect() as connection:
+        row = connection.execute(
+            f"SELECT canonical_form FROM {table} WHERE id = ?",  # noqa: S608  # nosec B608
+            (canonical_id,),
+        ).fetchone()
+    return None if row is None else str(row["canonical_form"])
+
+
+def _normalize_canonical(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def create_entity(entity: RepositoryRecord) -> str:

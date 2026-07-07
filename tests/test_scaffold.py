@@ -68,7 +68,6 @@ EXPECTED_MODULES = (
     "scripts.run_local_eval",
     "scripts.search_memory",
     "scripts.slow_path_status",
-    "scripts.test_qwen",
     "scripts.seed_demo",
 )
 
@@ -84,6 +83,7 @@ def test_application_modules_import_without_third_party() -> None:
     """Ensure scaffold modules import without optional third-party packages."""
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
+        "core.memory.graph": frozenset({"networkx"}),
         "scripts.inspect_graph": frozenset({"dotenv"}),
         "scripts.run_local_eval": frozenset({"dotenv"}),
         "scripts.search_memory": frozenset({"dotenv"}),
@@ -103,6 +103,7 @@ def test_application_imports_are_standard_library_only() -> None:
     """Ensure application imports remain standard-library or local-only."""
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
+        "core.memory.graph": frozenset({"networkx"}),
         "scripts.inspect_graph": frozenset({"dotenv"}),
         "scripts.run_local_eval": frozenset({"dotenv"}),
         "scripts.search_memory": frozenset({"dotenv"}),

@@ -27,6 +27,7 @@ AMBIGUOUS_MARKERS = frozenset({"maybe", "might", "possibly", "probably", "i gues
 SARCASM_MARKERS = frozenset({"yeah right", "as if", "/s", "sarcasm", "sure, jan"})
 RESOLUTION_MARKERS = frozenset({"ignore that", "never mind", "nevermind", "drop that"})
 EXPIRATION_MARKERS = frozenset({"for now", "temporary", "just this response", "next reply only"})
+CORRECTION_MARKERS = frozenset({"actually", "correction", "instead", " not "})
 
 
 def extract_session_operations(
@@ -74,7 +75,8 @@ def _extract_correction(
     current_working_set: list[dict[str, object]],
 ) -> SessionOperation | None:
     normalized_message = _normalize(message)
-    if " not " not in f" {normalized_message} " and "instead" not in normalized_message:
+    padded_message = f" {normalized_message} "
+    if not any(marker in padded_message for marker in CORRECTION_MARKERS):
         return None
     superseded_items = _matching_working_set_ids(normalized_message, current_working_set)
     return _operation(

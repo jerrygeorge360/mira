@@ -87,6 +87,32 @@ def test_deadline_question_retrieves_foresight_and_fact(database_path: Path) -> 
     assert foresight_id in source_ids
 
 
+def test_time_sensitive_question_retrieves_foresight_without_keyword_overlap(
+    database_path: Path,
+) -> None:
+    """Time-sensitive queries retrieve active foresight even when wording differs."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(
+        session_id,
+        "user",
+        "The hackathon submission closes on Friday.",
+    )
+    foresight_id = create_foresight_record(
+        {
+            "content": "Hackathon submission closes on Friday.",
+            "reason": "User stated an upcoming submission cutoff.",
+            "status": "active",
+            "source_observation_id": observation_id,
+        }
+    )
+
+    results = retrieve_quick("Anything time-sensitive I should remember?", session_id, limit=5)
+
+    matching = [result for result in results if result["source_id"] == foresight_id]
+    assert matching
+    assert matching[0]["source"] == "foresight_records"
+
+
 def test_duplicates_are_merged_by_source_id(database_path: Path) -> None:
     """The same observation from keyword and recent sources is returned once."""
     session_id = create_session("jerry")

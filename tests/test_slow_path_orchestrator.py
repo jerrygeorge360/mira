@@ -164,6 +164,38 @@ def test_orchestrator_records_supersession(
     assert len(edges) == 1
 
 
+def test_preference_correction_records_supersession(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A direct preference correction supersedes the prior preference fact."""
+    session_id = create_session("jerry")
+    old_observation = save_observation(session_id, "user", "I prefer Python.")
+    new_observation = save_observation(session_id, "user", "Actually I prefer Rust.")
+
+    def _facts(observation_id: str, content: str) -> list[dict[str, object]]:
+        language = "Rust" if "Rust" in content else "Python"
+        return [
+            {
+                "subject": "user",
+                "predicate": "prefers",
+                "object": language,
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            }
+        ]
+
+    monkeypatch.setattr(slow_path, "extract_atomic_facts", _facts)
+    monkeypatch.setattr(slow_path, "extract_entities", lambda text: [])
+
+    run_slow_path_for_observation(old_observation)
+    run_slow_path_for_observation(new_observation)
+
+    assert _fact_status("Rust") == "active"
+    assert _fact_status("Python") == "superseded"
+    edges = find_edges_by_type("SUPERSEDED_BY")
+    assert len(edges) == 1
+
+
 def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
     database_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

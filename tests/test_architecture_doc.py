@@ -81,7 +81,8 @@ def test_no_outdated_memory_pressure_framing() -> None:
     assert "scaffold only" not in DOC.lower()
 
 
-def test_stubs_are_disclosed_not_overclaimed() -> None:
-    """Stubbed integration points are flagged honestly."""
-    assert "**stub**" in DOC
-    assert "slow_path.py" in DOC  # orchestrator disclosed as the remaining work
+def test_no_stale_stub_framing() -> None:
+    """The architecture doc describes active facades instead of stale placeholders."""
+    assert "**stub**" not in DOC
+    assert "NotImplementedError" not in DOC
+    assert "slow_path.py" in DOC

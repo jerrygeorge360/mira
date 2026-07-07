@@ -1,6 +1,6 @@
 """Root Streamlit entrypoint for the MIRA Memory Command Center.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-130.
 Architecture area: UI.
 """

@@ -1,6 +1,6 @@
 """LongMemEval / LoCoMo-style adapter skeleton for long-session memory evaluation.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-052.
 Architecture area: evaluation.
 

@@ -163,6 +163,25 @@ def test_memory_question_stays_memory_grounded(
     assert "Answer mode:\nmemory_grounded" in fake_qwen.prompts[0]
 
 
+def test_explicit_memory_inspection_uses_structured_tool(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """Memory-inspection requests call a structured internal function."""
+    session_id = create_session("jerry")
+
+    response = handle_user_message(session_id, "What do you remember about me?")
+
+    tool_calls = response["tool_calls"]
+    assert isinstance(tool_calls, list)
+    assert tool_calls and tool_calls[0]["tool"] == "inspect_memory"
+    retrieval_trace = response["retrieval_trace"]
+    assert isinstance(retrieval_trace, dict)
+    retrieved = retrieval_trace["retrieved"]
+    assert isinstance(retrieved, list)
+    assert any(isinstance(item, dict) and item["source"] == "structured_tool" for item in retrieved)
+    assert "Structured memory inspection result" in fake_qwen.prompts[0]
+
+
 def test_accurate_router_can_choose_general_mode(
     database_path: Path, fake_qwen: _CapturingQwen, monkeypatch: pytest.MonkeyPatch
 ) -> None:

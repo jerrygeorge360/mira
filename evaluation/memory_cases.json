@@ -28,7 +28,11 @@
         }
       ],
       "expect": {
-        "used_session_items_nonempty": true
+        "used_session_items_nonempty": true,
+        "active_session_item_labels_include": [
+          "type:correction",
+          "explicitness_label:direct_correction"
+        ]
       }
     },
     {
@@ -46,6 +50,10 @@
       "expect": {
         "answer_contains": [
           "MIRA"
+        ],
+        "answer_excludes": [
+          "deadline",
+          "Friday"
         ]
       }
     },
@@ -66,6 +74,9 @@
       "expect": {
         "answer_contains": [
           "Rust"
+        ],
+        "slow_path_created_edge_types_include": [
+          "SUPERSEDED_BY"
         ]
       }
     },
@@ -82,6 +93,10 @@
       ],
       "expect": {
         "retrieval_mode": "relational",
+        "min_retrieved_records": 1,
+        "retrieved_sources_include": [
+          "graph_edge"
+        ],
         "answer_contains": [
           "PostgreSQL"
         ]
@@ -101,6 +116,9 @@
       "expect": {
         "answer_contains": [
           "hackathon"
+        ],
+        "retrieved_sources_include": [
+          "foresight_records"
         ]
       }
     },
@@ -109,11 +127,21 @@
       "category": "deep_mode_synthesis",
       "interactions": [
         {
+          "message": "I am a developer building MIRA memory infrastructure with PostgreSQL-backed storage."
+        },
+        {
+          "message": "I prefer Rust for systems work and Python for tooling."
+        },
+        {
           "message": "What kind of developer am I?"
         }
       ],
       "expect": {
-        "retrieval_mode": "deep"
+        "retrieval_mode": "deep",
+        "answer_contains": [
+          "PostgreSQL"
+        ],
+        "min_retrieved_records": 1
       }
     },
     {

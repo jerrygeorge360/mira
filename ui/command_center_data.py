@@ -1,6 +1,6 @@
 """Mock data for the premium MIRA Memory Command Center UI.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-130.
 Architecture area: UI.
 """

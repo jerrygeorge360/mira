@@ -8,6 +8,7 @@ Architecture area: slow path.
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from core.db.repositories import (
     create_entity,
@@ -23,6 +24,7 @@ from core.llm.prompts import PROMPT_TEMPLATES
 from core.llm.qwen import call_qwen_json
 
 Entity = dict[str, object]
+NetworkXGraph = Any
 
 DEFAULT_ENTITY_TYPE = "unknown"
 
@@ -249,14 +251,57 @@ def inspect_memory_graph(
     }
 
 
-def add_typed_edge(
-    source_id: str,
-    target_id: str,
-    edge_type: str,
-    valid_at: str | None = None,
-) -> str:
-    """Add a future typed temporal edge and return its identifier."""
-    raise NotImplementedError("Use create_graph_edge() with source observations")
+def build_networkx_memory_graph(
+    *,
+    include_invalidated: bool = False,
+) -> NetworkXGraph:
+    """Build a read-only NetworkX MultiDiGraph projection from SQLite graph tables."""
+    try:
+        import networkx as nx
+    except ModuleNotFoundError as error:  # pragma: no cover - dependency installed in normal envs
+        raise RuntimeError("Install networkx to build the in-memory graph view") from error
+
+    graph = nx.MultiDiGraph()
+    for node in _all_graph_nodes():
+        node_id = str(node.pop("id"))
+        graph.add_node(node_id, **node)
+    for edge in _all_graph_edges(include_invalidated=include_invalidated):
+        edge_id = str(edge.pop("id"))
+        source_node_id = str(edge.pop("source_node_id"))
+        target_node_id = str(edge.pop("target_node_id"))
+        graph.add_edge(source_node_id, target_node_id, key=edge_id, id=edge_id, **edge)
+    return graph
+
+
+def graph_algorithm_summary() -> dict[str, object]:
+    """Return small NetworkX-derived diagnostics while keeping SQLite as source of truth."""
+    try:
+        import networkx as nx
+    except ModuleNotFoundError as error:  # pragma: no cover - dependency installed in normal envs
+        raise RuntimeError("Install networkx to run graph algorithm diagnostics") from error
+
+    graph = build_networkx_memory_graph()
+    if graph.number_of_nodes() == 0:
+        return {
+            "nodes": 0,
+            "edges": 0,
+            "weakly_connected_components": 0,
+            "largest_component_size": 0,
+            "top_degree_nodes": [],
+        }
+    components = list(nx.weakly_connected_components(graph))
+    degrees = sorted(graph.degree(), key=lambda item: (-int(item[1]), str(item[0])))
+    labels = {node_id: str(data.get("label", node_id)) for node_id, data in graph.nodes(data=True)}
+    return {
+        "nodes": graph.number_of_nodes(),
+        "edges": graph.number_of_edges(),
+        "weakly_connected_components": len(components),
+        "largest_component_size": max(len(component) for component in components),
+        "top_degree_nodes": [
+            {"id": str(node_id), "label": labels.get(str(node_id), str(node_id)), "degree": degree}
+            for node_id, degree in degrees[:5]
+        ],
+    }
 
 
 def traverse_graph(entity_id: str, relation_types: set[str]) -> list[dict[str, object]]:
@@ -409,6 +454,21 @@ def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
         edge["target_label"] = target_label
         edges.append(edge)
     return edges
+
+
+def _all_graph_nodes() -> list[dict[str, object]]:
+    with repository_connection() as connection:
+        rows = connection.execute("SELECT * FROM graph_nodes ORDER BY created_at ASC").fetchall()
+    return [_public_node(dict(row)) for row in rows]
+
+
+def _all_graph_edges(*, include_invalidated: bool) -> list[dict[str, object]]:
+    where = "" if include_invalidated else "WHERE invalidated_at IS NULL"
+    with repository_connection() as connection:
+        rows = connection.execute(
+            f"SELECT * FROM graph_edges {where} ORDER BY created_at ASC"  # nosec B608
+        ).fetchall()
+    return [_public_edge(dict(row)) for row in rows]
 
 
 def _infer_entity_type(name: str) -> str:

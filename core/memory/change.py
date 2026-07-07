@@ -17,12 +17,14 @@ AtomicFactRecord = dict[str, object]
 
 TRANSITION_MARKERS = frozenset(
     {
+        "actually",
         "switched from",
         "switch from",
         "moved from",
         "migrate from",
         "migrated from",
         "changed from",
+        "correction",
         "used to",
         "previously",
         "now",
@@ -162,9 +164,7 @@ def _facts_are_comparable(
     prior_fact: AtomicFactRecord,
     new_fact: AtomicFactRecord,
 ) -> bool:
-    return _normalize(str(prior_fact["subject"])) == _normalize(
-        str(new_fact["subject"])
-    ) and _normalize(str(prior_fact["predicate"])) == _normalize(str(new_fact["predicate"]))
+    return _fact_comparison_key(prior_fact) == _fact_comparison_key(new_fact)
 
 
 def _has_explicit_transition(
@@ -177,7 +177,37 @@ def _has_explicit_transition(
     new_object = _normalize(str(new_fact["object"]))
     mentions_both_objects = old_object in normalized_text and new_object in normalized_text
     has_transition_marker = any(marker in normalized_text for marker in TRANSITION_MARKERS)
-    return has_transition_marker and mentions_both_objects
+    if not has_transition_marker:
+        return False
+    if mentions_both_objects:
+        return True
+    return _has_correction_marker(normalized_text) and _fact_comparison_key(
+        prior_fact
+    ) == _fact_comparison_key(new_fact)
+
+
+def _fact_comparison_key(fact: AtomicFactRecord) -> tuple[str, str]:
+    """Pair facts by their canonical subject only.
+
+    Candidate selection in the slow path already constrains predicate relevance: the
+    exact query matches the same canonical predicate, and the embedding-similarity
+    fallback matches a similar predicate under the same canonical subject. Comparing on
+    the subject alone therefore lets fallback candidates (which by design have a
+    different canonical predicate id) through instead of silently re-dropping them,
+    while the curated candidate list keeps unrelated relations out. Facts predating the
+    canonical registry (NULL id) fall back to the normalized raw subject.
+    """
+    canonical_subject_id = fact.get("canonical_subject_id")
+    if canonical_subject_id:
+        return (f"cs:{canonical_subject_id}", "")
+    return (_normalize(str(fact["subject"])), "")
+
+
+def _has_correction_marker(normalized_text: str) -> bool:
+    return any(
+        marker in normalized_text
+        for marker in ("actually", "correction", "instead", "no longer", "not ")
+    )
 
 
 def _source_observations(

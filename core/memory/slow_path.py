@@ -8,6 +8,7 @@ Architecture area: slow path.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -16,14 +17,17 @@ from uuid import uuid4
 
 from core.db import chroma
 from core.db.repositories import (
+    canonical_form_for_id,
     claim_pending_batch,
+    create_atomic_fact,
     list_session_items_by_status,
     mark_done,
     mark_failed,
     repository_connection,
+    resolve_canonical_form,
 )
 from core.llm.embeddings import embed_text
-from core.memory.atomic_fact import extract_atomic_facts, store_atomic_facts
+from core.memory.atomic_fact import detect_transitions, extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
 from core.memory.community import (
     detect_graph_communities,
@@ -70,6 +74,12 @@ CREATED_RECORD_BUCKETS = (
     "community_summaries",
 )
 DURABLE_SCOPES = frozenset({"project", "cross_session"})
+
+# Embedding-similarity fallback pairing (see _similar_prior_fact_ids). Threshold tuned so
+# predicate variants like "prefers" vs "prefers_programming_language" match while unrelated
+# relations under the same subject do not.
+_SIMILARITY_THRESHOLD = 0.72
+_SIMILARITY_CANDIDATE_LIMIT = 25
 
 SLOW_PATH_STEP_NAMES = frozenset(
     {
@@ -281,7 +291,7 @@ def run_slow_path_for_observation(
         ("embedding_index", lambda: _step_embedding_index(observation_id, content, observation)),
         ("atomic_fact_extraction", lambda: _step_atomic_facts(observation_id, content, context)),
         ("graph_update", lambda: _step_entities(observation_id, content)),
-        ("contradiction_supersession", lambda: _step_changes(context)),
+        ("contradiction_supersession", lambda: _step_changes(context, observation_id, content)),
         (
             "reflection_invalidation",
             lambda: _step_reflection_invalidation(observation_id, semantic_config),
@@ -613,13 +623,38 @@ def _step_entities(observation_id: str, content: str) -> dict[str, list[str]]:
     return {"entities": entity_ids, "graph_nodes": node_ids, "graph_edges": edge_ids}
 
 
-def _step_changes(context: dict[str, list[str]]) -> dict[str, list[str]]:
-    edge_ids: list[str] = []
+def _step_changes(
+    context: dict[str, list[str]],
+    observation_id: str,
+    content: str,
+) -> dict[str, list[str]]:
+    if _observation_role(observation_id) != "user":
+        # Contradiction/supersession are driven by the user's own claims. Assistant echoes
+        # merely paraphrase them, so running change detection on assistant observations only
+        # duplicates edges the user turn already produced.
+        return {"graph_edges": []}
+    transition_edge_ids: list[str] = _apply_transition_supersessions(observation_id, content)
+    general_edge_ids: list[str] = []
+    general_superseded = 0
     for fact_id in context.get("fact_ids", []):
         fact = _fetch_fact(fact_id)
         if fact is None or str(fact.get("status")) != "active":
             continue
         priors = _active_prior_fact_ids(fact)
+        log_event(
+            "change_detection",
+            "contradiction/supersession candidate scan",
+            step="contradiction_supersession",
+            fact_id=fact_id,
+            subject_canonical=canonical_form_for_id(
+                "canonical_subjects", _optional_str(fact.get("canonical_subject_id"))
+            ),
+            predicate_canonical=canonical_form_for_id(
+                "canonical_predicates", _optional_str(fact.get("canonical_predicate_id"))
+            ),
+            candidates_found=len(priors),
+            reason="no_candidates" if not priors else "candidates_found",
+        )
         for change in detect_memory_change(fact_id, priors):
             relation = str(change["relation"])
             old_id = str(change["source_id"])
@@ -628,10 +663,28 @@ def _step_changes(context: dict[str, list[str]]) -> dict[str, list[str]]:
             if _relation_edge_exists_by_fact(old_id, new_id, relation):
                 continue
             if relation == "SUPERSEDED_BY":
-                edge_ids.append(apply_supersession(old_id, new_id, evidence))
+                if transition_edge_ids:
+                    # An explicit "from X to Y" transition in this observation was already
+                    # recorded authoritatively by PR2 direct-flagging. Suppress the
+                    # general path's redundant supersession over the LLM's own facts so a
+                    # single transition yields a single edge.
+                    general_superseded += 1
+                    continue
+                general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
             else:
-                edge_ids.append(apply_contradiction(old_id, new_id, evidence))
-    return {"graph_edges": edge_ids}
+                general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+    if transition_edge_ids and general_superseded:
+        # Measures how often the general path WOULD have duplicated the explicit
+        # transition edge (now suppressed above). See docs/canonicalization-followups.md.
+        log_event(
+            "general_supersession_suppressed",
+            "redundant general supersession suppressed (explicit transition handled)",
+            step="contradiction_supersession",
+            observation_id=observation_id,
+            transition_edges=len(transition_edge_ids),
+            suppressed=general_superseded,
+        )
+    return {"graph_edges": transition_edge_ids + general_edge_ids}
 
 
 def _step_tiers(context: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -882,17 +935,191 @@ def _fetch_fact(fact_id: str) -> dict[str, object] | None:
     return None if row is None else dict(row)
 
 
+def _apply_transition_supersessions(observation_id: str, content: str) -> list[str]:
+    """Directly record SUPERSEDED_BY edges for explicit "from X to Y" transitions.
+
+    Extraction already knows the direction (prior=X, current=Y) from the sentence, so
+    the two facts are flagged as a supersession pair directly rather than routed through
+    the general created_at-ordered pairing, which cannot disambiguate direction for two
+    facts created in the same pass. The edge still carries the source observation as
+    evidence, so provenance matches the general path.
+    """
+    if _observation_role(observation_id) != "user":
+        # Transitions are first-person user statements; assistant echoes merely restate
+        # them (often verbosely and with varied phrasing). Processing only the user turn
+        # yields one edge per real transition instead of one per restatement.
+        return []
+    edge_ids: list[str] = []
+    for transition in detect_transitions(content):
+        subject_id = resolve_canonical_form("canonical_subjects", transition["subject"])
+        predicate_id = resolve_canonical_form("canonical_predicates", transition["predicate"])
+        if _transition_supersession_exists(
+            subject_id, predicate_id, transition["prior_object"], transition["current_object"]
+        ):
+            # The same canonical prior->current transition was already recorded (e.g. the
+            # user turn, now restated by the assistant echo). Skip so a single logical
+            # transition yields exactly one edge regardless of how many turns restate it.
+            log_event(
+                "transition_supersession_skipped",
+                "duplicate transition suppressed",
+                step="contradiction_supersession",
+                observation_id=observation_id,
+                predicate=transition["predicate"],
+                prior=transition["prior_object"],
+                current=transition["current_object"],
+            )
+            continue
+        prior_id = create_atomic_fact(_transition_fact(transition, "prior_object", observation_id))
+        current_id = create_atomic_fact(
+            _transition_fact(transition, "current_object", observation_id)
+        )
+        edge_ids.append(apply_supersession(prior_id, current_id, [observation_id]))
+        log_event(
+            "transition_supersession",
+            "explicit transition superseded",
+            step="contradiction_supersession",
+            observation_id=observation_id,
+            predicate=transition["predicate"],
+            prior=transition["prior_object"],
+            current=transition["current_object"],
+        )
+    return edge_ids
+
+
+def _transition_fact(
+    transition: dict[str, str], object_key: str, observation_id: str
+) -> dict[str, object]:
+    return {
+        "subject": transition["subject"],
+        "predicate": transition["predicate"],
+        "object": transition[object_key],
+        "confidence": 0.9,
+        "source_observation_id": observation_id,
+    }
+
+
+def _observation_role(observation_id: str) -> str | None:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT role FROM observations WHERE id = ?", (observation_id,)
+        ).fetchone()
+    return None if row is None else str(row["role"])
+
+
+def _transition_supersession_exists(
+    subject_id: str | None,
+    predicate_id: str | None,
+    prior_object: str,
+    current_object: str,
+) -> bool:
+    """Return whether this canonical prior->current transition is already recorded.
+
+    Keys on the canonical subject/predicate plus the prior and current object values,
+    not on the source observation, so a transition restated across the user turn and the
+    assistant echo collapses to a single SUPERSEDED_BY edge.
+    """
+    if not subject_id or not predicate_id:
+        return False
+    with repository_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM graph_edges edge
+            JOIN graph_nodes prior_node ON prior_node.id = edge.source_node_id
+            JOIN graph_nodes current_node ON current_node.id = edge.target_node_id
+            JOIN atomic_facts prior_fact ON prior_fact.id = prior_node.source_id
+            JOIN atomic_facts current_fact ON current_fact.id = current_node.source_id
+            WHERE edge.edge_type = 'SUPERSEDED_BY'
+              AND prior_node.source_table = 'atomic_facts'
+              AND current_node.source_table = 'atomic_facts'
+              AND prior_fact.canonical_subject_id = ?
+              AND prior_fact.canonical_predicate_id = ?
+              AND current_fact.canonical_subject_id = ?
+              AND current_fact.canonical_predicate_id = ?
+              AND prior_fact.object = ? COLLATE NOCASE
+              AND current_fact.object = ? COLLATE NOCASE
+            LIMIT 1
+            """,
+            (subject_id, predicate_id, subject_id, predicate_id, prior_object, current_object),
+        ).fetchone()
+    return row is not None
+
+
+def _optional_str(value: object) -> str | None:
+    return None if value is None else str(value)
+
+
 def _active_prior_fact_ids(fact: dict[str, object]) -> list[str]:
+    canonical_subject_id = fact.get("canonical_subject_id")
+    canonical_predicate_id = fact.get("canonical_predicate_id")
+    if not canonical_subject_id or not canonical_predicate_id:
+        return []
     with repository_connection() as connection:
         rows = connection.execute(
             """
             SELECT id FROM atomic_facts
-            WHERE subject = ? AND predicate = ? AND status = 'active' AND id != ?
+            WHERE canonical_subject_id = ?
+              AND canonical_predicate_id = ?
+              AND status = 'active'
+              AND id != ?
             ORDER BY created_at ASC
             """,
-            (str(fact["subject"]), str(fact["predicate"]), str(fact["id"])),
+            (str(canonical_subject_id), str(canonical_predicate_id), str(fact["id"])),
         ).fetchall()
-    return [str(row["id"]) for row in rows]
+    exact = [str(row["id"]) for row in rows]
+    if exact:
+        return exact
+    return _similar_prior_fact_ids(fact, str(canonical_subject_id))
+
+
+def _similar_prior_fact_ids(fact: dict[str, object], canonical_subject_id: str) -> list[str]:
+    """Fallback pairing: recent same-subject facts with an embedding-similar predicate.
+
+    Exact canonical matching misses facts whose predicate wording landed in a different
+    canonical bucket ("prefers" vs "prefers_programming_language"). Rather than solve
+    open-ended vocabulary merging, this makes one embedding pass over recent facts under
+    the same canonical subject and admits those whose predicate is similar enough. It is
+    a best-effort rescue, not a guarantee.
+    """
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, predicate FROM atomic_facts
+            WHERE canonical_subject_id = ?
+              AND status = 'active'
+              AND id != ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (canonical_subject_id, str(fact["id"]), _SIMILARITY_CANDIDATE_LIMIT),
+        ).fetchall()
+    if not rows:
+        return []
+    target = embed_text(str(fact["predicate"]))
+    matched = [
+        str(row["id"])
+        for row in rows
+        if _cosine_similarity(target, embed_text(str(row["predicate"]))) >= _SIMILARITY_THRESHOLD
+    ]
+    log_event(
+        "similarity_fallback",
+        "predicate embedding fallback pairing",
+        step="contradiction_supersession",
+        fact_id=str(fact["id"]),
+        predicate=str(fact["predicate"]),
+        candidates_scanned=len(rows),
+        matched=len(matched),
+    )
+    return matched
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    dot = sum(a * b for a, b in zip(left, right, strict=True))
+    return dot / (left_norm * right_norm)
 
 
 def _durable_candidate_exists(session_item_id: str) -> bool:

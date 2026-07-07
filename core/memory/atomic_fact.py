@@ -7,13 +7,39 @@ Architecture area: slow path.
 
 from __future__ import annotations
 
+import re
+
 from core.db.repositories import create_atomic_fact as create_atomic_fact_record
 from core.llm.prompts import PROMPT_TEMPLATES
 from core.llm.qwen import call_qwen_json
 
 AtomicFact = dict[str, object]
+TransitionFact = dict[str, str]
 
 MAX_CONFIDENCE = 1.0
+
+# Explicit "from X to Y" transition language. Each pattern captures the prior value in
+# group 1 and the current value in group 2, stopping the current value before a trailing
+# purpose/reason clause ("... for storage", "... because ...") or sentence punctuation.
+_VALUE = r"(.+?)"
+_STOP = r"(?=\s+for\b|\s+because\b|\s+since\b|[.!?]|$)"
+_TRANSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(rf"\bswitched\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
+    re.compile(rf"\bmigrated\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
+    re.compile(rf"\bmoved\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
+    re.compile(rf"\bchanged\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
+    re.compile(rf"\breplaced\s+{_VALUE}\s+with\s+{_VALUE}{_STOP}", re.IGNORECASE),
+    re.compile(
+        rf"\bused\s+to\s+use\s+{_VALUE}[,.]?\s+(?:but\s+)?now\s+"
+        rf"(?:i\s+|we\s+|they\s+|you\s+)?use[sd]?\s+{_VALUE}{_STOP}",
+        re.IGNORECASE,
+    ),
+)
+# Canonical predicate assigned to transition pairs; resolves against the seeded registry
+# so both facts share a matchable canonical form.
+_TRANSITION_PREDICATE = "uses"
+_TRANSITION_SUBJECT = "user"
+_TRANSITION_CONFIDENCE = 0.9
 UNSUPPORTED_INFERENCE_MARKERS = frozenset(
     {
         "is careless",
@@ -55,6 +81,51 @@ def extract_atomic_facts(observation_id: str, content: str) -> list[AtomicFact]:
 def store_atomic_facts(facts: list[AtomicFact]) -> list[str]:
     """Persist extracted atomic facts and return their SQLite identifiers."""
     return [create_atomic_fact_record(_validated_fact(fact)) for fact in facts]
+
+
+def detect_transitions(content: str) -> list[TransitionFact]:
+    """Detect explicit "from X to Y" transitions and return prior/current value pairs.
+
+    This handles only explicit transition language, where a single sentence names both
+    the old and the new value. Such sentences would otherwise be extracted as one fact
+    with both values crammed into the object, giving change detection nothing to pair.
+    Implicit conflicts across separate statements are left to the general canonical
+    pairing path. Returns an empty list when no transition pattern is present, so the
+    ordinary extraction path is unaffected.
+    """
+    if not content.strip():
+        return []
+    transitions: list[TransitionFact] = []
+    seen: set[tuple[str, str]] = set()
+    for pattern in _TRANSITION_PATTERNS:
+        for match in pattern.finditer(content):
+            prior = _clean_transition_value(match.group(1))
+            current = _clean_transition_value(match.group(2))
+            if not prior or not current:
+                continue
+            key = (prior.casefold(), current.casefold())
+            if key in seen or prior.casefold() == current.casefold():
+                continue
+            seen.add(key)
+            transitions.append(
+                {
+                    "subject": _TRANSITION_SUBJECT,
+                    "predicate": _TRANSITION_PREDICATE,
+                    "prior_object": prior,
+                    "current_object": current,
+                }
+            )
+    return transitions
+
+
+def _clean_transition_value(value: str) -> str:
+    cleaned = value.strip().strip(".,;:!?")
+    lowered = cleaned.casefold()
+    for article in ("the ", "a ", "an "):
+        if lowered.startswith(article):
+            cleaned = cleaned[len(article) :]
+            break
+    return cleaned.strip()
 
 
 def create_atomic_fact(

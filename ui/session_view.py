@@ -1,6 +1,6 @@
 """Session Working Set inspector UI surface.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-045.
 Architecture area: UI.
 

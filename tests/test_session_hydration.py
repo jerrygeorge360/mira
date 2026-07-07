@@ -123,6 +123,50 @@ def test_current_session_correction_overrides_hydrated_item(database_path: Path)
     assert correction["status"] == "confirmed"
 
 
+def test_hot_memory_preserves_source_correction_provenance(database_path: Path) -> None:
+    """Hydration keeps correction type and explicitness from the source session item."""
+    source_session_id = create_session("jerry")
+    observation_id = save_observation(
+        source_session_id,
+        "user",
+        "Use 2026, not 2025, for all MIRA dates.",
+    )
+    source_item_id = upsert_session_item(
+        source_session_id,
+        {
+            "type": "correction",
+            "content": "Use 2026, not 2025, for all MIRA dates.",
+            "scope": "project",
+            "status": "confirmed",
+            "priority": 0.96,
+            "explicitness_label": "direct_correction",
+            "evidence_span": "Use 2026, not 2025, for all MIRA dates.",
+            "source_observations": [observation_id],
+            "supersedes": [],
+        },
+    )
+    create_working_memory_item(
+        {
+            "content": "Use 2026, not 2025, for all MIRA dates.",
+            "memory_type": "project_constraint",
+            "scope": "project",
+            "priority": 0.9,
+            "status": "active",
+            "source_record_type": "session_working_set",
+            "source_record_id": source_item_id,
+        }
+    )
+    new_session_id = create_session("jerry")
+
+    hydrate_session_from_memory(new_session_id, "continue MIRA date work", 10)
+
+    hydrated = _hydrated_items(new_session_id)
+    assert hydrated
+    assert hydrated[0]["type"] == "correction"
+    assert hydrated[0]["explicitness_label"] == "direct_correction"
+    assert hydrated[0]["source_observations"] == [observation_id]
+
+
 def test_no_relevant_memory_results_in_no_hydration(database_path: Path) -> None:
     """With no durable memory, hydration adds nothing."""
     session_id = create_session("jerry")

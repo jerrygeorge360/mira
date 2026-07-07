@@ -1,7 +1,7 @@
 # ruff: noqa: E501
 """Marketing landing page for MIRA.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-130.
 Architecture area: UI.
 

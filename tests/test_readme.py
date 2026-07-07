@@ -64,13 +64,14 @@ def test_readme_links_to_adrs_and_paper() -> None:
     assert (PROJECT_ROOT / "docs" / "adr" / "0001-session-working-set.md").is_file()
 
 
-def test_readme_does_not_overclaim_stubs() -> None:
-    """Status is honest: stubbed components are marked, not claimed complete."""
+def test_readme_does_not_overclaim_scaffold() -> None:
+    """Status is honest: stale scaffold framing is gone."""
     assert "## Implementation status" in README
-    assert README.count("🟡 Stub") >= 3
+    assert "## Roadmap" in README
     # The stale 'scaffold only / no business logic' claim must be gone.
     assert "no business logic" not in README.lower()
     assert "scaffold only" not in README.lower()
+    assert "🟡 Stub" not in README
 
 
 def test_readme_keeps_docker_instructions() -> None:

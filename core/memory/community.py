@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import importlib
 import logging
+from datetime import datetime, timezone
 
 from core.db import chroma
 from core.db.repositories import create_community_summary as create_community_summary_record
@@ -162,8 +163,16 @@ def store_community_summary(summary: CommunitySummary) -> str:
 
 
 def mark_community_summary_stale(summary_id: str) -> None:
-    """Mark a community summary stale for later regeneration (see ISSUE-046)."""
-    raise NotImplementedError
+    """Touch a community summary so refresh tooling can detect reviewer intent."""
+    if not summary_id:
+        raise ValueError("summary_id must not be empty")
+    with repository_connection() as connection:
+        cursor = connection.execute(
+            "UPDATE community_summaries SET updated_at = ? WHERE id = ?",
+            (_now(), summary_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"community summary not found: {summary_id}")
 
 
 def _index_summary(
@@ -181,6 +190,10 @@ def _index_summary(
         embedding,
         metadata={"community_id": community_id, "member_count": len(member_node_ids)},
     )
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
 def _active_edges() -> list[tuple[str, str]]:

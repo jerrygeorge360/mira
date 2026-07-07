@@ -1,6 +1,6 @@
 """Typed temporal graph visualization for the MIRA UI.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-046.
 Architecture area: UI.
 

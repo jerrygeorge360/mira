@@ -1,6 +1,6 @@
 """Component ablations for MIRA architecture evaluation.
 
-Ownership: Sarah.
+Ownership: MIRA contributors.
 Related issue: ISSUE-053.
 Architecture area: evaluation.
 

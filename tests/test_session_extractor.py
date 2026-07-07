@@ -35,6 +35,20 @@ def test_use_2026_not_2025_extracts_correction() -> None:
     ]
 
 
+def test_actually_preference_extracts_direct_correction() -> None:
+    """Actually-prefixed preference updates are explicit corrections."""
+    operations = extract_session_operations(
+        "obs_rust",
+        "Actually I prefer Rust.",
+        [],
+        [{"id": "sws_python", "content": "I prefer Python.", "status": "provisional"}],
+    )
+
+    assert operations[0]["op"] == "upsert"
+    assert operations[0]["type"] == "correction"
+    assert operations[0]["explicitness_label"] == "direct_correction"
+
+
 def test_community_summary_distinction_extracts_decision_or_constraint() -> None:
     """Explicit architecture distinctions become decision-like session items."""
     operations = extract_session_operations(
