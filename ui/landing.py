@@ -16,6 +16,13 @@ from html import escape
 from textwrap import dedent
 from typing import Any
 
+from ui.command_center_data import (
+    RESULT_ABSTRACT,
+    RESULT_CATEGORIES,
+    RESULT_EVIDENCE,
+    RESULT_STATS,
+)
+
 _FEATURES: tuple[tuple[str, str, str], ...] = (
     (
         "memory",
@@ -230,21 +237,35 @@ def render_landing(st: Any) -> None:
         <section class="lp-section-intro" id="benchmarks">
           <h2 class="lp-h2">Built to be evaluated, not just demoed</h2>
           <p class="lp-section-sub">
-            MIRA separates official benchmark results from ablation studies.
-            Benchmarks test the whole system against standard memory tasks;
-            ablations remove one MIRA component at a time to measure what breaks.
+            MIRA's evaluation has three distinct surfaces. The <strong>local eval</strong> is a
+            live memory regression suite that runs today. <strong>Official benchmarks</strong>
+            score the whole system against standard tasks. <strong>Ablation studies</strong>
+            remove one component at a time to measure what breaks.
           </p>
         </section>
         """,
     )
+
     _unsafe(
         st,
-        '<div id="official-benchmarks" class="lp-anchor"></div><h3 class="lp-mini-h">Official benchmark tracks</h3>',
+        '<div id="local-eval" class="lp-anchor"></div>'
+        '<h3 class="lp-mini-h">Local eval'
+        '<span class="lp-eval-badge lp-eval-live">Verified live</span></h3>',
+    )
+    _render_live_result(st)
+
+    _unsafe(
+        st,
+        '<div id="official-benchmarks" class="lp-anchor"></div>'
+        '<h3 class="lp-mini-h">Official benchmarks'
+        '<span class="lp-eval-badge">Runner ready</span></h3>',
     )
     _render_evaluation_cards(st, _OFFICIAL_BENCHMARKS, metric_label="Metric to report")
     _unsafe(
         st,
-        '<div id="ablation-studies" class="lp-anchor"></div><h3 class="lp-mini-h">Ablation studies</h3>',
+        '<div id="ablation-studies" class="lp-anchor"></div>'
+        '<h3 class="lp-mini-h">Ablation studies'
+        '<span class="lp-eval-badge">Result pending</span></h3>',
     )
     _render_evaluation_cards(st, _ABLATION_STUDIES, metric_label="Ablation metric")
 
@@ -380,6 +401,44 @@ def _landing_memory_visual(theme: str) -> str:
 </body>
 </html>
 """
+
+
+def _render_live_result(st: Any) -> None:
+    """Render the live memory-verification result inline on the landing page."""
+    stats = "".join(
+        f'<div class="lp-stat"><strong>{escape(stat["value"])}</strong>'
+        f"<span>{escape(stat['label'])}</span></div>"
+        for stat in RESULT_STATS
+    )
+    categories = "".join(
+        f'<div class="lp-cat"><div class="lp-cat-top"><strong>{escape(cat["name"])}</strong>'
+        f'<span class="lp-cat-score">{escape(cat["result"])}</span></div>'
+        f"<p>{escape(cat['checks'])}</p></div>"
+        for cat in RESULT_CATEGORIES
+    )
+    cards = ""
+    for ev in RESULT_EVIDENCE:
+        states = ev["states"] if isinstance(ev["states"], list) else []
+        chips = "".join(f"<span>{escape(str(state))}</span>" for state in states)
+        cards += f"""
+        <div class="lp-evidence">
+          <div class="lp-ev-top"><strong>{escape(str(ev["title"]))}</strong>
+          <span class="bench-status">{escape(str(ev["case"]))}</span></div>
+          <code class="lp-ev-edge">{escape(str(ev["edge"]))}</code>
+          <div class="lp-ev-chips">{chips}</div>
+        </div>
+        """
+    _unsafe(
+        st,
+        f"""
+        <p class="lp-result-note">{escape(RESULT_ABSTRACT)}</p>
+        <div class="lp-result-stats">{stats}</div>
+        <p class="lp-eval-cap">Nine behaviors it scores — every case replays real interactions through the live agent.</p>
+        <div class="lp-cat-grid">{categories}</div>
+        <p class="lp-eval-cap">Verified in the graph — the harder cases, confirmed as real artifacts, not just answer text.</p>
+        <div class="lp-evidence-grid">{cards}</div>
+        """,
+    )
 
 
 def _render_evaluation_cards(
@@ -748,11 +807,35 @@ html, body, [data-testid="stAppViewContainer"] {{
 
 .lp-footer {{ text-align: center; color: var(--faint); font-size: .82rem; margin-top: 3rem; padding-top: 1.6rem; border-top: 1px solid var(--border); }}
 
+.lp-result-stats {{ display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 720px; margin: 0 auto 1.4rem; }}
+.lp-stat {{ text-align: center; padding: 16px 12px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }}
+.lp-stat strong {{ display: block; font-size: 1.35rem; font-weight: 800; letter-spacing: -.02em; color: var(--text); }}
+.lp-stat span {{ display: block; margin-top: 4px; font-size: .72rem; color: var(--muted); }}
+.lp-result-note {{ max-width: 620px; margin: 0 auto 1.8rem; text-align: center; color: var(--muted); font-size: .95rem; line-height: 1.65; }}
+.lp-evidence-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(258px, 1fr)); gap: 14px; max-width: 940px; margin: 0 auto; }}
+.lp-evidence {{ padding: 16px 18px; border: 1px solid var(--border); border-radius: 18px; background: var(--surface); }}
+.lp-ev-top {{ display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }}
+.lp-ev-top strong {{ font-size: .9rem; font-weight: 750; color: var(--text); }}
+.lp-ev-edge {{ display: block; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; line-height: 1.6; color: var(--text); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; overflow-x: auto; white-space: nowrap; }}
+.lp-ev-chips {{ display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }}
+.lp-ev-chips span {{ font-size: .72rem; color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 999px; padding: 4px 9px; }}
+
+.lp-eval-cap {{ max-width: 720px; margin: 1.8rem auto .9rem; text-align: center; color: var(--faint); font-size: .82rem; letter-spacing: .01em; }}
+.lp-eval-badge {{ display: inline-block; margin-left: 10px; vertical-align: middle; font-size: .62rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); background: var(--surface-soft); border: 1px solid var(--border); border-radius: 999px; padding: 3px 9px; }}
+.lp-eval-badge.lp-eval-live {{ color: var(--accent); background: var(--accent-soft); border-color: transparent; }}
+.lp-cat-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; max-width: 940px; margin: 0 auto; }}
+.lp-cat {{ padding: 14px 16px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); }}
+.lp-cat-top {{ display: flex; align-items: center; justify-content: space-between; gap: 10px; }}
+.lp-cat-top strong {{ font-size: .88rem; color: var(--text); font-weight: 720; letter-spacing: -.01em; }}
+.lp-cat-score {{ font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .74rem; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 3px 8px; }}
+.lp-cat p {{ margin: 7px 0 0; font-size: .8rem; line-height: 1.55; color: var(--muted); }}
+
 @media (max-width: 760px) {{
   .lp-nav-links {{ display: none; }}
   .lp-title {{ font-size: 2.35rem; }}
   .architecture-strip {{ grid-template-columns: 1fr; }}
   .bench-card {{ min-height: auto; }}
+  .lp-result-stats {{ grid-template-columns: repeat(2, 1fr); }}
 }}
 </style>
 """

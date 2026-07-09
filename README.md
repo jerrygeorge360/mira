@@ -49,7 +49,11 @@ question should use Quick, Deep, Relational, or direct LLM answering.
 - **Durable cross-session memory**: observations, atomic facts, reflections, foresight records,
   community summaries, and tier metadata are persisted in SQLite.
 - **Correction and contradiction handling**: acknowledged changes use `SUPERSEDED_BY`; unresolved
-  conflicts use `CONTRADICTS`.
+  conflicts use `CONTRADICTS`. Facts are paired on a **canonical subject/predicate registry** (so
+  `I`/`you`/`speaker` and `prefer`/`prefers_language` resolve to the same relation), with an
+  **embedding-similarity fallback** when extraction wording lands outside the seeded vocabulary.
+- **Explicit transition handling**: sentences like "switched from MongoDB to PostgreSQL" are
+  clause-split into a prior/current fact pair and recorded as a directed `SUPERSEDED_BY` edge.
 - **Structured atomic facts**: slow-path extraction turns raw observations into evidence-backed
   subject-predicate-object facts.
 - **Graph-backed memory**: a single typed temporal graph stores entities, observations, evidence
@@ -204,6 +208,11 @@ python -m scripts.seed_demo --reset
 make run
 ```
 
+The UI opens at `http://localhost:8501`. Choose **Launch MIRA**, then open the **Results**
+view in the left rail for the live memory-verification result and the mechanism evidence
+behind it. (`make run` launches `streamlit run ui/app.py`; running that command directly also
+works from the repo root.)
+
 Run the FastAPI backend:
 
 ```bash
@@ -355,8 +364,32 @@ Local eval prints `[local-eval]` progress messages to stderr so live runs show t
 and interaction. Use `--delay-s 15` for rate-limited free-tier providers and `--quiet` if you
 need machine-readable output only. `--run-slow-path` is closer to a long-running worker setup,
 but it performs additional extraction/distillation model calls. `--debug-trace` writes
-`evaluation/memory_cases.debug.md` with routing, retrieved records, session items, prompt
+`evaluation/local/memory_cases.debug.md` with routing, retrieved records, session items, prompt
 sections, and slow-path step output.
+
+Every case runs against its own isolated SQLite database and vector store by default, so one
+case's durable memory cannot leak into the next; pass `--shared-db` only for intentional
+multi-case continuity scenarios.
+
+### Reproducing the live memory result
+
+The shipped suite exercises the full memory pipeline end to end (routing, session working set,
+supersession, contradiction, foresight, retrieval sufficiency). To reproduce a full live run with
+inline slow-path distillation:
+
+```bash
+set -a; source .env; set +a
+LLM_PROFILE=deepseek python -m scripts.run_local_eval --live --run-slow-path
+```
+
+This writes per-case scores to `evaluation/local/memory_cases.results.json`. On DeepSeek
+(`deepseek-chat`) with local FastEmbed embeddings, the current suite passes **10/10**, and the
+mechanism checks are verifiable in the run's database — `SUPERSEDED_BY` edges exist, superseded
+facts are actually closed, and `foresight_records` persist. These are reproducible facts from a
+live provider, not shipped benchmark numbers. Provider quality varies: free-tier hosts (e.g.
+Gemini's 5 requests/minute cap) cannot complete a full slow-path run without throttling or a paid
+plan. Known extraction-quality follow-ups are tracked in
+[docs/canonicalization-followups.md](docs/canonicalization-followups.md).
 
 Prepare LongMemEval-style data:
 
@@ -478,7 +511,10 @@ core/
 ui/                 Streamlit app and graph visualization
 api/                FastAPI backend over the MIRA core runtime
 slack/              Slack bot and MCP server skeleton
-evaluation/         local cases, benchmark adapter, ablations, judge
+evaluation/         evaluation surfaces, grouped by kind
+  local/            local memory regression suite (cases harness)
+  benchmarks/       official benchmark adapters (LongMemEval / LoCoMo) and judge
+  ablation/         component ablation studies
 docs/               paper, architecture, ADRs, demo script, issues
 scripts/            setup, demo, provider, worker, benchmark, and inspection scripts
 tests/              test suite

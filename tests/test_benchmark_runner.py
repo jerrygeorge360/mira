@@ -191,7 +191,7 @@ def test_gold_answer_not_leaked_into_generation(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The gold answer is never passed to MIRA's answer generation."""
-    import evaluation.longmemeval as lme
+    import evaluation.benchmarks.longmemeval as lme
 
     seen_questions: list[str] = []
 

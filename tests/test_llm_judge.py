@@ -7,7 +7,7 @@ Architecture area: evaluation.
 
 from __future__ import annotations
 
-from evaluation.judge import (
+from evaluation.benchmarks.judge import (
     JudgeInput,
     deterministic_judge,
     hybrid_judge,

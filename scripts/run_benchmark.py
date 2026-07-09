@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> int:
 def run(args: argparse.Namespace) -> dict[str, object]:
     """Configure the environment, run the benchmark, and write outputs."""
     from core.db.repositories import configure_database
-    from evaluation.longmemeval import iter_examples, load_benchmark_dataset
+    from evaluation.benchmarks.longmemeval import iter_examples, load_benchmark_dataset
 
     dataset_path = Path(args.dataset)
     if not dataset_path.is_file():
@@ -123,7 +123,7 @@ def _run_examples(
     args: argparse.Namespace,
     estimate: CostEstimate,
 ) -> tuple[list[dict[str, object]], Ledger]:
-    from evaluation.longmemeval import import_conversations
+    from evaluation.benchmarks.longmemeval import import_conversations
 
     cache = _Cache(Path(args.out) / "cache", enabled=bool(args.cache or args.resume))
     completed = _resume_completed(args) if args.resume else set()
@@ -185,7 +185,7 @@ def _answer_with_cache(
     ledger: Ledger,
     args: argparse.Namespace,
 ) -> dict[str, object]:
-    from evaluation.longmemeval import run_question
+    from evaluation.benchmarks.longmemeval import run_question
 
     key = _hash(args.model, args.suite, str(example.get("question_id")), question)
     cached = cache.get("answer", key)
@@ -204,7 +204,7 @@ def _judge_with_cache(
     ledger: Ledger,
     args: argparse.Namespace,
 ) -> dict[str, object]:
-    from evaluation.judge import JUDGE_PROMPT_VERSION, JudgeInput, score_with_judge
+    from evaluation.benchmarks.judge import JUDGE_PROMPT_VERSION, JudgeInput, score_with_judge
 
     category = _category(example)
     judge_input = JudgeInput(
@@ -499,7 +499,7 @@ def _progress(args: argparse.Namespace, message: str) -> None:
 def _save_judge_artifacts(
     args: argparse.Namespace, judge_input: Any, verdict: dict[str, object]
 ) -> None:
-    from evaluation.judge import build_judge_prompt
+    from evaluation.benchmarks.judge import build_judge_prompt
 
     prompts_dir = Path(args.out) / "judge_prompts"
     outputs_dir = Path(args.out) / "judge_raw_outputs"
@@ -660,7 +660,7 @@ def _example_result(
     verdict: dict[str, object],
     args: argparse.Namespace,
 ) -> dict[str, object]:
-    from evaluation.judge import JudgeInput, deterministic_judge
+    from evaluation.benchmarks.judge import JudgeInput, deterministic_judge
 
     deterministic = (
         verdict.get("deterministic")

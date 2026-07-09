@@ -28,6 +28,12 @@ from ui.command_center_data import (
     EVIDENCE_ITEMS,
     GRAPH_METRICS,
     REFLECTIONS,
+    RESULT_ABSTRACT,
+    RESULT_CASES,
+    RESULT_CAVEATS,
+    RESULT_EVIDENCE,
+    RESULT_FIXES,
+    RESULT_STATS,
     SESSION_ITEMS,
     TIMELINE,
 )
@@ -42,6 +48,7 @@ _MEMORY_VIEWS: tuple[tuple[str, str], ...] = (
     ("Reflections", "auto_awesome"),
     ("Communities", "groups"),
     ("Timeline", "timeline"),
+    ("Results", "verified"),
 )
 VIEWS: tuple[tuple[str, str], ...] = _PRIMARY_VIEWS + _MEMORY_VIEWS
 
@@ -1017,6 +1024,72 @@ def _render_timeline(st: Any) -> None:
             )
 
 
+def _subhead(st: Any, title: str, subtitle: str) -> None:
+    _unsafe(
+        st,
+        f"""
+        <div class="section-title" style="margin-top:1.8rem">
+          <h2>{escape(title)}</h2>
+          <p class="muted">{escape(subtitle)}</p>
+        </div>
+        """,
+    )
+
+
+def _render_results(st: Any) -> None:
+    _section_title(st, "Memory Verification", "Live result and the mechanisms behind it")
+    tiles = "".join(
+        f'<div class="tile"><small>{escape(stat["label"])}</small>'
+        f"<strong>{escape(stat['value'])}</strong></div>"
+        for stat in RESULT_STATS
+    )
+    _unsafe(st, f'<div class="tile-grid">{tiles}</div>')
+    _unsafe(
+        st,
+        f'<p class="muted" style="margin-top:1rem;max-width:64ch">{escape(RESULT_ABSTRACT)}</p>',
+    )
+
+    _subhead(st, "Evidence", "Pulled from the run's databases — the scorer's claims, confirmed.")
+    for ev in RESULT_EVIDENCE:
+        states = ev["states"] if isinstance(ev["states"], list) else []
+        chips = "".join(f'<span class="chip">{escape(str(state))}</span>' for state in states)
+        _unsafe(
+            st,
+            f"""
+            <div class="row-card">
+              <div class="row-top"><strong>{escape(str(ev["title"]))}</strong>
+              <span class="badge">{escape(str(ev["case"]))}</span></div>
+              <p style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.84rem;color:var(--text);overflow-x:auto">{escape(str(ev["edge"]))}</p>
+              <div class="chip-row">{chips}</div>
+            </div>
+            """,
+        )
+
+    _subhead(st, "How it was fixed", "Make pairing survive the model's inconsistency.")
+    for fix in RESULT_FIXES:
+        _unsafe(
+            st,
+            f"""
+            <div class="row-card">
+              <strong>{escape(fix["title"])}</strong>
+              <p>{escape(fix["detail"])}</p>
+            </div>
+            """,
+        )
+
+    _subhead(st, "Full suite", "Ten cases · live DeepSeek · all passed.")
+    cases = "".join(
+        f'<div class="tile"><small>passed · {escape(case["mode"])}</small>'
+        f"<strong>{escape(case['case'])}</strong></div>"
+        for case in RESULT_CASES
+    )
+    _unsafe(st, f'<div class="tile-grid">{cases}</div>')
+
+    _subhead(st, "Kept honest", "What isn't pristine yet.")
+    for caveat in RESULT_CAVEATS:
+        _unsafe(st, f'<div class="row-card"><p style="margin:0">{escape(caveat)}</p></div>')
+
+
 _RENDERERS = {
     "Chat": _render_chat,
     "Graph": _render_memory_graph,
@@ -1025,4 +1098,5 @@ _RENDERERS = {
     "Reflections": _render_reflections,
     "Communities": _render_communities,
     "Timeline": _render_timeline,
+    "Results": _render_results,
 }

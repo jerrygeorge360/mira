@@ -16,7 +16,7 @@ import pytest
 from core import agent
 from core.agent import handle_user_message
 from core.db.repositories import configure_database, create_session
-from evaluation.ablation import (
+from evaluation.ablation.studies import (
     ABLATION_COMPONENTS,
     AblationConfig,
     apply_ablation,

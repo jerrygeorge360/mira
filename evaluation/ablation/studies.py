@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from core.db.repositories import create_session
-from evaluation.cases import load_evaluation_cases, score_case
+from evaluation.local.cases import load_evaluation_cases, score_case
 
 LOGGER = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ SLOW_PATH_ONLY = frozenset({"contradiction_supersession"})
 # The vector-only baseline strips every higher layer, leaving Quick retrieval.
 VECTOR_ONLY_DISABLED = frozenset(AGENT_EFFECTIVE)
 
-DEFAULT_CASES_PATH = str(Path(__file__).resolve().parent / "memory_cases.json")
+DEFAULT_CASES_PATH = str(Path(__file__).resolve().parent.parent / "local" / "memory_cases.json")
 
 
 @dataclass(frozen=True)
@@ -161,18 +161,61 @@ def run_ablation(component_names: list[str], cases_path: str | None = None) -> d
     return _row_to_dict(row)
 
 
+ProgressReporter = Callable[[str], None]
+
+
+def select_ablations(components: list[str] | None = None) -> list[AblationConfig]:
+    """Return the full standard ablation set, or a faster subset.
+
+    With ``components`` the study runs only the ``full_system`` baseline plus the named
+    ablations, so a run can target a few layers instead of all of them.
+    """
+    everything = standard_ablations()
+    if not components:
+        return everything
+    keep = {"full_system"}
+    for name in components:
+        keep.add("vector_only_baseline" if name == "vector_only" else f"without_{name}")
+    return [config for config in everything if config.name in keep]
+
+
 def run_ablation_study(
     cases_path: str | None = None,
     configs: list[AblationConfig] | None = None,
+    progress: ProgressReporter | None = None,
+    limit: int | None = None,
 ) -> dict[str, object]:
-    """Run baseline plus each ablation and produce a comparison table."""
+    """Run baseline plus each ablation and produce a comparison table.
+
+    ``progress`` receives human-readable status messages (per config and per case) so a
+    long live run shows what it is doing instead of appearing to hang. ``limit`` caps the
+    number of cases each config runs, trading coverage for speed.
+    """
     resolved_path = cases_path or DEFAULT_CASES_PATH
-    rows = [_run_config(config, resolved_path) for config in (configs or standard_ablations())]
+    all_configs = configs or standard_ablations()
+    total = len(all_configs)
+    _progress(
+        progress,
+        f"study start: {total} configs, cases={resolved_path}, limit={limit or 'all'}",
+    )
+    rows: list[AblationRow] = []
+    for index, config in enumerate(all_configs, start=1):
+        rows.append(
+            _run_config(
+                config, resolved_path, index=index, total=total, progress=progress, limit=limit
+            )
+        )
+    _progress(progress, f"study complete: {total} configs")
     return {
         "cases_path": resolved_path,
         "rows": [_row_to_dict(row) for row in rows],
         "table": render_ablation_table(rows),
     }
+
+
+def _progress(progress: ProgressReporter | None, message: str) -> None:
+    if progress is not None:
+        progress(message)
 
 
 def render_ablation_table(rows: list[AblationRow]) -> str:
@@ -190,22 +233,45 @@ def render_ablation_table(rows: list[AblationRow]) -> str:
     return "\n".join(lines)
 
 
-def _run_config(config: AblationConfig, cases_path: str) -> AblationRow:
+def _run_config(
+    config: AblationConfig,
+    cases_path: str,
+    *,
+    index: int = 0,
+    total: int = 0,
+    progress: ProgressReporter | None = None,
+    limit: int | None = None,
+) -> AblationRow:
     cases = load_evaluation_cases(cases_path)
+    if limit is not None:
+        cases = cases[:limit]
+    disabled_label = ", ".join(sorted(config.disabled)) or "none"
+    _progress(progress, f"config {index}/{total} {config.name}: start (disabled: {disabled_label})")
     results: list[dict[str, object]] = []
     with apply_ablation(config) as applied:
-        for case in cases:
-            results.append(_run_case(case))
+        for case_index, case in enumerate(cases, start=1):
+            result = _run_case(case)
+            results.append(result)
+            outcome = "passed" if result["passed"] else "failed"
+            case_id = str(case.get("id", "unnamed"))
+            _progress(
+                progress,
+                f"config {config.name}: case {case_index}/{len(cases)} {case_id}: {outcome}",
+            )
 
     passed = sum(1 for result in results if result["passed"])
-    total = len(results)
+    total_cases = len(results)
+    rate = round(passed / total_cases, 4) if total_cases else 0.0
+    _progress(
+        progress, f"config {config.name}: done passed={passed}/{total_cases} pass_rate={rate}"
+    )
     return AblationRow(
         name=config.name,
         disabled=sorted(config.disabled),
         applied=sorted(applied),
-        total=total,
+        total=total_cases,
         passed=passed,
-        pass_rate=round(passed / total, 4) if total else 0.0,
+        pass_rate=rate,
         note=_coverage_note(config.disabled, applied),
         results=results,
     )

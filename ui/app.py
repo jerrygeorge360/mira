@@ -16,18 +16,27 @@ The real entry point is ``streamlit run ui/app.py`` (or ``run_app()``).
 from __future__ import annotations
 
 import importlib
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
-from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat
-from ui.command_center import render_command_center
-from ui.foresight_view import render_foresight_timeline
-from ui.graph_viz import render_graph
-from ui.landing import render_landing
-from ui.memory_inspector import render_memory_inspector
-from ui.retrieval_trace import render_retrieval_trace
-from ui.session_view import render_session_working_set
+# `streamlit run ui/app.py` puts only the ui/ directory on sys.path, so the
+# `from ui... import` lines below fail. Add the repo root so the app runs the same
+# whether launched via `make run`, `streamlit run`, or `python -m ui.app`.
+_REPO_ROOT = str(Path(__file__).resolve().parents[1])
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from ui.chat import DEFAULT_SESSION_ID, MockChatAgent, render_chat  # noqa: E402
+from ui.command_center import render_command_center  # noqa: E402
+from ui.foresight_view import render_foresight_timeline  # noqa: E402
+from ui.graph_viz import render_graph  # noqa: E402
+from ui.landing import render_landing  # noqa: E402
+from ui.memory_inspector import render_memory_inspector  # noqa: E402
+from ui.retrieval_trace import render_retrieval_trace  # noqa: E402
+from ui.session_view import render_session_working_set  # noqa: E402
 
 APP_TITLE = "MIRA — Memory Command Center"
 

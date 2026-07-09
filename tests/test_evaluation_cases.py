@@ -15,7 +15,7 @@ import pytest
 
 from core import agent
 from core.db.repositories import configure_database, repository_connection
-from evaluation.cases import load_evaluation_cases, run_evaluation_cases, score_case
+from evaluation.local.cases import load_evaluation_cases, run_evaluation_cases, score_case
 
 
 def _observation_count() -> int:
@@ -321,7 +321,7 @@ def test_failing_expectation_is_reported(
 
 def test_shipped_memory_cases_suite_is_loadable() -> None:
     """The shipped sample suite covers the evaluation categories and loads."""
-    suite_path = Path(__file__).resolve().parents[1] / "evaluation" / "memory_cases.json"
+    suite_path = Path(__file__).resolve().parents[1] / "evaluation" / "local" / "memory_cases.json"
     cases = load_evaluation_cases(str(suite_path))
     categories = {str(case["category"]) for case in cases}
     assert len(cases) == 10

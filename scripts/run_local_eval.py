@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from core.db.repositories import configure_database
 from core.observability import configure_logging
-from evaluation.cases import run_evaluation_cases
+from evaluation.local.cases import run_evaluation_cases
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -103,7 +103,7 @@ def _summary_for_terminal(summary: dict[str, object]) -> dict[str, object]:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", default="evaluation/memory_cases.json")
+    parser.add_argument("--cases", default="evaluation/local/memory_cases.json")
     parser.add_argument(
         "--case-id",
         action="append",
