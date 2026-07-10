@@ -23,6 +23,7 @@ from core.db.repositories import (
 )
 from core.llm.functions import maybe_structured_tool_call, tool_result_context_record
 from core.llm.qwen import call_qwen_json
+from core.memory.change import resolve_retrieved_contradictions
 from core.memory.observation import persist_turn_fast_path
 from core.memory.tiers import list_hot_memory_for_context
 from core.memory.trace import TraceBuilder
@@ -138,6 +139,9 @@ def handle_user_message(
     tool_calls = _structured_tool_calls(session_id, user_message)
     if tool_calls:
         retrieved.extend(tool_result_context_record(tool_call) for tool_call in tool_calls)
+    # Surface any unresolved contradiction among the retrieved facts so the answer flags
+    # the conflict instead of asserting one contested value as settled.
+    retrieved.extend(resolve_retrieved_contradictions(_retrieved_fact_ids(retrieved)))
     trace.record_retrieval(retrieval_mode, retrieved)
 
     # Hot memory: pull active working-memory items for prompt context.
@@ -278,6 +282,14 @@ def _answer_mode_from_decision(
 
 def _decision_uses_memory(decision: dict[str, object]) -> bool:
     return bool(decision.get("used_memory", decision.get("mode") != GENERAL_RETRIEVAL_MODE))
+
+
+def _retrieved_fact_ids(retrieved: list[dict[str, object]]) -> list[str]:
+    return [
+        str(item.get("source_id") or item.get("id"))
+        for item in retrieved
+        if item.get("source") == "atomic_facts" and (item.get("source_id") or item.get("id"))
+    ]
 
 
 def _structured_tool_calls(session_id: str, user_message: str) -> list[dict[str, object]]:

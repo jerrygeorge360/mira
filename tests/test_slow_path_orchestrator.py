@@ -251,6 +251,63 @@ def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
     assert _processed_at(observation_id) is not None
 
 
+def test_llm_verify_changes_validates_ids_and_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The LLM verifier keeps only valid, confident verdicts and uses observation evidence."""
+    fact = {
+        "id": "new",
+        "subject": "project deadline",
+        "predicate": "is",
+        "object": "Monday",
+        "source_observation_id": "obs_new",
+    }
+    candidates = [
+        {
+            "id": "cand",
+            "subject": "project",
+            "predicate": "has deadline",
+            "object": "Friday",
+            "source_observation_id": "obs_cand",
+        }
+    ]
+
+    def _fake(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert schema_name == "contradiction_supersession_detection"
+        return {
+            "json": {
+                "relations": [
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "cand",
+                        "target_id": "new",
+                        "confidence": 0.9,
+                        "reason": "conflicting dates",
+                    },
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "ghost",
+                        "target_id": "new",
+                        "confidence": 0.9,
+                    },  # unknown id -> filtered
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "cand",
+                        "target_id": "new",
+                        "confidence": 0.1,
+                    },  # below gate -> filtered
+                ]
+            }
+        }
+
+    monkeypatch.setattr(slow_path, "call_qwen_json", _fake)
+
+    changes = slow_path._llm_verify_changes(fact, candidates)
+
+    assert len(changes) == 1
+    assert changes[0]["relation"] == "CONTRADICTS"
+    assert (changes[0]["source_id"], changes[0]["target_id"]) == ("cand", "new")
+    assert changes[0]["evidence"] == ["obs_cand", "obs_new"]
+
+
 def test_agent_self_facts_keeps_only_assistant_attributed() -> None:
     """A non-user turn contributes only agent self-facts; echoes and world facts are dropped."""
     facts = [

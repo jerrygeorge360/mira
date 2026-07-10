@@ -27,6 +27,8 @@ from core.db.repositories import (
     resolve_canonical_form,
 )
 from core.llm.embeddings import embed_text
+from core.llm.prompts import render_prompt
+from core.llm.qwen import LLMClientError, call_qwen_json
 from core.memory.atomic_fact import detect_transitions, extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
 from core.memory.community import (
@@ -669,6 +671,189 @@ def _step_entities(observation_id: str, content: str) -> dict[str, list[str]]:
     return {"entities": entity_ids, "graph_nodes": node_ids, "graph_edges": edge_ids}
 
 
+_ENTITY_GRAPH_CANDIDATE_LIMIT = 25
+
+
+def _apply_changes(
+    changes: list[dict[str, object]],
+    transition_edge_ids: list[str],
+    general_edge_ids: list[str],
+) -> int:
+    """Apply detected memory changes as edges; return supersessions suppressed by a transition.
+
+    A general SUPERSEDED_BY is skipped when an explicit "from X to Y" transition in the
+    same observation already recorded the authoritative edge, so one transition yields
+    one edge. Contradictions are always applied (they never duplicate a transition).
+    """
+    suppressed = 0
+    for change in changes:
+        relation = str(change["relation"])
+        old_id = str(change["source_id"])
+        new_id = str(change["target_id"])
+        # Evidence must be real observation ids; skip rather than fabricate one.
+        evidence = _json_string_list(change.get("evidence"))
+        if not evidence:
+            continue
+        if _relation_edge_exists_by_fact(old_id, new_id, relation):
+            continue
+        if relation == "SUPERSEDED_BY":
+            if transition_edge_ids:
+                suppressed += 1
+                continue
+            general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
+        else:
+            general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+    return suppressed
+
+
+_LLM_CHANGE_CANDIDATE_SCAN = 25
+_LLM_CHANGE_SHORTLIST_LIMIT = 5
+_LLM_CHANGE_SHORTLIST_THRESHOLD = 0.5
+_LLM_CHANGE_CONFIDENCE_GATE = 0.5
+
+
+def _shortlist_candidate_facts(fact: dict[str, object]) -> list[dict[str, object]]:
+    """Embedding-shortlist recent active facts for LLM change verification (high recall).
+
+    Recent active facts ranked by embedding similarity to the new fact, excluding this
+    fact and the *exact* canonical matches (same canonical subject AND predicate) that the
+    deterministic fast path already classifies. Everything else -- fragmented subjects or
+    predicates the fast path misses -- is a candidate for the LLM to judge, capped to a
+    small top-k so at most one LLM call runs per fact.
+    """
+    fact_id = str(fact["id"])
+    subject_canonical = _optional_str(fact.get("canonical_subject_id"))
+    predicate_canonical = _optional_str(fact.get("canonical_predicate_id"))
+    new_text = _fact_text(fact)
+    if not new_text:
+        return []
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, subject, predicate, object, canonical_subject_id,
+                   canonical_predicate_id, source_observation_id
+            FROM atomic_facts
+            WHERE status = 'active' AND id != ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (fact_id, _LLM_CHANGE_CANDIDATE_SCAN),
+        ).fetchall()
+    target = embed_text(new_text)
+    scored: list[tuple[float, dict[str, object]]] = []
+    for row in rows:
+        exact_match = (
+            subject_canonical
+            and predicate_canonical
+            and _optional_str(row["canonical_subject_id"]) == subject_canonical
+            and _optional_str(row["canonical_predicate_id"]) == predicate_canonical
+        )
+        if exact_match:
+            continue
+        similarity = _cosine_similarity(target, embed_text(_fact_text(dict(row))))
+        if similarity >= _LLM_CHANGE_SHORTLIST_THRESHOLD:
+            scored.append((similarity, dict(row)))
+    scored.sort(key=lambda pair: -pair[0])
+    return [row for _score, row in scored[:_LLM_CHANGE_SHORTLIST_LIMIT]]
+
+
+def _llm_verify_changes(
+    fact: dict[str, object], candidates: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """Have the LLM classify each shortlisted pair, returning applied-ready change records.
+
+    One structured-JSON call judges the plausible pairs with full context, handling the
+    entity-distinction, value-equivalence, and acknowledged-change-vs-conflict edge cases
+    that string rules miss. Verdicts are validated against the ids we supplied and gated on
+    confidence before they can create an edge; the call degrades to no changes on error.
+    """
+    new_id = str(fact["id"])
+    valid_ids = {new_id} | {str(candidate["id"]) for candidate in candidates}
+    observation_by_fact = {new_id: _optional_str(fact.get("source_observation_id"))}
+    for candidate in candidates:
+        observation_by_fact[str(candidate["id"])] = _optional_str(
+            candidate.get("source_observation_id")
+        )
+    prompt = render_prompt(
+        "contradiction_supersession_detection",
+        {
+            "existing_records": _format_fact_records(candidates),
+            "new_evidence": _format_fact_records([fact]),
+        },
+    )
+    try:
+        response = call_qwen_json(
+            [{"role": "user", "content": prompt}],
+            schema_name="contradiction_supersession_detection",
+        )
+    except LLMClientError:
+        return []
+    payload = response.get("json", {})
+    raw_relations = payload.get("relations", []) if isinstance(payload, dict) else []
+    changes: list[dict[str, object]] = []
+    for relation in raw_relations if isinstance(raw_relations, list) else []:
+        if not isinstance(relation, dict):
+            continue
+        relation_type = str(relation.get("relation", "")).upper()
+        source_id = _optional_str(relation.get("source_id"))
+        target_id = _optional_str(relation.get("target_id"))
+        if relation_type not in ("SUPERSEDED_BY", "CONTRADICTS"):
+            continue
+        if source_id not in valid_ids or target_id not in valid_ids or source_id == target_id:
+            continue
+        if _confidence_value(relation.get("confidence")) < _LLM_CHANGE_CONFIDENCE_GATE:
+            continue
+        evidence = [
+            observation
+            for observation in (
+                observation_by_fact.get(source_id),
+                observation_by_fact.get(target_id),
+            )
+            if observation
+        ]
+        if not evidence:
+            continue
+        changes.append(
+            {
+                "relation": relation_type,
+                "source_id": source_id,
+                "target_id": target_id,
+                "evidence": evidence,
+            }
+        )
+    log_event(
+        "llm_change_verification",
+        "LLM contradiction/supersession verification",
+        step="contradiction_supersession",
+        fact_id=new_id,
+        candidates=len(candidates),
+        applied=len(changes),
+    )
+    return changes
+
+
+def _fact_text(fact: dict[str, object]) -> str:
+    return " ".join(
+        part
+        for part in (
+            _optional_str(fact.get("subject")),
+            _optional_str(fact.get("predicate")),
+            _optional_str(fact.get("object")),
+        )
+        if part
+    )
+
+
+def _format_fact_records(facts: list[dict[str, object]]) -> str:
+    return "\n".join(f"- id={fact['id']}: {_fact_text(fact)}" for fact in facts)
+
+
+def _confidence_value(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
+
+
 def _step_changes(
     context: dict[str, list[str]],
     observation_id: str,
@@ -701,24 +886,18 @@ def _step_changes(
             candidates_found=len(priors),
             reason="no_candidates" if not priors else "candidates_found",
         )
-        for change in detect_memory_change(fact_id, priors):
-            relation = str(change["relation"])
-            old_id = str(change["source_id"])
-            new_id = str(change["target_id"])
-            evidence = _json_string_list(change.get("evidence")) or [fact_id]
-            if _relation_edge_exists_by_fact(old_id, new_id, relation):
-                continue
-            if relation == "SUPERSEDED_BY":
-                if transition_edge_ids:
-                    # An explicit "from X to Y" transition in this observation was already
-                    # recorded authoritatively by PR2 direct-flagging. Suppress the
-                    # general path's redundant supersession over the LLM's own facts so a
-                    # single transition yields a single edge.
-                    general_superseded += 1
-                    continue
-                general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
-            else:
-                general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+        general_superseded += _apply_changes(
+            detect_memory_change(fact_id, priors), transition_edge_ids, general_edge_ids
+        )
+        # Hybrid hard-case path: the deterministic scan above handles clean
+        # same-canonical-subject pairs cheaply; embedding-shortlisted cross-subject
+        # candidates are verified by the LLM, which judges entity identity, value
+        # equivalence, and change-vs-conflict that string rules miss.
+        candidates = _shortlist_candidate_facts(fact)
+        if candidates:
+            general_superseded += _apply_changes(
+                _llm_verify_changes(fact, candidates), transition_edge_ids, general_edge_ids
+            )
     if transition_edge_ids and general_superseded:
         # Measures how often the general path WOULD have duplicated the explicit
         # transition edge (now suppressed above). See docs/canonicalization-followups.md.

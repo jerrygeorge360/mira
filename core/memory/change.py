@@ -15,6 +15,10 @@ from core.memory.graph import create_graph_edge, create_graph_node
 MemoryChange = dict[str, object]
 AtomicFactRecord = dict[str, object]
 
+# An unresolved contradiction lowers confidence in both conflicting claims without
+# retiring either; retrieval and the resolver use the reduced confidence to weigh them.
+CONTRADICTION_CONFIDENCE_FACTOR = 0.7
+
 TRANSITION_MARKERS = frozenset(
     {
         "actually",
@@ -38,7 +42,11 @@ def detect_memory_change(
     new_fact_id: str,
     candidate_prior_fact_ids: list[str],
 ) -> list[MemoryChange]:
-    """Classify prior facts as superseded or contradicted by a new fact."""
+    """Classify prior facts as superseded or contradicted by a new fact.
+
+    This is the deterministic fast path for same-canonical-subject candidates; the
+    cross-subject hard cases are handled by the LLM verifier in the slow path.
+    """
     new_fact = _fetch_atomic_fact(new_fact_id)
     changes: list[MemoryChange] = []
     for prior_fact_id in candidate_prior_fact_ids:
@@ -73,10 +81,91 @@ def apply_supersession(old_fact_id: str, new_fact_id: str, evidence: list[str]) 
 
 
 def apply_contradiction(fact_a_id: str, fact_b_id: str, evidence: list[str]) -> str:
-    """Record unresolved incompatible claims as a CONTRADICTS graph edge."""
+    """Record unresolved incompatible claims as a CONTRADICTS graph edge.
+
+    Both claims stay active -- no belief is retired -- but the unresolved conflict
+    lowers confidence in each, so retrieval can prefer better-supported memory and the
+    query-time resolver can weigh them (paper Design Requirement 5).
+    """
     fact_a = _fetch_atomic_fact(fact_a_id)
     fact_b = _fetch_atomic_fact(fact_b_id)
-    return _create_fact_relation_edge(fact_a, fact_b, "CONTRADICTS", evidence)
+    edge_id = _create_fact_relation_edge(fact_a, fact_b, "CONTRADICTS", evidence)
+    _reduce_fact_confidence(fact_a_id, CONTRADICTION_CONFIDENCE_FACTOR)
+    _reduce_fact_confidence(fact_b_id, CONTRADICTION_CONFIDENCE_FACTOR)
+    return edge_id
+
+
+def resolve_retrieved_contradictions(fact_ids: list[str]) -> list[dict[str, object]]:
+    """Emit unresolved-conflict notes for retrieved facts under an active CONTRADICTS edge.
+
+    The prompt builder injects these so the model surfaces the conflict -- and, for a
+    Quick answer, can prefer the most recent value while flagging it -- instead of
+    asserting one contested value as settled. Relational Mode traverses the edge
+    directly and already gets the fuller picture; this makes the conflict visible in
+    the other modes too.
+    """
+    notes: list[dict[str, object]] = []
+    seen: set[frozenset[str]] = set()
+    for fact_id in fact_ids:
+        for other_id in _contradicting_fact_ids(fact_id):
+            pair = frozenset({fact_id, other_id})
+            if pair in seen:
+                continue
+            seen.add(pair)
+            note = _contradiction_note(fact_id, other_id)
+            if note is not None:
+                notes.append(note)
+    return notes
+
+
+def _contradicting_fact_ids(fact_id: str) -> list[str]:
+    with repository_connection() as connection:
+        node = connection.execute(
+            "SELECT id FROM graph_nodes "
+            "WHERE node_type = 'atomic_fact' AND source_table = 'atomic_facts' AND source_id = ?",
+            (fact_id,),
+        ).fetchone()
+        if node is None:
+            return []
+        node_id = str(node["id"])
+        edges = connection.execute(
+            "SELECT source_node_id, target_node_id FROM graph_edges "
+            "WHERE edge_type = 'CONTRADICTS' AND (source_node_id = ? OR target_node_id = ?)",
+            (node_id, node_id),
+        ).fetchall()
+        other_node_ids = [
+            str(edge["target_node_id"])
+            if str(edge["source_node_id"]) == node_id
+            else str(edge["source_node_id"])
+            for edge in edges
+        ]
+        if not other_node_ids:
+            return []
+        placeholders = ", ".join("?" for _ in other_node_ids)
+        rows = connection.execute(
+            "SELECT source_id FROM graph_nodes "  # noqa: S608
+            f"WHERE id IN ({placeholders}) AND node_type = 'atomic_fact'",
+            tuple(other_node_ids),
+        ).fetchall()
+    return [str(row["source_id"]) for row in rows if row["source_id"]]
+
+
+def _contradiction_note(fact_a_id: str, fact_b_id: str) -> dict[str, object] | None:
+    try:
+        fact_a = _fetch_atomic_fact(fact_a_id)
+        fact_b = _fetch_atomic_fact(fact_b_id)
+    except ValueError:
+        return None
+    older, newer = sorted((fact_a, fact_b), key=lambda fact: str(fact.get("created_at", "")))
+    content = (
+        "Unresolved conflict in memory: "
+        f"'{older['subject']} {older['predicate']} {older['object']}' (earlier) "
+        f"vs '{newer['subject']} {newer['predicate']} {newer['object']}' (later). "
+        "Surface the conflict; if forced to choose, prefer the later value but say it is "
+        "unresolved."
+    )
+    note_id = f"contradiction:{fact_a_id}:{fact_b_id}"
+    return {"source": "contradiction", "id": note_id, "source_id": note_id, "content": content}
 
 
 def _create_fact_relation_edge(
@@ -143,6 +232,15 @@ def _fetch_observation_content(observation_id: str) -> str:
     if row is None:
         raise ValueError(f"Observation not found: {observation_id}")
     return str(row["content"])
+
+
+def _reduce_fact_confidence(fact_id: str, factor: float) -> None:
+    """Scale a fact's confidence down (no status change) after a contradiction."""
+    with repository_connection() as connection:
+        connection.execute(
+            "UPDATE atomic_facts SET confidence = confidence * ? WHERE id = ?",
+            (factor, fact_id),
+        )
 
 
 def _close_old_fact(fact_id: str) -> None:

@@ -61,11 +61,11 @@ Checkboxes track progress. `[reconcile]` = bug / decide / verify.
 
 Design note (observations): retrieved as **fallback/evidence**, not a primary answer source — needed for the latency gap, extraction misses, provenance, and evidence chains. Structured-first weighting + recall gating implement this.
 
-### Phase C — contradiction (Problem 2)
+### Phase C — contradiction (Problem 2) (DONE)
 
-- [ ] **C1. Entity-graph pairing** so contradictory deadlines pair (same entity node + attribute). `[decide]` (algorithm choice; A2 entity-graph vs A1 subject-similarity vs A3 structured extraction). Design Req 3/4.
-- [ ] **C2. CONTRADICTS outcome** — edge + lower confidence, keep both active. `[bug/decide]`. Paper p21.
-- [ ] **C3. Query-time contradiction resolver** (recency/scope/confidence). `[decide]`. Paper p21.
+- [x] **C1. Contradiction pairing — hybrid: deterministic fast path + LLM verifier.** Two earlier heuristics were tried and dropped: **entity-graph** (entity extraction too unreliable — extracts the date, not "project") and **subject-containment** (brittle token overlap). Final design (per user): the deterministic canonical scan handles **exact** same-subject+predicate pairs cheaply; everything else is **embedding-shortlisted** (top-k similar recent facts) and **verified by one LLM call** (`contradiction_supersession_detection` schema — already existed, unused) that judges entity identity, value equivalence, and change-vs-conflict semantically. Verdicts are id-validated + confidence-gated (≥0.5); the call degrades to no-op without a provider (tests stay offline). Verified live: **3/3 fire** on same-entity conflicting deadlines (subject *and* predicate fragmentation), **0/3 false positives** across different entities. Design Req 3/4.
+- [x] **C2. CONTRADICTS outcome** — `apply_contradiction` lowers both facts' confidence (×0.7) and keeps both active. Verified live (conf 0.7, both active). Paper p21.
+- [x] **C3. Mode-dependent resolver** — Relational already traverses CONTRADICTS; added `resolve_retrieved_contradictions`, wired into the agent so retrieved contradicted facts inject an unresolved-conflict note. Verified: the answer surfaces both values, flags it unresolved, prefers recency. Paper p21.
 
 ### Phase D — evaluation alignment (after A-C work)
 
