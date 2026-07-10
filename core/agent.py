@@ -38,6 +38,7 @@ from core.retrieval.auto import (
     route_retrieval,
 )
 from core.retrieval.router import route_retrieval as retrieve_by_mode
+from core.retrieval.sufficiency import resolve_with_one_retry
 from core.session.hydration import hydrate_session_from_memory
 from core.session.micro_path import run_session_micro_path
 from core.session.working_set import (
@@ -75,7 +76,7 @@ def handle_user_message(
     session_id: str,
     user_message: str,
     *,
-    routing_strategy: RoutingStrategy = "fast",
+    routing_strategy: RoutingStrategy = "hybrid",
 ) -> Response:
     """Run one full MIRA turn and return a structured response object."""
     if not session_id:
@@ -98,8 +99,8 @@ def handle_user_message(
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
 
     # Bring durable memory back into a new or continuing session.
-    if routing_strategy not in {"fast", "accurate"}:
-        raise ValueError("routing_strategy must be one of: fast, accurate")
+    if routing_strategy not in {"fast", "hybrid", "accurate"}:
+        raise ValueError("routing_strategy must be one of: fast, hybrid, accurate")
     decision = route_retrieval(user_message, session_id, strategy=routing_strategy)
 
     answer_mode = _answer_mode_from_decision(user_message, decision)
@@ -116,12 +117,23 @@ def handle_user_message(
     else:
         retrieval_mode = str(decision["mode"])
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
-        retrieved = retrieve_by_mode(
-            user_message,
-            mode=retrieval_mode,
-            limit=RETRIEVAL_LIMIT,
-            session_id=session_id,
-        )
+
+        def _retrieve(candidate_query: str) -> list[dict[str, object]]:
+            return retrieve_by_mode(
+                candidate_query,
+                mode=retrieval_mode,
+                limit=RETRIEVAL_LIMIT,
+                session_id=session_id,
+            )
+
+        if decision.get("needs_sufficiency_check"):
+            # Ambiguous query: retrieve, check sufficiency, and rewrite+retry once
+            # (Auto rule 4) rather than answering on possibly-thin context.
+            resolution = resolve_with_one_retry(user_message, _retrieve)
+            resolved_context = resolution.get("context")
+            retrieved = resolved_context if isinstance(resolved_context, list) else []
+        else:
+            retrieved = _retrieve(user_message)
 
     tool_calls = _structured_tool_calls(session_id, user_message)
     if tool_calls:
@@ -207,7 +219,9 @@ class Agent:
             raise ValueError("session_id must not be empty")
         self.session_id = session_id
 
-    def handle_turn(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> str:
+    def handle_turn(
+        self, user_message: str, *, routing_strategy: RoutingStrategy = "hybrid"
+    ) -> str:
         """Accept one user turn and return the model response text."""
         return str(
             handle_user_message(self.session_id, user_message, routing_strategy=routing_strategy)[
@@ -215,7 +229,9 @@ class Agent:
             ]
         )
 
-    def respond(self, user_message: str, *, routing_strategy: RoutingStrategy = "fast") -> Response:
+    def respond(
+        self, user_message: str, *, routing_strategy: RoutingStrategy = "hybrid"
+    ) -> Response:
         """Accept one user turn and return the full structured response."""
         return handle_user_message(self.session_id, user_message, routing_strategy=routing_strategy)
 

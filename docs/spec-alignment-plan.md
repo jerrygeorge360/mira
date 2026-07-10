@@ -53,11 +53,13 @@ Checkboxes track progress. `[reconcile]` = bug / decide / verify.
 - [x] **A3. Agent attribution** (full, per decision) — assistant turns contribute only facts about themselves (`subject=assistant`, re-attributed); user-echoes and third-party/world assertions dropped. Verified live: 0 user/world facts leaked from assistant turns. Retrieval de-prioritization of raw assistant observations deferred to **B1** (ranking, not exclusion — keeps provenance/continuity). Paper p12.
 - [x] **A4. Status-aware retrieval** — narrower than expected: atomic facts were *already* `status='active'`-filtered and foresight `active/pending`-filtered; the real gap was **stale reflections via vector search**, now excluded (`_semantic_record_is_active`). Contradicted-fact treatment deferred to Phase C (none exist until CONTRADICTS fires). Paper p9, p21.
 
-### Phase B — spec-conformant retrieval
+### Phase B — spec-conformant retrieval (DONE)
 
-- [ ] **B1. Quick ranking** → RRF + decay-aware reranking + recall gating, replacing the flat weighted sum. `[decide]` (flat sum may be an intentional simplification; if kept, update paper p23). Problem 4c.
-- [ ] **B2. Routing** → preference/change/comparison → Relational first. `[decide]` (Demo #2 answers correctly via Quick after the A3/A4 fixes; Relational is the spec path). Paper p24.
-- [ ] **B3. Sufficiency check** + one rewrite/escalate. `[verify]`. Paper p24.
+- [x] **B2. Hybrid router** (per decision) — deterministic route first; escalate to the existing LLM classifier (`_llm_route_retrieval`) only when the route is low-confidence (<0.72) or ambiguous, and only when a provider key is configured (so unit tests / offline stay deterministic). Agent defaults to `strategy="hybrid"`. Verified: hybrid unit tests + agent suite green. Paper p24.
+- [x] **B1. Quick ranking = RRF + structured-first** (per decision) — reciprocal rank fusion over the semantic + keyword retrievers, a source-tier weight so validated derived memory (facts/foresight/reflections) outranks the raw observation log (observations = fallback), decay-aware rerank, and a relative recall gate. Replaces the flat weighted sum. **Divergence from paper p23** (RRF but no source priority) — reconcile in the paper. Verified live: for "what do I prefer?" the Rust fact/foresight rank top-2, stale Python observations demoted to fallback.
+- [x] **B3. Sufficiency wiring** — the check existed but was never executed (agent only flagged it). Ambiguous routes now run `resolve_with_one_retry` (retrieve → sufficiency check → one rewrite+retry) instead of answering on thin context. Verified: resolver runs when flagged, skipped when confident. Paper p24.
+
+Design note (observations): retrieved as **fallback/evidence**, not a primary answer source — needed for the latency gap, extraction misses, provenance, and evidence chains. Structured-first weighting + recall gating implement this.
 
 ### Phase C — contradiction (Problem 2)
 

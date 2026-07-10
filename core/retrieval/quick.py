@@ -17,6 +17,23 @@ Evidence = dict[str, object]
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 ACTIVE_STATUS_SCORE = {"active": 1.0, "pending": 0.8, "resolved": 0.4}
+
+# Reciprocal rank fusion constant (standard ~60): dampens the weight of top ranks so
+# fusion is stable and scale-independent across the semantic and keyword retrievers.
+RRF_K = 60
+# Structured-first: validated derived memory is the current answer surface; the raw
+# observation log is fallback/evidence, so it is weighted down rather than dropped.
+SOURCE_WEIGHT = {
+    "atomic_facts": 1.0,
+    "foresight_records": 1.0,
+    "reflections": 0.9,
+    "recent_observations": 0.6,
+    "observations": 0.45,
+}
+DEFAULT_SOURCE_WEIGHT = 0.5
+# Recall gate: drop tail candidates far below the best match so weak noise is not
+# injected. Relative, so it adapts to how strong the top hit is.
+RECALL_GATE_FRACTION = 0.1
 FORESIGHT_QUERY_MARKERS = frozenset(
     {
         "deadline",
@@ -46,7 +63,7 @@ def retrieve_quick(query: str, session_id: str | None, limit: int) -> list[Evide
         *_recent_observation_candidates(query, session_id, limit),
     ]
     deduplicated = _merge_duplicates(candidates)
-    ranked = sorted(deduplicated, key=_ranking_key)
+    ranked = _rank_candidates(deduplicated)
     return ranked[:limit]
 
 
@@ -254,14 +271,52 @@ def _combined_score(evidence: Evidence) -> float:
     )
 
 
-def _ranking_key(evidence: Evidence) -> tuple[float, float, float, float, str]:
-    return (
-        -_float(evidence["score"]),
-        -_float(evidence["semantic_score"]),
-        -_float(evidence["keyword_score"]),
-        -_float(evidence["confidence"]),
-        str(evidence["source_id"]),
-    )
+def _rank_candidates(candidates: list[Evidence]) -> list[Evidence]:
+    """Rank Quick candidates: RRF fusion, structured-first weighting, decay, recall gate.
+
+    Reciprocal rank fusion combines the semantic and keyword rankings by position
+    (scale-independent), a source weight biases validated derived memory above the raw
+    observation log, recency applies a mild decay, and a relative recall gate drops weak
+    tail matches so noise is not injected (paper, Quick Mode).
+    """
+    if not candidates:
+        return []
+    fusion = _reciprocal_rank_fusion(candidates)
+    for candidate in candidates:
+        base = fusion.get(str(candidate["source_id"]), 0.0)
+        source_weight = SOURCE_WEIGHT.get(str(candidate["source"]), DEFAULT_SOURCE_WEIGHT)
+        decay = 0.5 + 0.5 * _float(candidate.get("recency_score"))
+        status = ACTIVE_STATUS_SCORE.get(str(candidate.get("status", "active")), 0.6)
+        candidate["score"] = base * source_weight * decay * status
+    ranked = sorted(candidates, key=lambda item: (-_float(item["score"]), str(item["source_id"])))
+    return _recall_gate(ranked)
+
+
+def _reciprocal_rank_fusion(candidates: list[Evidence]) -> dict[str, float]:
+    """Fuse the semantic and keyword rankings into one score per candidate via RRF."""
+    scores: dict[str, float] = {}
+    for signal in ("semantic_score", "keyword_score"):
+        scored = [
+            (_float(item.get(signal)), item)
+            for item in candidates
+            if _float(item.get(signal)) > 0.0
+        ]
+        scored.sort(key=lambda pair: -pair[0])
+        for rank, (_signal_score, candidate) in enumerate(scored):
+            source_id = str(candidate["source_id"])
+            scores[source_id] = scores.get(source_id, 0.0) + 1.0 / (RRF_K + rank)
+    return scores
+
+
+def _recall_gate(ranked: list[Evidence]) -> list[Evidence]:
+    """Drop tail candidates scoring far below the best match; keep everything if uniform."""
+    if not ranked:
+        return ranked
+    top = _float(ranked[0]["score"])
+    if top <= 0.0:
+        return ranked
+    floor = top * RECALL_GATE_FRACTION
+    return [candidate for candidate in ranked if _float(candidate["score"]) >= floor]
 
 
 def _fetch_record(table: str, record_id: str) -> dict[str, object] | None:

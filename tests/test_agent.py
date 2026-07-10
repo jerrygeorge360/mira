@@ -220,3 +220,47 @@ def test_empty_message_is_rejected(database_path: Path) -> None:
     session_id = create_session("jerry")
     with pytest.raises(ValueError, match="user_message"):
         handle_user_message(session_id, "   ")
+
+
+def _routing_decision(*, needs_sufficiency_check: bool, confidence: float) -> dict[str, object]:
+    return {
+        "mode": "quick",
+        "route": "quick",
+        "intent": "personal_memory",
+        "used_memory": True,
+        "reason": "test",
+        "confidence": confidence,
+        "needs_sufficiency_check": needs_sufficiency_check,
+    }
+
+
+def test_sufficiency_retry_runs_only_when_flagged(
+    database_path: Path, fake_qwen: _CapturingQwen, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sufficiency resolver runs for an ambiguous route and is skipped for a confident one."""
+    calls = {"n": 0}
+    real_resolver = agent.resolve_with_one_retry
+
+    def _spy(query: str, retrieve: object) -> dict[str, object]:
+        calls["n"] += 1
+        return real_resolver(query, retrieve)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(agent, "resolve_with_one_retry", _spy)
+    session_id = create_session("jerry")
+
+    monkeypatch.setattr(
+        agent,
+        "route_retrieval",
+        lambda *_a, **_k: _routing_decision(needs_sufficiency_check=True, confidence=0.4),
+    )
+    handle_user_message(session_id, "anything at all")
+    assert calls["n"] == 1
+
+    calls["n"] = 0
+    monkeypatch.setattr(
+        agent,
+        "route_retrieval",
+        lambda *_a, **_k: _routing_decision(needs_sufficiency_check=False, confidence=0.8),
+    )
+    handle_user_message(session_id, "anything at all")
+    assert calls["n"] == 0

@@ -122,3 +122,48 @@ def test_accurate_strategy_falls_back_to_fast_router(monkeypatch: pytest.MonkeyP
 def test_invalid_strategy_is_rejected() -> None:
     with pytest.raises(ValueError, match="strategy"):
         route_retrieval("What is my deadline?", None, strategy="slow")
+
+
+def test_hybrid_stays_deterministic_without_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no provider configured, hybrid never calls the LLM router."""
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: False)
+
+    def _no_call(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("LLM router must not be called without a configured provider")
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _no_call)
+
+    decision = route_retrieval("What do I prefer?", None, strategy="hybrid")
+
+    assert decision["mode"] == "quick"  # deterministic memory-grounded route
+
+
+def test_hybrid_escalates_low_confidence_to_llm(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A low-confidence deterministic route defers to the LLM classifier under hybrid."""
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
+
+    def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        return {"json": {"mode": "relational", "reason": "preference comparison"}}
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
+
+    decision = route_retrieval("What do I prefer?", None, strategy="hybrid")
+
+    assert decision["mode"] == "relational"
+    assert decision["reason"] == "preference comparison"
+
+
+def test_hybrid_keeps_confident_deterministic_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A confident deterministic route is used as-is; the LLM router is not consulted."""
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
+
+    def _no_call(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("confident routes must not consult the LLM router")
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _no_call)
+
+    decision = route_retrieval(
+        "I switched from MongoDB to PostgreSQL — what changed?", None, strategy="hybrid"
+    )
+
+    assert decision["mode"] == "relational"  # deterministic route, confidence 0.86
