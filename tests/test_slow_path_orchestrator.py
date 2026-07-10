@@ -249,3 +249,21 @@ def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
         == 1
     )
     assert _processed_at(observation_id) is not None
+
+
+def test_agent_self_facts_keeps_only_assistant_attributed() -> None:
+    """A non-user turn contributes only agent self-facts; echoes and world facts are dropped."""
+    facts = [
+        {"subject": "You", "predicate": "prefers", "object": "Rust"},  # echo of the user
+        {"subject": "I", "predicate": "will use", "object": "PostgreSQL"},  # agent commitment
+        {"subject": "the assistant", "predicate": "keeps", "object": "answers concise"},
+        {"subject": "PostgreSQL", "predicate": "is", "object": "a database"},  # third-party
+    ]
+
+    kept = slow_path._agent_self_facts(facts)
+
+    # Self-reference ("I", "the assistant") is re-attributed to the assistant.
+    assert [fact["subject"] for fact in kept] == ["assistant", "assistant"]
+    assert {str(fact["object"]) for fact in kept} == {"PostgreSQL", "answers concise"}
+    # The user echo and the third-party/world assertion are dropped.
+    assert all(str(fact["object"]) not in {"Rust", "a database"} for fact in kept)

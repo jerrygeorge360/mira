@@ -7,9 +7,10 @@ Architecture area: evaluation.
 Wraps ``evaluation.ablation.run_ablation_study`` with a command-line interface so
 the study runs reproducibly without opening Python. It configures an isolated
 SQLite database, installs a deterministic offline LLM stub by default (live model
-only with ``--live`` and a key), runs the study, prints the Markdown comparison
-table, and writes the full JSON results plus a Markdown summary. It does not
-duplicate the ablation engine -- it only makes it runnable.
+only with ``--live`` and a key), optionally drains the slow-path queue after each
+interaction for durable-memory ablations, prints the Markdown comparison table,
+and writes the full JSON results plus a Markdown summary. It does not duplicate
+the ablation engine -- it only makes it runnable.
 """
 
 from __future__ import annotations
@@ -93,13 +94,21 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     progress = None if args.quiet else _print_progress
     try:
         summary = run_ablation_study(
-            str(cases_path), configs=configs, progress=progress, limit=args.limit
+            str(cases_path),
+            configs=configs,
+            progress=progress,
+            limit=args.limit,
+            run_slow_path=args.run_slow_path,
+            slow_path_batch_size=args.slow_path_batch_size,
+            delay_s=args.delay_s,
+            isolate_cases=not args.shared_db,
         )
     finally:
         agent.call_qwen_json = original_qwen  # type: ignore[attr-defined]
 
     summary["llm_mode"] = "live" if args.live else "stub"
     summary["database_path"] = database_path
+    summary["shared_db"] = bool(args.shared_db)
     _write_outputs(summary, args)
     return summary
 
@@ -197,6 +206,34 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Run only the first N cases per config, for a faster run.",
+    )
+    parser.add_argument(
+        "--run-slow-path",
+        action="store_true",
+        help=(
+            "Drain the slow-path queue after each interaction so durable-memory "
+            "components are fairly exercised."
+        ),
+    )
+    parser.add_argument(
+        "--slow-path-batch-size",
+        default=20,
+        type=int,
+        help="Maximum queued observations to claim per inline slow-path batch.",
+    )
+    parser.add_argument(
+        "--delay-s",
+        default=0.0,
+        type=float,
+        help="Seconds to sleep between live provider calls/interactions.",
+    )
+    parser.add_argument(
+        "--shared-db",
+        action="store_true",
+        help=(
+            "Run configs/cases against one shared database instead of fresh per-case "
+            "databases. Use only for intentional continuity experiments."
+        ),
     )
     parser.add_argument(
         "--quiet",

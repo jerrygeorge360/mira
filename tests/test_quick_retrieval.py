@@ -19,7 +19,7 @@ from core.db.repositories import (
     create_session,
     save_observation,
 )
-from core.retrieval.quick import retrieve_quick
+from core.retrieval.quick import _semantic_record_is_active, retrieve_quick
 
 
 @pytest.fixture
@@ -130,3 +130,14 @@ def test_invalid_limit_is_rejected() -> None:
     """Quick retrieval requires a positive result limit."""
     with pytest.raises(ValueError, match="limit"):
         retrieve_quick("anything", session_id=None, limit=0)
+
+
+def test_semantic_retrieval_drops_non_active_reflections() -> None:
+    """Stale/invalidated reflections are excluded; observations remain (immutable evidence)."""
+    assert _semantic_record_is_active("reflections", {"status": "active"}) is True
+    assert _semantic_record_is_active("reflections", {"status": "stale"}) is False
+    assert _semantic_record_is_active("reflections", {"status": "invalidated"}) is False
+    assert _semantic_record_is_active("reflections", {"status": "superseded"}) is False
+    # Observations carry no lifecycle status and stay retrievable as evidence.
+    assert _semantic_record_is_active("observations", {"status": "anything"}) is True
+    assert _semantic_record_is_active("observations", {}) is True

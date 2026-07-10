@@ -124,8 +124,6 @@ def test_reflection_is_gated_and_evidence_backed(
 ) -> None:
     """Reflection waits for enough evidence, then stores evidence-backed memory."""
     session_id = create_session("jerry")
-    one = save_observation(session_id, "user", "Official benchmark support is important.")
-    two = save_observation(session_id, "user", "We need LLM-as-Judge and budget control.")
     monkeypatch.setattr(
         slow_path,
         "synthesize_reflections",
@@ -140,8 +138,12 @@ def test_reflection_is_gated_and_evidence_backed(
     )
     config = SlowPathSemanticConfig(reflection_min_observations=2)
 
-    early = maybe_run_reflection_pass([one], config)
-    created = maybe_run_reflection_pass([one, two], config)
+    # Reflection accumulates recent observations from the store, not a single batch:
+    # one observation is below the gate; a second one crosses it.
+    one = save_observation(session_id, "user", "Official benchmark support is important.")
+    early = maybe_run_reflection_pass(config)
+    two = save_observation(session_id, "user", "We need LLM-as-Judge and budget control.")
+    created = maybe_run_reflection_pass(config)
 
     assert early[0].created_record_ids == []
     assert len(created[0].created_record_ids) == 1
@@ -211,9 +213,13 @@ def test_community_refresh_is_periodic_and_evidence_backed(
     )
     config = SlowPathSemanticConfig(community_refresh_every_observations=2)
 
-    skipped = maybe_run_community_refresh(1, config)
-    created = maybe_run_community_refresh(2, config)
-    duplicate = maybe_run_community_refresh(2, config)
+    # The trigger is a cumulative observation count derived from the store, so drive it
+    # through the counter helper rather than a per-call batch size.
+    monkeypatch.setattr(slow_path, "_observations_since_last_community_refresh", lambda: 1)
+    skipped = maybe_run_community_refresh(config)
+    monkeypatch.setattr(slow_path, "_observations_since_last_community_refresh", lambda: 2)
+    created = maybe_run_community_refresh(config)
+    duplicate = maybe_run_community_refresh(config)
 
     assert skipped[0].created_record_ids == []
     assert len(created[0].created_record_ids) == 1
@@ -297,7 +303,6 @@ def test_retrieval_can_use_semantic_records(
         },
     )
     maybe_run_community_refresh(
-        1,
         SlowPathSemanticConfig(community_refresh_every_observations=1),
     )
 

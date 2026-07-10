@@ -391,6 +391,47 @@ Gemini's 5 requests/minute cap) cannot complete a full slow-path run without thr
 plan. Known extraction-quality follow-ups are tracked in
 [docs/canonicalization-followups.md](docs/canonicalization-followups.md).
 
+Run an offline ablation study:
+
+```bash
+make ablation
+```
+
+Run a live ablation study against the active provider:
+
+```bash
+set -a; source .env; set +a
+LLM_PROFILE=deepseek OUT=evaluation/ablation/results make ablation-live
+```
+
+For architecture-level ablations, enable inline slow-path draining so every
+configuration gets the same durable-memory ingestion opportunity before scoring:
+
+```bash
+LLM_PROFILE=deepseek \
+OUT=evaluation/ablation/results \
+RUN_SLOW_PATH=1 \
+SLOW_PATH_BATCH_SIZE=20 \
+COMPONENTS="foresight reflection contradiction_supersession vector_only" \
+LIMIT=3 \
+make ablation-live
+```
+
+Direct Python equivalent:
+
+```bash
+python -m scripts.run_ablation \
+  --live \
+  --run-slow-path \
+  --slow-path-batch-size 20 \
+  --components foresight reflection contradiction_supersession vector_only \
+  --limit 3 \
+  --out evaluation/ablation/results
+```
+
+By default ablation uses a fresh SQLite database and cleared vector store per
+config/case pair. Pass `--shared-db` only for intentional continuity experiments.
+
 Prepare LongMemEval-style data:
 
 ```bash
@@ -491,7 +532,9 @@ docker compose run --rm app make check
 - `security` — run Bandit.
 - `check` — run lint, type, security, and tests.
 - `precommit` — run all pre-commit hooks.
-- `ablation` — run the ablation study and write results.
+- `ablation` — run the offline ablation study and write results.
+- `ablation-live` — run live provider ablations; set `RUN_SLOW_PATH=1` for fair
+  slow-path-aware architecture ablations.
 - `benchmark-cost` — estimate benchmark cost without paid calls.
 - `benchmark` — run the live LongMemEval-style benchmark.
 - `benchmark-subset` — run the live benchmark on a limited subset.

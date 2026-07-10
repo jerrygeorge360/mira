@@ -702,8 +702,25 @@ def canonical_form_for_id(table: str, canonical_id: str | None) -> str | None:
     return None if row is None else str(row["canonical_form"])
 
 
+_CANONICAL_LEADING_DETERMINERS = frozenset(
+    {"the", "a", "an", "my", "our", "your", "their", "his", "her", "its"}
+)
+
+
 def _normalize_canonical(value: str) -> str:
-    return " ".join(value.casefold().split())
+    """Normalize a raw subject/predicate for canonical matching.
+
+    Case-folds, treats snake_case as spaces so ``prefers_language`` and
+    ``prefers language`` share a bucket, and strips a single leading determiner so
+    ``the speaker`` collapses onto the seeded ``speaker`` alias. Without this,
+    trivial wording differences fork one entity into several canonical buckets and
+    contradiction/supersession pairing (which requires a shared canonical subject)
+    silently finds no candidates.
+    """
+    tokens = value.casefold().replace("_", " ").split()
+    if len(tokens) > 1 and tokens[0] in _CANONICAL_LEADING_DETERMINERS:
+        tokens = tokens[1:]
+    return " ".join(tokens)
 
 
 def create_entity(entity: RepositoryRecord) -> str:

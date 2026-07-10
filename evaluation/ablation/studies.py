@@ -7,9 +7,8 @@ Architecture area: evaluation.
 Ablations show which layers contribute by genuinely turning components off and
 re-running the evaluation cases. Disabling is real, not faked: each ablation
 patches the actual composition seam (so the component does not run) for the
-duration of a run, then restores it. Components that only affect the asynchronous
-slow path are marked as such rather than pretended to change agent behavior, so a
-demo/paper can show an honest prototype ablation.
+duration of a run, then restores it. When slow-path draining is enabled, each
+configuration gets the same durable-memory ingestion opportunity before scoring.
 """
 
 from __future__ import annotations
@@ -21,8 +20,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from core.db.repositories import create_session
+from core.db.chroma import reset_vector_store
+from core.db.repositories import configure_database, current_database_path
 from evaluation.local.cases import load_evaluation_cases, score_case
+from evaluation.runtime.case_runner import (
+    ProgressReporter,
+    isolate_case_state,
+    isolation_base_path,
+    run_case_interactions,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -40,9 +46,6 @@ ABLATION_COMPONENTS = (
 AGENT_EFFECTIVE = frozenset(
     {"session_working_set", "relational_mode", "deep_mode", "foresight", "reflection"}
 )
-# Components that only affect the asynchronous slow path (not the agent turn).
-SLOW_PATH_ONLY = frozenset({"contradiction_supersession"})
-
 # The vector-only baseline strips every higher layer, leaving Quick retrieval.
 VECTOR_ONLY_DISABLED = frozenset(AGENT_EFFECTIVE)
 
@@ -88,10 +91,19 @@ def _empty(*_args: object, **_kwargs: object) -> list[object]:
 
 _SIMPLE_DISABLERS: dict[str, list[tuple[str, str, Callable[..., object]]]] = {
     "session_working_set": [("core.agent", "export_prompt_ready_session_items", _empty)],
-    "foresight": [("core.session.hydration", "list_relevant_foresight", _empty)],
+    "foresight": [
+        # Foresight reaches an answer through two independent paths: proactive session
+        # hydration and reactive quick retrieval. Disabling only one leaves the other to
+        # satisfy foresight cases, so a fair ablation must seam both.
+        ("core.session.hydration", "list_relevant_foresight", _empty),
+        ("core.retrieval.quick", "_foresight_candidates", _empty),
+    ],
     "reflection": [
         ("core.retrieval.deep", "_reflection_candidates", _empty),
         ("core.session.hydration", "_reflection_candidates", _empty),
+    ],
+    "contradiction_supersession": [
+        ("core.memory.slow_path", "_step_changes", lambda *_args, **_kwargs: {"graph_edges": []})
     ],
 }
 
@@ -161,9 +173,6 @@ def run_ablation(component_names: list[str], cases_path: str | None = None) -> d
     return _row_to_dict(row)
 
 
-ProgressReporter = Callable[[str], None]
-
-
 def select_ablations(components: list[str] | None = None) -> list[AblationConfig]:
     """Return the full standard ablation set, or a faster subset.
 
@@ -184,30 +193,58 @@ def run_ablation_study(
     configs: list[AblationConfig] | None = None,
     progress: ProgressReporter | None = None,
     limit: int | None = None,
+    run_slow_path: bool = False,
+    slow_path_batch_size: int = 20,
+    delay_s: float = 0.0,
+    isolate_cases: bool = True,
 ) -> dict[str, object]:
     """Run baseline plus each ablation and produce a comparison table.
 
     ``progress`` receives human-readable status messages (per config and per case) so a
     long live run shows what it is doing instead of appearing to hang. ``limit`` caps the
-    number of cases each config runs, trading coverage for speed.
+    number of cases each config runs, trading coverage for speed. When
+    ``run_slow_path`` is enabled, the queue is drained after each interaction so
+    slow-path components receive the same ingestion opportunity in every config.
     """
+    if slow_path_batch_size < 1:
+        raise ValueError("slow_path_batch_size must be a positive integer")
+    if delay_s < 0:
+        raise ValueError("delay_s must not be negative")
     resolved_path = cases_path or DEFAULT_CASES_PATH
     all_configs = configs or standard_ablations()
     total = len(all_configs)
     _progress(
         progress,
-        f"study start: {total} configs, cases={resolved_path}, limit={limit or 'all'}",
+        f"study start: {total} configs, cases={resolved_path}, limit={limit or 'all'}, "
+        f"slow_path={run_slow_path}",
     )
+    original_database = current_database_path()
+    isolation_base = isolation_base_path(original_database) if isolate_cases else None
     rows: list[AblationRow] = []
-    for index, config in enumerate(all_configs, start=1):
-        rows.append(
-            _run_config(
-                config, resolved_path, index=index, total=total, progress=progress, limit=limit
+    try:
+        for index, config in enumerate(all_configs, start=1):
+            rows.append(
+                _run_config(
+                    config,
+                    resolved_path,
+                    index=index,
+                    total=total,
+                    progress=progress,
+                    limit=limit,
+                    run_slow_path=run_slow_path,
+                    slow_path_batch_size=slow_path_batch_size,
+                    delay_s=delay_s,
+                    isolation_base=isolation_base,
+                )
             )
-        )
+    finally:
+        if isolate_cases and original_database is not None:
+            configure_database(original_database)
+            reset_vector_store()
     _progress(progress, f"study complete: {total} configs")
     return {
         "cases_path": resolved_path,
+        "run_slow_path": run_slow_path,
         "rows": [_row_to_dict(row) for row in rows],
         "table": render_ablation_table(rows),
     }
@@ -241,6 +278,10 @@ def _run_config(
     total: int = 0,
     progress: ProgressReporter | None = None,
     limit: int | None = None,
+    run_slow_path: bool = False,
+    slow_path_batch_size: int = 20,
+    delay_s: float = 0.0,
+    isolation_base: Path | None = None,
 ) -> AblationRow:
     cases = load_evaluation_cases(cases_path)
     if limit is not None:
@@ -249,8 +290,23 @@ def _run_config(
     _progress(progress, f"config {index}/{total} {config.name}: start (disabled: {disabled_label})")
     results: list[dict[str, object]] = []
     with apply_ablation(config) as applied:
+        interaction_counter = {"count": 0}
         for case_index, case in enumerate(cases, start=1):
-            result = _run_case(case)
+            if isolation_base is not None:
+                isolate_case_state(
+                    isolation_base,
+                    f"{index}-{case_index}",
+                    progress,
+                    progress_prefix="ablation-case",
+                )
+            result = _run_case(
+                case,
+                progress=progress,
+                run_slow_path=run_slow_path,
+                slow_path_batch_size=slow_path_batch_size,
+                delay_s=delay_s,
+                interaction_counter=interaction_counter,
+            )
             results.append(result)
             outcome = "passed" if result["passed"] else "failed"
             case_id = str(case.get("id", "unnamed"))
@@ -277,26 +333,31 @@ def _run_config(
     )
 
 
-def _run_case(case: dict[str, object]) -> dict[str, object]:
-    from core.agent import handle_user_message
-
-    raw_interactions = case.get("interactions")
-    interactions = raw_interactions if isinstance(raw_interactions, list) else []
+def _run_case(
+    case: dict[str, object],
+    *,
+    progress: ProgressReporter | None,
+    run_slow_path: bool,
+    slow_path_batch_size: int,
+    delay_s: float,
+    interaction_counter: dict[str, int],
+) -> dict[str, object]:
     expected = case.get("expect")
     expected_dict = expected if isinstance(expected, dict) else {}
-
-    session_id = create_session("ablation")
-    actual: dict[str, object] = {}
+    case_id = str(case.get("id", "unnamed"))
+    actual: dict[str, object]
     try:
-        for interaction in interactions:
-            if not isinstance(interaction, dict):
-                continue
-            if interaction.get("reset_session"):
-                session_id = create_session("ablation")
-            message = str(interaction.get("message", "")).strip()
-            if message:
-                actual = handle_user_message(session_id, message)
-        error = None if actual else "no response"
+        actual = run_case_interactions(
+            case,
+            case_id=case_id,
+            session_user="ablation",
+            progress=progress,
+            delay_s=delay_s,
+            interaction_counter=interaction_counter,
+            run_slow_path=run_slow_path,
+            slow_path_batch_size=slow_path_batch_size,
+        )
+        error = None
     except (ValueError, KeyError) as failure:
         actual = {"answer": ""}
         error = str(failure)
@@ -312,15 +373,8 @@ def _run_case(case: dict[str, object]) -> dict[str, object]:
 
 
 def _coverage_note(disabled: frozenset[str], applied: set[str]) -> str:
-    slow_path = sorted(component for component in disabled if component in SLOW_PATH_ONLY)
-    not_applied = sorted(
-        component
-        for component in disabled
-        if component not in applied and component not in SLOW_PATH_ONLY
-    )
+    not_applied = sorted(component for component in disabled if component not in applied)
     notes = []
-    if slow_path:
-        notes.append(f"slow-path-only (not exercised by agent harness): {', '.join(slow_path)}")
     if not_applied:
         notes.append(f"no seam applied: {', '.join(not_applied)}")
     return "; ".join(notes)

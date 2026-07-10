@@ -47,6 +47,10 @@ def _args(tmp_path: Path, cases: Path, *, live: bool = False) -> list[str]:
         str(tmp_path / "results"),
         "--db",
         str(tmp_path / "ablation.sqlite3"),
+        "--components",
+        "session_working_set",
+        "--limit",
+        "1",
     ]
     argv.append("--live" if live else "--stub")
     return argv
@@ -134,3 +138,5 @@ def test_makefile_target_points_to_runner() -> None:
     assert "ablation-live:" in makefile
     assert "scripts.run_ablation" in makefile
     assert "scripts.run_ablation --live" in makefile
+    assert "RUN_SLOW_PATH" in makefile
+    assert "--run-slow-path" in makefile

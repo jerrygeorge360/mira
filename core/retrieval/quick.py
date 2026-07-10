@@ -62,6 +62,8 @@ def _semantic_candidates(query: str, limit: int) -> list[Evidence]:
         record = _fetch_record(str(pointer["sqlite_table"]), str(pointer["sqlite_id"]))
         if record is None:
             continue
+        if not _semantic_record_is_active(str(pointer["sqlite_table"]), record):
+            continue
         candidates.append(
             _evidence(
                 source=str(pointer["sqlite_table"]),
@@ -271,6 +273,18 @@ def _fetch_record(table: str, record_id: str) -> dict[str, object] | None:
             (record_id,),
         ).fetchone()
     return None if row is None else dict(row)
+
+
+def _semantic_record_is_active(table: str, record: dict[str, object]) -> bool:
+    """Keep observations (immutable evidence); drop non-active reflections.
+
+    Stale, invalidated, or superseded reflections must stop controlling current
+    reasoning (paper, Reflection Validity Update). The vector index still points at
+    them, so they are filtered here rather than being surfaced with a soft penalty.
+    """
+    if table != "reflections":
+        return True
+    return str(record.get("status", "active")) == "active"
 
 
 def _fetch_foresight_rows(session_id: str | None) -> list[dict[str, object]]:

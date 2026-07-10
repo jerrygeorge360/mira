@@ -131,13 +131,49 @@ def test_output_table_generated_from_cases(
 def test_run_ablation_reports_coverage(
     database_path: Path, tmp_path: Path, fake_qwen: None
 ) -> None:
-    """A slow-path-only ablation is honestly noted, not faked."""
+    """Contradiction/supersession has a real disable seam."""
     cases_path = _write_cases(tmp_path)
 
     result = run_ablation(["contradiction_supersession"], cases_path=str(cases_path))
 
     assert result["disabled"] == ["contradiction_supersession"]
-    assert "slow-path-only" in result["note"]
+    assert result["applied"] == ["contradiction_supersession"]
+    assert result["note"] == ""
+
+
+def test_ablation_study_can_drain_slow_path(
+    database_path: Path,
+    tmp_path: Path,
+    fake_qwen: None,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ablation can use the shared inline worker drain between interactions."""
+    import core.memory.slow_path as slow_path
+
+    cases_path = _write_cases(tmp_path)
+    calls = {"count": 0}
+    messages: list[str] = []
+
+    def _fake_batch(batch_size: int) -> list[dict[str, object]]:
+        calls["count"] += 1
+        assert batch_size == 3
+        if calls["count"] % 2 == 1:
+            return [{"observation_id": f"obs-{calls['count']}", "succeeded": True}]
+        return []
+
+    monkeypatch.setattr(slow_path, "run_slow_path_batch", _fake_batch)
+
+    study = run_ablation_study(
+        str(cases_path),
+        configs=[AblationConfig("full_system", frozenset())],
+        progress=messages.append,
+        run_slow_path=True,
+        slow_path_batch_size=3,
+    )
+
+    assert study["run_slow_path"] is True
+    assert calls["count"] >= 2
+    assert any("slow path batch processed=1 failed=0" in message for message in messages)
 
 
 def test_render_ablation_table_has_header() -> None:

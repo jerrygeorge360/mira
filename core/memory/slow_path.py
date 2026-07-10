@@ -128,7 +128,10 @@ class SlowPathSemanticConfig:
     reflection_min_importance: float = 0.6
     reflection_min_observations: int = 5
     reflection_cooldown_observations: int = 10
-    community_refresh_every_observations: int = 50
+    # Cumulative observations (across batches) before the graph community job reruns.
+    # Low default so interactive sessions and the eval actually exercise Deep Mode;
+    # raise it for large-scale deployments to trade freshness for cost.
+    community_refresh_every_observations: int = 8
     community_refresh_every_minutes: int = 30
     max_foresight_records_per_observation: int = 3
     max_reflections_per_run: int = 3
@@ -335,7 +338,36 @@ def run_slow_path_batch(
         else:
             mark_failed(queue_id, str(result.get("error_message") or "slow-path step failed"))
         results.append(result)
+    if results:
+        run_semantic_passes(config)
     return results
+
+
+def run_semantic_passes(
+    config: SlowPathSemanticConfig | None = None,
+) -> list[SlowPathStepResult]:
+    """Run the batch-level consolidation passes: reflection and community refresh.
+
+    These accumulate evidence across batches and look across observations, so they
+    belong to any batch drain (worker, eval harness, or scripts), not only the
+    long-running worker loop. Both are internally gated on cumulative store state and
+    no-op until enough evidence exists.
+    """
+    semantic_results = [
+        *maybe_run_reflection_pass(config),
+        *maybe_run_community_refresh(config),
+    ]
+    for semantic_result in semantic_results:
+        if semantic_result.created_record_ids or semantic_result.updated_record_ids:
+            log_event(
+                "semantic_step_completed",
+                "semantic slow-path step completed",
+                step_name=semantic_result.step_name,
+                created_record_ids=semantic_result.created_record_ids,
+                updated_record_ids=semantic_result.updated_record_ids,
+                succeeded=semantic_result.succeeded,
+            )
+    return semantic_results
 
 
 # --- background worker runtime (ISSUE-124) ----------------------------------
@@ -447,24 +479,8 @@ def run_worker(
                 failed=batch_failed,
                 duration_ms=duration_ms,
             )
-            processed_observation_ids = [
-                str(result["observation_id"]) for result in results if result["succeeded"]
-            ]
-            semantic_results = [
-                *maybe_run_reflection_pass(processed_observation_ids, config),
-                *maybe_run_community_refresh(processed, config),
-            ]
-            for semantic_result in semantic_results:
-                if semantic_result.created_record_ids or semantic_result.updated_record_ids:
-                    log_event(
-                        "semantic_step_completed",
-                        "semantic slow-path step completed",
-                        worker_id=worker_id,
-                        step_name=semantic_result.step_name,
-                        created_record_ids=semantic_result.created_record_ids,
-                        updated_record_ids=semantic_result.updated_record_ids,
-                        succeeded=semantic_result.succeeded,
-                    )
+            # Reflection and community refresh run inside run_slow_path_batch so every
+            # batch drain (worker, eval, scripts) exercises them, not only this worker.
             if once or _reached(max_iterations, iterations):
                 break
     except KeyboardInterrupt:
@@ -587,6 +603,32 @@ def _step_embedding_index(
     return {"observations": [observation_id]}
 
 
+_AGENT_SELF_SUBJECTS = frozenset({"i", "me", "my", "myself", "assistant", "agent", "mira", "ai"})
+
+
+def _agent_self_facts(facts: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep only facts a non-user turn asserts about itself, attributed to the assistant.
+
+    Pronoun attribution is speaker-relative: in an assistant turn "I/me/my" is the
+    assistant and "you" is the user, but the shared canonical registry assumes the user
+    is speaking. So we resolve self-reference here and keep only the agent's own
+    commitments/self-knowledge, re-attributing the subject to "assistant". Everything
+    else from an assistant turn -- echoes of the user's claims ("You prefer Rust") and
+    third-party/world assertions -- is dropped so the agent cannot mint user facts or
+    confirm its own output.
+    """
+    kept: list[dict[str, object]] = []
+    for fact in facts:
+        tokens = str(fact.get("subject", "")).casefold().replace("_", " ").split()
+        if len(tokens) > 1 and tokens[0] in {"the", "a", "an"}:
+            tokens = tokens[1:]
+        if " ".join(tokens) in _AGENT_SELF_SUBJECTS:
+            attributed = dict(fact)
+            attributed["subject"] = "assistant"
+            kept.append(attributed)
+    return kept
+
+
 def _step_atomic_facts(
     observation_id: str,
     content: str,
@@ -596,7 +638,11 @@ def _step_atomic_facts(
     if existing:
         context["fact_ids"] = existing
         return {}
-    fact_ids = store_atomic_facts(extract_atomic_facts(observation_id, content))
+    facts = extract_atomic_facts(observation_id, content)
+    if _observation_role(observation_id) != "user":
+        # Assistant/system turns contribute only what the agent says about itself.
+        facts = _agent_self_facts(facts)
+    fact_ids = store_atomic_facts(facts)
     context["fact_ids"] = fact_ids
     return {"atomic_facts": fact_ids}
 
@@ -730,14 +776,18 @@ def run_foresight_step_for_observation(
 
 
 def maybe_run_reflection_pass(
-    observation_ids: list[str],
     config: SlowPathSemanticConfig | None = None,
 ) -> list[SlowPathStepResult]:
-    """Run gated reflection synthesis when enough important evidence has accumulated."""
+    """Run gated reflection synthesis when enough important evidence has accumulated.
+
+    Evidence is drawn from recent observations in the store (accumulated across
+    batches), not from a single batch, so reflection fires once enough important
+    observations exist regardless of drain cadence.
+    """
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_reflection:
         return [_semantic_result("reflection_check")]
-    evidence_ids = _recent_unreflected_observation_ids(observation_ids, semantic_config)
+    evidence_ids = _recent_unreflected_observation_ids(semantic_config)
     importance = {
         observation_id: _importance_score(str(row["content"]))
         for observation_id, row in _observations_by_id(evidence_ids).items()
@@ -769,15 +819,42 @@ def maybe_run_reflection_pass(
     return [_semantic_result("reflection_check", created_record_ids=created)]
 
 
+def _observations_since_last_community_refresh() -> int:
+    """Count observations processed since the last community summary was written.
+
+    Community detection is a background job over the accumulated graph (paper,
+    Community Detection), so the trigger is a cumulative observation count derived
+    from the store -- observations processed after the most recent summary -- rather
+    than the size of a single slow-path batch. This survives one-at-a-time draining.
+    """
+    with repository_connection() as connection:
+        last_refresh = connection.execute(
+            "SELECT MAX(created_at) AS ts FROM community_summaries"
+        ).fetchone()["ts"]
+        if last_refresh is None:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM observations WHERE processed_at IS NOT NULL"
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM observations "
+                "WHERE processed_at IS NOT NULL AND processed_at > ?",
+                (last_refresh,),
+            ).fetchone()
+    return int(row["n"])
+
+
 def maybe_run_community_refresh(
-    processed_observations: int,
     config: SlowPathSemanticConfig | None = None,
 ) -> list[SlowPathStepResult]:
-    """Run periodic graph community detection and summary refresh when due."""
+    """Run graph community detection and summary refresh when enough has accumulated."""
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_community_summaries:
         return [_semantic_result("community_update")]
-    if processed_observations < semantic_config.community_refresh_every_observations:
+    if (
+        _observations_since_last_community_refresh()
+        < semantic_config.community_refresh_every_observations
+    ):
         return [_semantic_result("community_update")]
 
     created: list[str] = []
@@ -1336,22 +1413,30 @@ def _community_summary_exists(community_id: str) -> bool:
     return row is not None
 
 
-def _recent_unreflected_observation_ids(
-    observation_ids: list[str],
-    config: SlowPathSemanticConfig,
-) -> list[str]:
-    unique_ids = list(dict.fromkeys(observation_ids))
-    if not unique_ids:
-        return []
-    unreflected: list[str] = []
-    for observation_id in unique_ids:
-        if find_reflections_derived_from(observation_id):
-            continue
-        unreflected.append(observation_id)
-    if not unreflected:
-        return []
+def _recent_unreflected_observation_ids(config: SlowPathSemanticConfig) -> list[str]:
+    """Return recent observations not yet reflected on, accumulated across batches.
+
+    Reflection is cross-session consolidation over a flat set of recent observations
+    (paper, Reflection), so the evidence window is drawn from the observation store,
+    not from the current slow-path batch. Draining one observation at a time otherwise
+    means each batch holds a single observation and the min-observations gate is never
+    reached, so reflection never fires.
+    """
     limit = max(config.reflection_min_observations, config.reflection_cooldown_observations)
-    return unreflected[-limit:]
+    window = limit * 3
+    with repository_connection() as connection:
+        rows = connection.execute(
+            "SELECT id FROM observations ORDER BY created_at DESC, id DESC LIMIT ?",
+            (window,),
+        ).fetchall()
+    newest_first = [str(row["id"]) for row in rows]
+    unreflected_newest_first = [
+        observation_id
+        for observation_id in newest_first
+        if not find_reflections_derived_from(observation_id)
+    ]
+    # Return the most recent unreflected observations in chronological order.
+    return list(reversed(unreflected_newest_first))[-limit:]
 
 
 def _observations_by_id(observation_ids: list[str]) -> dict[str, dict[str, object]]:

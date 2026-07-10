@@ -64,6 +64,7 @@ EXPECTED_MODULES = (
     "evaluation.benchmarks.longmemeval",
     "evaluation.ablation.studies",
     "evaluation.local.cases",
+    "evaluation.runtime.case_runner",
     "scripts.inspect_graph",
     "scripts.run_local_eval",
     "scripts.search_memory",

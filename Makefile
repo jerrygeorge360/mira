@@ -88,7 +88,7 @@ ablation:
 	$(PYTHON) -m scripts.run_ablation --stub --out evaluation/results
 
 ablation-live:
-	$(PYTHON) -m scripts.run_ablation --live --out $${OUT:-evaluation/results} $${COMPONENTS:+--components $$COMPONENTS} $${LIMIT:+--limit $$LIMIT}
+	$(PYTHON) -m scripts.run_ablation --live --out $${OUT:-evaluation/results} $${COMPONENTS:+--components $$COMPONENTS} $${LIMIT:+--limit $$LIMIT} $${RUN_SLOW_PATH:+--run-slow-path} $${SLOW_PATH_BATCH_SIZE:+--slow-path-batch-size $$SLOW_PATH_BATCH_SIZE} $${DELAY_S:+--delay-s $$DELAY_S} $${SHARED_DB:+--shared-db}
 
 worker:
 	$(PYTHON) -m scripts.run_worker --batch-size $${BATCH_SIZE:-20} --poll-interval $${POLL_INTERVAL:-2}
