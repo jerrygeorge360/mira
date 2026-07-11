@@ -15,8 +15,11 @@ plus an uncommitted working tree (the resume feature).
   intent*, not a verbatim contract — each gap is a decision tagged `[bug]`/`[decide]`/`[verify]`).
 - **Phase D code is committed** (`176371e`) and offline-verified (60 targeted tests +
   full-suite pass; ruff/format/mypy clean).
-- **A resume feature for the eval and ablation harnesses is committed** — the most recent
-  commit on this branch, added alongside this handoff doc. It is offline-proven.
+- **A resume feature for the eval and ablation harnesses is committed** (`233134d`),
+  added alongside this handoff doc. It is offline-proven.
+- **Architecture decisions from A–D are recorded as ADRs** in [`docs/adr/`](adr/):
+  0011 (structured-first retrieval weighting), 0012 (hybrid contradiction/supersession
+  detection); 0009 (reflection staleness) was annotated with the cross-observation trigger.
 - **The Phase D *live* re-run (D3) has NOT been completed yet.** Two attempts were made:
   one on SiliconFlow crashed on a transient provider connection error; a DeepSeek attempt
   was started then intentionally killed. **No live results files exist yet.** This is the
@@ -131,8 +134,8 @@ Scope a smoke test with `COMPONENTS="reflection community_summaries flat_memory 
 
 ## 5. The resume feature (committed)
 
-Added this session and offline-proven; **committed** as the most recent commit on this
-branch (together with this doc). Files:
+Added this session and offline-proven; **committed** as `233134d` (together with this
+doc). Files:
 
 - [`evaluation/local/cases.py`](../evaluation/local/cases.py) — `run_evaluation_cases`
   gains `resume: bool`; checkpoints the results file after every case; `_load_prior_results`
