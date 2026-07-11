@@ -15,6 +15,28 @@
       }
     },
     {
+      "id": "abl-session-constraint",
+      "category": "session_correction_handling",
+      "interactions": [
+        { "message": "Use 2026, not 2025, for all dates." }
+      ],
+      "expect": {
+        "used_session_items_nonempty": true
+      }
+    },
+    {
+      "id": "abl-structured-first",
+      "category": "direct_fact_recall",
+      "interactions": [
+        { "message": "I deploy my application on AWS." },
+        { "message": "What platform do I deploy on?" }
+      ],
+      "expect": {
+        "answer_contains": ["AWS"],
+        "top_retrieved_source": "atomic_facts"
+      }
+    },
+    {
       "id": "abl-supersession",
       "category": "supersession_handling",
       "interactions": [
@@ -60,8 +82,10 @@
       "interactions": [
         { "message": "MIRA uses PostgreSQL for durable storage." },
         { "message": "MIRA uses Chroma for vector search." },
-        { "message": "MIRA's slow path extracts atomic facts and builds a temporal graph." },
-        { "message": "MIRA's deep mode synthesizes community summaries." },
+        { "message": "MIRA runs a slow path that extracts atomic facts." },
+        { "message": "MIRA's slow path builds a temporal knowledge graph." },
+        { "message": "MIRA retrieval has quick, deep, and relational modes." },
+        { "message": "MIRA's deep mode synthesizes community summaries over the graph." },
         { "message": "Give me a high-level overview of the MIRA architecture." }
       ],
       "expect": {

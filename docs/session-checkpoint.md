@@ -125,12 +125,21 @@ two FAILs that are **real behavior, not harness bugs**:
   `user_knowledge` the next. Decide whether user-about-self should be forced to `user_knowledge`
   (reserving `self_knowledge` for the agent's own behavior; only `self_knowledge` is hot-promoted).
 
-**Ablation: INCOMPLETE + MIXED — not usable yet** — `evaluation/results/ablation_results.json`
-has only 5 of 11 configs with inconsistent case counts (some at 2 cases, some at 13) and
-`llm_mode: None` (final write never ran). It was stitched from separate scoped/resumed runs.
-**Resume caveat exposed:** resume keys on config *name* only, so resuming with a different
-`--limit`/`--components` merges into a mixed, non-comparable table. For real numbers, run
-**one clean invocation** (no `--limit`, all 11 configs, fresh `--out`, single run).
+**Ablation: CLEAN RUN DONE (lean set)** — `evaluation/results/ablation_results.json`, 11
+configs over the lean 5-case set (`evaluation/ablation/ablation_cases.json`). **Every memory
+layer is now load-bearing.** full_system 0.80; each single ablation drops to 0.60;
+vector_only_baseline and full_transcript crater to 0.20. **Headline: reflection is finally
+load-bearing** — `abl-reflection` passes at full_system and fails under `without_reflection`
+(was 1.00/no-effect before today's firing+retrieval fixes). **Case fixes applied (need a live re-run to confirm):** (1) `abl-community` beefed up 4 → 7
+statements so community detection reliably fires; (2) added `abl-session-constraint` (asserts
+`used_session_items_nonempty`) so the `session_working_set` ablation shows an effect — the
+prior 5 cases never exercised it; (3) added `abl-structured-first` (asserts a new
+`top_retrieved_source: atomic_facts` ranking check) so the `flat_memory` ablation shows an
+effect — flat weighting lets the raw observation outrank the fact. The `top_retrieved_source`
+scorer is unit-verified; the two new cases' *discrimination* is best-effort and needs the live
+re-run to confirm (esp. flat_memory, a ranking effect the answer LLM can smooth over). NOTE: a
+stale `evaluation/ablation/results/ablation_results.json` (8 configs, 10 cases, pre-fix,
+`without_reflection`=1.00) is an old artifact — ignore/delete it.
 
 ### Rerun commands (still valid)
 

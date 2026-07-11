@@ -226,6 +226,18 @@ def score_case(expected: dict[str, object], actual: dict[str, object]) -> Score:
                     sorted(observed_sources),
                 )
             )
+    if "top_retrieved_source" in expected:
+        # Ranking-order check: which source won the #1 slot. Structured-first weighting
+        # ranks validated memory (atomic_facts/...) above the raw observation log, so this
+        # discriminates the flat_memory ablation, which removes that weighting.
+        retrieved = _retrieved_records(actual)
+        observed_top = str(retrieved[0].get("source")) if retrieved else None
+        expected_top = str(expected["top_retrieved_source"])
+        checks.append(
+            _check(
+                f"top_retrieved_source=={expected_top}", observed_top == expected_top, observed_top
+            )
+        )
     if "slow_path_created_min" in expected:
         created_counts = _slow_path_created_counts(actual)
         raw_minimums = expected["slow_path_created_min"]
