@@ -27,7 +27,9 @@ from dotenv import load_dotenv
 
 from core.observability import configure_logging
 
-DEFAULT_CASES = "evaluation/local/memory_cases.json"
+# The ablation defaults to its own lean, per-layer case set (fast). Pass
+# --cases evaluation/local/memory_cases.json for the full behavior-coverage set (slower).
+DEFAULT_CASES = "evaluation/ablation/ablation_cases.json"
 DEFAULT_OUT = "evaluation/results"
 DEFAULT_JSON_NAME = "ablation_results.json"
 DEFAULT_MD_NAME = "ablation_summary.md"

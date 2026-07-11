@@ -7,10 +7,13 @@ Architecture area: llm.
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from core.llm.json_helpers import (
@@ -181,13 +184,63 @@ def call_qwen_chat(
     return call_llm_chat(messages, model=model, timeout_s=timeout_s)
 
 
+LLM_CACHE_ENV = "MIRA_LLM_CACHE"
+
+
+def _llm_cache_dir() -> Path | None:
+    """Return the on-disk LLM cache directory if MIRA_LLM_CACHE is set, else None.
+
+    Off by default. When set, identical (profile, model, schema, messages) calls reuse a
+    prior response instead of hitting the provider -- a large speedup for the ablation,
+    where the same slow-path ingestion prompts repeat across configs. Keyed on the exact
+    prompt, so only truly-identical calls hit; it never returns a response for a different
+    prompt.
+    """
+    raw = os.environ.get(LLM_CACHE_ENV)
+    if not raw:
+        return None
+    path = Path(raw)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _llm_cache_key(messages: list[Message], schema_name: str) -> str:
+    signature = json.dumps(
+        {
+            "profile": os.environ.get(LLM_PROFILE_ENV, ""),
+            "model": os.environ.get(LLM_MODEL_ENV, ""),
+            "schema": schema_name,
+            "messages": messages,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(signature.encode("utf-8")).hexdigest()
+
+
 def call_qwen_json(
     messages: list[Message],
     schema_name: str,
     timeout_s: int = 60,
 ) -> ResponseObject:
-    """Backward-compatible wrapper for the OpenAI-compatible JSON adapter."""
-    return call_llm_json(messages, schema_name=schema_name, timeout_s=timeout_s)
+    """Backward-compatible wrapper for the OpenAI-compatible JSON adapter.
+
+    Transparently memoizes responses to disk when MIRA_LLM_CACHE is set (off by default).
+    """
+    cache_dir = _llm_cache_dir()
+    if cache_dir is None:
+        return call_llm_json(messages, schema_name=schema_name, timeout_s=timeout_s)
+    cache_file = cache_dir / f"{_llm_cache_key(messages, schema_name)}.json"
+    if cache_file.exists():
+        try:
+            cached = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(cached, dict):
+                return cached
+        except (json.JSONDecodeError, OSError):
+            pass  # corrupt entry -> fall through to a fresh call
+    response = call_llm_json(messages, schema_name=schema_name, timeout_s=timeout_s)
+    with contextlib.suppress(OSError):  # a cache write failure must never break generation
+        cache_file.write_text(json.dumps(response, sort_keys=True, default=str), encoding="utf-8")
+    return response
 
 
 def generate_response(prompt: str, model: str | None = None) -> str:

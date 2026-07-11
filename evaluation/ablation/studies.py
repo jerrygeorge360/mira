@@ -76,7 +76,9 @@ SELECTABLE_ABLATIONS: tuple[str, ...] = (
     "full_transcript",
 )
 
-DEFAULT_CASES_PATH = str(Path(__file__).resolve().parent.parent / "local" / "memory_cases.json")
+# The ablation defaults to its own lean, per-layer case set (fast). Pass --cases
+# evaluation/local/memory_cases.json for the full behavior-coverage set (slower).
+DEFAULT_CASES_PATH = str(Path(__file__).resolve().parent / "ablation_cases.json")
 
 
 @dataclass(frozen=True)
