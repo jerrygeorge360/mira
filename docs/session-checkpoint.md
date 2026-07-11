@@ -89,11 +89,50 @@ root cause and the A/C/D fix that resolved it).
 
 ---
 
-## 4. THE REMAINING TASK: D3 live re-run (not done)
+## 4. D3 live re-run — PARTIALLY DONE (results below; ablation needs a clean rerun)
 
 Goal: run the honest system live and record real numbers for (a) the 13 local eval cases /
-6 demo scenarios and (b) the 11-config ablation. Use **DeepSeek** (the user's choice) with
-local embeddings.
+6 demo scenarios and (b) the 11-config ablation. Use **DeepSeek** with local embeddings.
+
+### Results so far (DeepSeek, local embeddings, run by the user)
+
+**Local eval: 11/13 passed (0.85)** — `evaluation/local/memory_cases.results.json`.
+All 10 original cases pass. Of the 3 new D2 cases: `deep-mode-community-summary` PASS;
+two FAILs that are **real behavior, not harness bugs**:
+- `contradiction-deadline-conflict`: the answer correctly surfaced both dates and flagged
+  the conflict, but the system created **`SUPERSEDED_BY`, not `CONTRADICTS`**. The Phase A
+  canonicalization fix makes the two deadline claims share a canonical subject+predicate, so
+  the deterministic fast-path claims them as a supersession (later value wins) and they never
+  reach the LLM verifier. **Open decision:** treat same-subject conflicting values (no
+  change-cue) as CONTRADICTS, or accept SUPERSEDED_BY and change the eval expectation.
+- `reflection-user-knowledge` (renamed from `reflection-self-knowledge` — it tests
+  user-knowledge reflection; assertion is type-agnostic). Diagnosed on the real
+  `eval.case-6` DB: reflection **never fired** (0 reflections; 12 obs). Root cause:
+  `_importance_score` is keyword-based and biased to urgency words, so self/user habit
+  statements scored the 0.35 floor, below the `reflection_min_importance` 0.6 gate.
+  **FIXED (uncommitted), end-to-end live-verified.** Two bugs, both fixed:
+  1. **Firing:** `_importance_score` gained a durable-trait marker group and the gate dropped
+     0.6 → 0.5, so stable self/user habit statements qualify. (Reflection fires: 2–4 created.)
+  2. **Retrieval — the deeper root cause:** reflections were **never embedded into the vector
+     store** (observations and community summaries are; `reflection.py` skipped it), so the
+     `reflections` collection was always empty and *neither Quick nor Deep* could find them by
+     meaning. Fix: `store_reflection_with_evidence` now indexes the reflection
+     (`chroma.add_embedding`), and Deep's `_reflection_candidates` matches by embedding
+     similarity (`vector_search`) instead of brittle token overlap. Live-verified: Deep now
+     returns `reflection` sources; `test_deep_retrieval` updated to index its fixture reflection.
+  **Open item (non-blocking) `[decide]`:** reflection `reflection_type` is non-deterministic
+  for first-person user input — the same habits were typed `self_knowledge` one run and
+  `user_knowledge` the next. Decide whether user-about-self should be forced to `user_knowledge`
+  (reserving `self_knowledge` for the agent's own behavior; only `self_knowledge` is hot-promoted).
+
+**Ablation: INCOMPLETE + MIXED — not usable yet** — `evaluation/results/ablation_results.json`
+has only 5 of 11 configs with inconsistent case counts (some at 2 cases, some at 13) and
+`llm_mode: None` (final write never ran). It was stitched from separate scoped/resumed runs.
+**Resume caveat exposed:** resume keys on config *name* only, so resuming with a different
+`--limit`/`--components` merges into a mixed, non-comparable table. For real numbers, run
+**one clean invocation** (no `--limit`, all 11 configs, fresh `--out`, single run).
+
+### Rerun commands (still valid)
 
 ### Setup
 ```bash

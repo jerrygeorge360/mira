@@ -17,12 +17,14 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
+from core.db import chroma
 from core.db.repositories import (
     create_reflection,
     link_reflection_evidence,
     repository_connection,
     validate_enum_value,
 )
+from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
 from core.memory.graph import create_graph_edge, create_graph_node
@@ -124,6 +126,16 @@ def store_reflection_with_evidence(
             "confidence": confidence,
             "status": "active",
         }
+    )
+    # Index the reflection in the vector store so it is retrievable by meaning (Quick and
+    # Deep both search the reflections collection). Without this the collection stays empty
+    # and reflections can never be retrieved semantically -- only by brittle token overlap.
+    chroma.add_embedding(
+        "reflections",
+        "reflections",
+        reflection_id,
+        embed_text(content),
+        metadata={"reflection_type": reflection_type},
     )
     reflection_node_id = create_graph_node(
         node_type="reflection",

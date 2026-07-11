@@ -21,6 +21,7 @@ import re
 
 from core.db.repositories import repository_connection
 from core.retrieval.quick import retrieve_quick
+from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]
 
@@ -122,17 +123,26 @@ def _community_candidates(query: str, limit: int) -> list[Evidence]:
 
 
 def _reflection_candidates(query: str, limit: int) -> list[Evidence]:
-    query_tokens = _tokens(query)
+    # Match reflections by meaning (embedding similarity), not literal token overlap: a
+    # synthesized reflection rarely shares words with the question it answers ("what kind of
+    # engineer am I?" vs "follows test-driven development"), so lexical matching dropped them.
+    active_by_id = {str(row["id"]): row for row in _fetch_active_reflections()}
+    if not active_by_id:
+        return []
     candidates: list[Evidence] = []
-    for row in _fetch_active_reflections():
-        relevance = _token_overlap(query_tokens, str(row["content"]))
-        if relevance <= 0.0:
+    seen: set[str] = set()
+    for pointer in vector_search(query, limit=limit, collections=("reflections",)):
+        reflection_id = str(pointer.get("sqlite_id"))
+        row = active_by_id.get(reflection_id)
+        if row is None or reflection_id in seen:
             continue
+        seen.add(reflection_id)
+        relevance = max(0.0, 1.0 - _float(pointer.get("distance"), 1.0))
         candidates.append(
             {
                 "source": "reflection",
-                "source_id": str(row["id"]),
-                "id": str(row["id"]),
+                "source_id": reflection_id,
+                "id": reflection_id,
                 "content": str(row["content"]),
                 "reflection_type": str(row["reflection_type"]),
                 "relevance": relevance,
@@ -141,7 +151,6 @@ def _reflection_candidates(query: str, limit: int) -> list[Evidence]:
                 "record": dict(row),
             }
         )
-    candidates.sort(key=lambda item: (-_float(item["relevance"]), str(item["source_id"])))
     return candidates[:limit]
 
 

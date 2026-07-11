@@ -127,7 +127,9 @@ class SlowPathSemanticConfig:
     enable_reflection: bool = True
     enable_reflection_invalidation: bool = True
     enable_community_summaries: bool = True
-    reflection_min_importance: float = 0.6
+    # A single durable-trait marker scores 0.53; the gate sits just below so one clearly
+    # self/user-descriptive observation is enough to qualify a reflection pass.
+    reflection_min_importance: float = 0.5
     reflection_min_observations: int = 5
     reflection_cooldown_observations: int = 10
     # Cumulative observations (across batches) before the graph community job reruns.
@@ -1673,7 +1675,8 @@ def _passes_reflection_gate(
 
 def _importance_score(content: str) -> float:
     normalized = content.casefold()
-    markers = (
+    # Urgency / change markers: things that must be acted on or that revise prior state.
+    urgency_markers = (
         "must",
         "need",
         "important",
@@ -1687,7 +1690,25 @@ def _importance_score(content: str) -> float:
         "remember",
         "decided",
     )
-    hits = sum(1 for marker in markers if marker in normalized)
+    # Durable-trait markers: stable self/user identity, preferences, and habits. Reflection
+    # (user_knowledge and self_knowledge) is built from exactly this content, but it carries
+    # none of the urgency words above, so without these it scored at the floor and the gate
+    # never fired. See docs/paper-reconciliation.md (A1).
+    trait_markers = (
+        "always",
+        "usually",
+        "prefer",
+        "tend to",
+        "every ",
+        "habit",
+        "routinely",
+        "typically",
+        "generally",
+        "frequent",
+        "value ",
+        "believe",
+    )
+    hits = sum(1 for marker in urgency_markers + trait_markers if marker in normalized)
     return min(1.0, 0.35 + hits * 0.18)
 
 
