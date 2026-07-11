@@ -20,6 +20,9 @@ plus an uncommitted working tree (the resume feature).
 - **Architecture decisions from A–D are recorded as ADRs** in [`docs/adr/`](adr/):
   0011 (structured-first retrieval weighting), 0012 (hybrid contradiction/supersession
   detection); 0009 (reflection staleness) was annotated with the cross-observation trigger.
+- **A paper-update checklist** consolidates every code-vs-paper decision at
+  [`docs/paper-reconciliation.md`](paper-reconciliation.md) — the single place to look when
+  revising the paper (which p-sections to EDIT/ADD/CLARIFY/CONFIRM).
 - **The Phase D *live* re-run (D3) has NOT been completed yet.** Two attempts were made:
   one on SiliconFlow crashed on a transient provider connection error; a DeepSeek attempt
   was started then intentionally killed. **No live results files exist yet.** This is the
@@ -170,9 +173,11 @@ was intentionally left uncommitted.
   wanted, that's a further change (deliberately not done).
 - **Ablation resume is per-config, not per-case** (see §5). Finer granularity is possible
   but more involved.
-- **Paper reconciliation still pending** for the `[decide]` items: 11 ablations vs the
-  paper's 8; `flat_memory`/structured-first weighting divergence (Quick p23);
-  `confirmed_memory_id` lineage. These are paper edits, not code bugs.
+- **Paper reconciliation still pending** — the full decision log and per-section edit
+  checklist is [`docs/paper-reconciliation.md`](paper-reconciliation.md) (structured-first
+  Quick ranking p23, cross-mode CONTRADICTS surfacing p21, hybrid detection, hybrid router
+  p24, 11-vs-8 ablations p28, `confirmed_memory_id` lineage, agent-self facts p12). These
+  are paper edits, not code bugs.
 
 ---
 
