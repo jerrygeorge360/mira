@@ -81,6 +81,99 @@
       }
     },
     {
+      "id": "contradiction-deadline-conflict",
+      "category": "contradiction_handling",
+      "interactions": [
+        {
+          "message": "The project deadline is Friday."
+        },
+        {
+          "message": "The project is due Monday."
+        },
+        {
+          "message": "When is the project due?"
+        }
+      ],
+      "expect": {
+        "slow_path_created_edge_types_include": [
+          "CONTRADICTS"
+        ],
+        "answer_contains": [
+          "Friday",
+          "Monday"
+        ]
+      }
+    },
+    {
+      "id": "reflection-self-knowledge",
+      "category": "deep_mode_synthesis",
+      "interactions": [
+        {
+          "message": "I always write tests before implementing a feature."
+        },
+        {
+          "message": "I refactor aggressively once the tests pass."
+        },
+        {
+          "message": "I prefer small, frequent commits over one large commit."
+        },
+        {
+          "message": "I review my own diff before every push."
+        },
+        {
+          "message": "I document design decisions as I go."
+        },
+        {
+          "message": "Based on my habits, what kind of engineer am I?"
+        }
+      ],
+      "expect": {
+        "retrieval_mode": "deep",
+        "retrieved_sources_include": [
+          "reflection"
+        ]
+      }
+    },
+    {
+      "id": "deep-mode-community-summary",
+      "category": "deep_mode_synthesis",
+      "interactions": [
+        {
+          "message": "MIRA uses PostgreSQL for durable storage."
+        },
+        {
+          "message": "MIRA uses Chroma for vector search."
+        },
+        {
+          "message": "MIRA runs a slow path that builds durable memory."
+        },
+        {
+          "message": "MIRA runs a fast path that answers within the session."
+        },
+        {
+          "message": "MIRA's slow path extracts atomic facts from observations."
+        },
+        {
+          "message": "MIRA's slow path builds a temporal knowledge graph."
+        },
+        {
+          "message": "MIRA retrieval has quick, deep, and relational modes."
+        },
+        {
+          "message": "MIRA's deep mode synthesizes community summaries."
+        },
+        {
+          "message": "Give me a high-level overview of the MIRA architecture."
+        }
+      ],
+      "expect": {
+        "retrieval_mode": "deep",
+        "retrieved_sources_include": [
+          "community_summary"
+        ]
+      }
+    },
+    {
       "id": "supersession-migration",
       "category": "supersession_handling",
       "interactions": [

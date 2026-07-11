@@ -1,18 +1,22 @@
 # Demo Scenario Audit (paper §Demo Evaluation)
 
 Live audit of the six demo scenarios the paper claims, run end-to-end against the
-real agent with DeepSeek + local embeddings. Purpose: confirm the claimed
-behaviors actually reproduce before investing in the full ablation. Verdict:
-**2 work, 1 just fixed, 3 broken/dormant.** Root causes below.
+real agent with a live provider + local embeddings. Purpose: confirm the claimed
+behaviors actually reproduce before investing in the full ablation.
 
-| # | Scenario | Status | Root cause |
+**Original verdict (pre-fix): 2 work, 1 just fixed, 3 broken/dormant.** All six
+root causes were addressed across Phases A/C/D; the table below records the
+original audit and the fix that resolved each. Each scenario now has a dedicated
+local eval case (Phase D2), so the honest re-run (D3) is a repeatable check.
+
+| # | Scenario | Original status | Resolved by |
 | --- | --- | --- | --- |
-| 1 | Year 2025→2026 correction; Session Working Set updates immediately | ✅ passes (not stress-tested) | — |
-| 2 | Preference Python→Rust; `SUPERSEDED_BY` surfaced | ✅ **fixed** (4/4 clean) | canonicalization fragmentation (fixed) |
-| 3 | Contradictory deadlines; `CONTRADICTS` surfaced | ❌ **broken** (0/3) | extraction fragments the subject: `(Project, has deadline, Fri)` vs `(project deadline, is, Mon)` — different subject+predicate, never pairs |
-| 4 | Foresight, time-valid + topic-relevant | ✅ works; ablation seam fixed | — |
-| 5 | Deep Mode uses community summaries | ⚠️ **mechanism works, trigger dormant** | community detection gated at ≥50 obs/batch; batches cap at 20 → never fires in normal/eval use |
-| 6 | Self-knowledge reflection produced + promoted | ❌ **dormant** (0 reflections) | reflection gate needs ≥5 obs in one batch; one-at-a-time draining → batch of 1 → never fires |
+| 1 | Year 2025→2026 correction; Session Working Set updates immediately | ✅ passes | — (case `session-correction-year`) |
+| 2 | Preference Python→Rust; `SUPERSEDED_BY` surfaced | ✅ fixed (4/4 clean) | canonicalization fix (case `contradiction-preferences`) |
+| 3 | Contradictory deadlines; `CONTRADICTS` surfaced | ❌ broken (0/3) | **Phase C1** hybrid pairing (deterministic + LLM verifier); 3/3 fire, 0/3 false positives. Case `contradiction-deadline-conflict` (D2) |
+| 4 | Foresight, time-valid + topic-relevant | ✅ works | ablation seam fixed (case `foresight-hackathon`) |
+| 5 | Deep Mode uses community summaries | ⚠️ mechanism works, trigger dormant | **Phase A2** — community refresh via DB-derived cumulative counter (50→8), relocated into `run_slow_path_batch`. Case `deep-mode-community-summary` (D2) |
+| 6 | Self-knowledge reflection produced + promoted | ❌ dormant (0 reflections) | **Phase A1** — reflection reads recent observations from the store, relocated into `run_slow_path_batch` (the eval drain never called it). Case `reflection-self-knowledge` (D2) |
 
 ## #2 — FIXED (canonicalization → supersession)
 

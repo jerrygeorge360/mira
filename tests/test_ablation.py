@@ -70,12 +70,36 @@ def _write_cases(tmp_path: Path) -> Path:
 def test_ablation_flags_and_configs_exist() -> None:
     """The architecture ablation flags and standard configs are defined."""
     assert "session_working_set" in ABLATION_COMPONENTS
-    assert "vector_only" in ABLATION_COMPONENTS
+    assert "community_summaries" in ABLATION_COMPONENTS
 
     names = {config.name for config in standard_ablations()}
     assert "full_system" in names
     assert "without_session_working_set" in names
+    assert "without_community_summaries" in names
+    # The paper's comparison baselines carry their own names, not "without_X".
     assert "vector_only_baseline" in names
+    assert "flat_memory" in names
+    assert "full_transcript" in names
+
+
+def test_new_baselines_apply_their_seams() -> None:
+    """community_summaries, flat_memory, and full_transcript patch real seams."""
+    with apply_ablation(AblationConfig("cs", frozenset({"community_summaries"}))) as applied:
+        from core.retrieval.deep import _community_candidates
+
+        assert _community_candidates("x", 1) == []
+        assert "community_summaries" in applied
+
+    with apply_ablation(AblationConfig("flat", frozenset({"flat_memory"}))) as applied:
+        from core.retrieval.quick import SOURCE_WEIGHT
+
+        # Every source now weighs the same: the structured-first tiering is gone.
+        assert SOURCE_WEIGHT.get("observations") == SOURCE_WEIGHT.get("atomic_facts") == 1.0
+        assert "flat_memory" in applied
+
+    with apply_ablation(AblationConfig("ft", frozenset({"full_transcript"}))) as applied:
+        assert agent.retrieve_by_mode("x", mode="quick", limit=1, session_id=None) == []
+        assert "full_transcript" in applied
 
 
 def test_evaluation_can_disable_session_working_set(database_path: Path, fake_qwen: None) -> None:

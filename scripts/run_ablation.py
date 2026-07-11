@@ -62,7 +62,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     from core import agent
     from core.db.repositories import configure_database
     from evaluation.ablation.studies import (
-        ABLATION_COMPONENTS,
+        SELECTABLE_ABLATIONS,
         run_ablation_study,
         select_ablations,
     )
@@ -72,11 +72,11 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         raise RunnerError(f"cases file not found: {cases_path}")
 
     if args.components:
-        unknown = [name for name in args.components if name not in ABLATION_COMPONENTS]
+        unknown = [name for name in args.components if name not in SELECTABLE_ABLATIONS]
         if unknown:
             raise RunnerError(
                 f"unknown component(s): {', '.join(unknown)}; "
-                f"valid: {', '.join(ABLATION_COMPONENTS)}"
+                f"valid: {', '.join(SELECTABLE_ABLATIONS)}"
             )
     configs = select_ablations(args.components)
 
@@ -198,7 +198,8 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help=(
             "Run only the full_system baseline plus these ablations, for a faster run. "
             "Choices: session_working_set, relational_mode, deep_mode, foresight, "
-            "reflection, contradiction_supersession, vector_only."
+            "reflection, community_summaries, contradiction_supersession, vector_only, "
+            "flat_memory, full_transcript."
         ),
     )
     parser.add_argument(

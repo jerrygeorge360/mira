@@ -299,7 +299,7 @@ def run_slow_path_for_observation(
         ("contradiction_supersession", lambda: _step_changes(context, observation_id, content)),
         (
             "reflection_invalidation",
-            lambda: _step_reflection_invalidation(observation_id, semantic_config),
+            lambda: _step_reflection_invalidation(observation_id, context, semantic_config),
         ),
         ("tier_update", lambda: _step_tiers(context)),
         ("foresight_detection", lambda: _step_foresight(observation_id, content, semantic_config)),
@@ -678,12 +678,15 @@ def _apply_changes(
     changes: list[dict[str, object]],
     transition_edge_ids: list[str],
     general_edge_ids: list[str],
+    recheck_observations: set[str],
 ) -> int:
     """Apply detected memory changes as edges; return supersessions suppressed by a transition.
 
     A general SUPERSEDED_BY is skipped when an explicit "from X to Y" transition in the
     same observation already recorded the authoritative edge, so one transition yields
-    one edge. Contradictions are always applied (they never duplicate a transition).
+    one edge. Contradictions are always applied (they never duplicate a transition). The
+    prior fact's source observation is recorded in ``recheck_observations`` so any
+    reflection derived from it is re-evaluated for staleness (its evidence just changed).
     """
     suppressed = 0
     for change in changes:
@@ -703,6 +706,10 @@ def _apply_changes(
             general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
         else:
             general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+        old_fact = _fetch_fact(old_id)
+        old_source = _optional_str(old_fact.get("source_observation_id")) if old_fact else None
+        if old_source:
+            recheck_observations.add(old_source)
     return suppressed
 
 
@@ -867,6 +874,7 @@ def _step_changes(
     transition_edge_ids: list[str] = _apply_transition_supersessions(observation_id, content)
     general_edge_ids: list[str] = []
     general_superseded = 0
+    recheck_observations: set[str] = set()
     for fact_id in context.get("fact_ids", []):
         fact = _fetch_fact(fact_id)
         if fact is None or str(fact.get("status")) != "active":
@@ -887,7 +895,10 @@ def _step_changes(
             reason="no_candidates" if not priors else "candidates_found",
         )
         general_superseded += _apply_changes(
-            detect_memory_change(fact_id, priors), transition_edge_ids, general_edge_ids
+            detect_memory_change(fact_id, priors),
+            transition_edge_ids,
+            general_edge_ids,
+            recheck_observations,
         )
         # Hybrid hard-case path: the deterministic scan above handles clean
         # same-canonical-subject pairs cheaply; embedding-shortlisted cross-subject
@@ -896,7 +907,10 @@ def _step_changes(
         candidates = _shortlist_candidate_facts(fact)
         if candidates:
             general_superseded += _apply_changes(
-                _llm_verify_changes(fact, candidates), transition_edge_ids, general_edge_ids
+                _llm_verify_changes(fact, candidates),
+                transition_edge_ids,
+                general_edge_ids,
+                recheck_observations,
             )
     if transition_edge_ids and general_superseded:
         # Measures how often the general path WOULD have duplicated the explicit
@@ -909,6 +923,9 @@ def _step_changes(
             transition_edges=len(transition_edge_ids),
             suppressed=general_superseded,
         )
+    # Reflections built on facts that were just superseded/contradicted must be
+    # re-evaluated for staleness; the invalidation step reads this from context.
+    context["reflection_recheck_observations"] = sorted(recheck_observations)
     return {"graph_edges": transition_edge_ids + general_edge_ids}
 
 
@@ -1087,12 +1104,20 @@ def _step_foresight(
 
 def _step_reflection_invalidation(
     observation_id: str,
+    context: dict[str, list[str]],
     config: SlowPathSemanticConfig,
 ) -> dict[str, list[str]]:
     if not config.enable_reflection_invalidation:
         return {}
+    # Re-check reflections derived from this observation and from any observation whose
+    # facts were just superseded/contradicted this turn (their evidence collapsed even
+    # though the observation itself is not the one being processed).
+    recheck_observations = {observation_id, *context.get("reflection_recheck_observations", [])}
+    reflection_ids: set[str] = set()
+    for source_observation_id in recheck_observations:
+        reflection_ids.update(find_reflections_derived_from(source_observation_id))
     updated: list[str] = []
-    for reflection_id in find_reflections_derived_from(observation_id):
+    for reflection_id in sorted(reflection_ids):
         before = _reflection_status(reflection_id)
         invalidate_reflection_if_unsupported(reflection_id)
         after = _reflection_status(reflection_id)

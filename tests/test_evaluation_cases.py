@@ -324,7 +324,9 @@ def test_shipped_memory_cases_suite_is_loadable() -> None:
     suite_path = Path(__file__).resolve().parents[1] / "evaluation" / "local" / "memory_cases.json"
     cases = load_evaluation_cases(str(suite_path))
     categories = {str(case["category"]) for case in cases}
-    assert len(cases) == 10
+    assert len(cases) == 13
     assert "direct_fact_recall" in categories
+    assert "contradiction_handling" in categories
+    assert "deep_mode_synthesis" in categories
     assert "retrieval_sufficiency" in categories
     assert "routing_intent" in categories

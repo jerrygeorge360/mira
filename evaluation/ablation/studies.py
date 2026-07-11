@@ -38,16 +38,42 @@ ABLATION_COMPONENTS = (
     "deep_mode",
     "foresight",
     "reflection",
+    "community_summaries",
     "contradiction_supersession",
-    "vector_only",
 )
 
 # Components whose effect is observable in the synchronous agent turn.
 AGENT_EFFECTIVE = frozenset(
-    {"session_working_set", "relational_mode", "deep_mode", "foresight", "reflection"}
+    {
+        "session_working_set",
+        "relational_mode",
+        "deep_mode",
+        "foresight",
+        "reflection",
+        "community_summaries",
+    }
 )
 # The vector-only baseline strips every higher layer, leaving Quick retrieval.
 VECTOR_ONLY_DISABLED = frozenset(AGENT_EFFECTIVE)
+
+# Bespoke baselines that read as themselves, not "without_X". These are the paper's
+# comparison points: vector-only (Quick alone), a flat memory pool (no tier
+# weighting), and the naive full-transcript baseline (no derived/retrieved memory at
+# all -- the model answers from the raw conversation).
+BASELINE_CONFIGS: tuple[tuple[str, frozenset[str]], ...] = (
+    ("vector_only_baseline", VECTOR_ONLY_DISABLED),
+    ("flat_memory", frozenset({"flat_memory"})),
+    ("full_transcript", frozenset({"full_transcript"})),
+)
+
+# Names ``select_ablations`` / the CLI accept: the toggleable components plus the
+# bespoke baselines (``vector_only`` selects ``vector_only_baseline``).
+SELECTABLE_ABLATIONS: tuple[str, ...] = (
+    *ABLATION_COMPONENTS,
+    "vector_only",
+    "flat_memory",
+    "full_transcript",
+)
 
 DEFAULT_CASES_PATH = str(Path(__file__).resolve().parent.parent / "local" / "memory_cases.json")
 
@@ -78,15 +104,29 @@ def standard_ablations() -> list[AblationConfig]:
     """Return the full-system baseline plus one config per architecture ablation."""
     configs = [AblationConfig("full_system", frozenset())]
     for component in ABLATION_COMPONENTS:
-        if component == "vector_only":
-            continue
         configs.append(AblationConfig(f"without_{component}", frozenset({component})))
-    configs.append(AblationConfig("vector_only_baseline", VECTOR_ONLY_DISABLED))
+    for name, disabled in BASELINE_CONFIGS:
+        configs.append(AblationConfig(name, disabled))
     return configs
 
 
 def _empty(*_args: object, **_kwargs: object) -> list[object]:
     return []
+
+
+class _FlatWeights(dict[str, float]):
+    """A source-weight mapping that reports every source as equally important.
+
+    Ablating tiering means the memory is a single undifferentiated pool: validated
+    facts no longer outrank the raw observation log. Overriding ``get`` makes the
+    structured-first weighting vanish regardless of source.
+    """
+
+    def get(self, _key: object, _default: object = None) -> float:
+        return 1.0
+
+
+_FLAT_WEIGHTS = _FlatWeights()
 
 
 _SIMPLE_DISABLERS: dict[str, list[tuple[str, str, Callable[..., object]]]] = {
@@ -102,8 +142,16 @@ _SIMPLE_DISABLERS: dict[str, list[tuple[str, str, Callable[..., object]]]] = {
         ("core.retrieval.deep", "_reflection_candidates", _empty),
         ("core.session.hydration", "_reflection_candidates", _empty),
     ],
+    "community_summaries": [("core.retrieval.deep", "_community_candidates", _empty)],
     "contradiction_supersession": [
         ("core.memory.slow_path", "_step_changes", lambda *_args, **_kwargs: {"graph_edges": []})
+    ],
+    "full_transcript": [
+        # The naive baseline: no derived or retrieved memory reaches the prompt, so the
+        # model answers from the raw session transcript (recent turns) alone.
+        ("core.agent", "retrieve_by_mode", _empty),
+        ("core.agent", "export_prompt_ready_session_items", _empty),
+        ("core.agent", "list_hot_memory_for_context", _empty),
     ],
 }
 
@@ -130,6 +178,14 @@ def apply_ablation(config: AblationConfig) -> Iterator[set[str]]:
             )
             if stack.enter_context(route_patch):
                 applied.update(f"{mode}_mode" for mode in disabled_modes)
+
+        if "flat_memory" in disabled:
+            flattened = False
+            for module_path in ("core.retrieval.quick", "core.retrieval.deep"):
+                if stack.enter_context(_patched(module_path, "SOURCE_WEIGHT", _FLAT_WEIGHTS)):
+                    flattened = True
+            if flattened:
+                applied.add("flat_memory")
 
         yield applied
 
@@ -182,9 +238,15 @@ def select_ablations(components: list[str] | None = None) -> list[AblationConfig
     everything = standard_ablations()
     if not components:
         return everything
+    by_name = {config.name: config for config in everything}
     keep = {"full_system"}
     for name in components:
-        keep.add("vector_only_baseline" if name == "vector_only" else f"without_{name}")
+        if name == "vector_only":
+            keep.add("vector_only_baseline")
+        elif f"without_{name}" in by_name:
+            keep.add(f"without_{name}")
+        elif name in by_name:  # bespoke baselines: flat_memory, full_transcript
+            keep.add(name)
     return [config for config in everything if config.name in keep]
 
 

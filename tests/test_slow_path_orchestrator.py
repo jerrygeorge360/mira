@@ -63,6 +63,15 @@ def _fact_status(object_value: str) -> str:
     return str(row["status"])
 
 
+def _reflection_status(reflection_id: str) -> str:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM reflections WHERE id = ?",
+            (reflection_id,),
+        ).fetchone()
+    return str(row["status"])
+
+
 def _processed_at(observation_id: str) -> object:
     with repository_connection() as connection:
         row = connection.execute(
@@ -194,6 +203,61 @@ def test_preference_correction_records_supersession(
     assert _fact_status("Python") == "superseded"
     edges = find_edges_by_type("SUPERSEDED_BY")
     assert len(edges) == 1
+
+
+def test_supersession_invalidates_reflection_built_on_the_old_fact(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Superseding an old fact re-evaluates a reflection derived from its observation.
+
+    The reflection's evidence lives on the *old* observation, not the correction being
+    processed, so this exercises the cross-observation staleness trigger.
+    """
+    from core.memory.reflection import store_reflection_with_evidence
+
+    session_id = create_session("jerry")
+    old_observation = save_observation(session_id, "user", "The project year is 2025.")
+    new_observation = save_observation(
+        session_id, "user", "The project year is now 2030, not 2025 anymore."
+    )
+    enqueue_observation(old_observation)
+    enqueue_observation(new_observation)
+
+    def _facts(observation_id: str, content: str) -> list[dict[str, object]]:
+        year = "2030" if "2030" in content else "2025"
+        return [
+            {
+                "subject": "project year",
+                "predicate": "IS",
+                "object": year,
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            }
+        ]
+
+    monkeypatch.setattr(slow_path, "extract_atomic_facts", _facts)
+    monkeypatch.setattr(slow_path, "extract_entities", lambda text: [])
+
+    # Process the old observation so its 2025 fact exists and is active.
+    run_slow_path_for_observation(old_observation)
+
+    # A reflection grounded only on the old observation's evidence.
+    reflection_id = store_reflection_with_evidence(
+        {
+            "reflection_type": "user_knowledge",
+            "content": "The user is planning around the 2025 project year.",
+            "confidence": 0.8,
+        },
+        [old_observation],
+    )
+    assert _reflection_status(reflection_id) == "active"
+
+    # Processing the correction supersedes the 2025 fact...
+    run_slow_path_for_observation(new_observation)
+
+    assert _fact_status("2025") == "superseded"
+    # ...so the reflection built only on that now-collapsed evidence is invalidated.
+    assert _reflection_status(reflection_id) == "invalidated"
 
 
 def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
