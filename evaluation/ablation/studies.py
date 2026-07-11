@@ -366,6 +366,11 @@ def _load_prior_rows(checkpoint_path: str | None) -> list[AblationRow]:
     raw_rows = data.get("rows") if isinstance(data, dict) else None
     if not isinstance(raw_rows, list):
         return []
+    return rows_from_dicts(raw_rows)
+
+
+def rows_from_dicts(raw_rows: list[object]) -> list[AblationRow]:
+    """Reconstruct ``AblationRow`` objects from serialized row dicts (checkpoints, workers)."""
     rows: list[AblationRow] = []
     for raw in raw_rows:
         if not isinstance(raw, dict) or not raw.get("name"):
