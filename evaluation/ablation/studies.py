@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
@@ -259,6 +260,8 @@ def run_ablation_study(
     slow_path_batch_size: int = 20,
     delay_s: float = 0.0,
     isolate_cases: bool = True,
+    checkpoint_path: str | None = None,
+    resume: bool = False,
 ) -> dict[str, object]:
     """Run baseline plus each ablation and produce a comparison table.
 
@@ -267,6 +270,12 @@ def run_ablation_study(
     number of cases each config runs, trading coverage for speed. When
     ``run_slow_path`` is enabled, the queue is drained after each interaction so
     slow-path components receive the same ingestion opportunity in every config.
+
+    When ``checkpoint_path`` is set, the partial table is written there after every
+    config, so a run that dies partway (e.g. a provider outage) keeps its finished
+    configs. Pass ``resume=True`` to skip configs already recorded in that file and
+    continue with the rest -- each config is a self-contained pass, so resuming is exact
+    at config granularity (an interrupted config is re-run in full).
     """
     if slow_path_batch_size < 1:
         raise ValueError("slow_path_batch_size must be a positive integer")
@@ -275,6 +284,13 @@ def run_ablation_study(
     resolved_path = cases_path or DEFAULT_CASES_PATH
     all_configs = configs or standard_ablations()
     total = len(all_configs)
+    prior_rows = _load_prior_rows(checkpoint_path) if (resume and checkpoint_path) else []
+    done_names = {row.name for row in prior_rows}
+    if resume and done_names:
+        _progress(
+            progress,
+            f"resume: {len(done_names)} configs done, {total - len(done_names)} left",
+        )
     _progress(
         progress,
         f"study start: {total} configs, cases={resolved_path}, limit={limit or 'all'}, "
@@ -282,9 +298,11 @@ def run_ablation_study(
     )
     original_database = current_database_path()
     isolation_base = isolation_base_path(original_database) if isolate_cases else None
-    rows: list[AblationRow] = []
+    rows: list[AblationRow] = list(prior_rows)
     try:
         for index, config in enumerate(all_configs, start=1):
+            if config.name in done_names:
+                continue
             rows.append(
                 _run_config(
                     config,
@@ -299,17 +317,70 @@ def run_ablation_study(
                     isolation_base=isolation_base,
                 )
             )
+            # Checkpoint the finished configs so a crash can resume from here.
+            if checkpoint_path is not None:
+                _write_checkpoint(checkpoint_path, resolved_path, run_slow_path, rows)
     finally:
         if isolate_cases and original_database is not None:
             configure_database(original_database)
             reset_vector_store()
     _progress(progress, f"study complete: {total} configs")
+    return _study_summary(resolved_path, run_slow_path, rows)
+
+
+def _study_summary(
+    cases_path: str, run_slow_path: bool, rows: list[AblationRow]
+) -> dict[str, object]:
     return {
-        "cases_path": resolved_path,
+        "cases_path": cases_path,
         "run_slow_path": run_slow_path,
         "rows": [_row_to_dict(row) for row in rows],
         "table": render_ablation_table(rows),
     }
+
+
+def _write_checkpoint(
+    checkpoint_path: str, cases_path: str, run_slow_path: bool, rows: list[AblationRow]
+) -> None:
+    path = Path(checkpoint_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(_study_summary(cases_path, run_slow_path, rows), indent=2, default=str),
+        encoding="utf-8",
+    )
+
+
+def _load_prior_rows(checkpoint_path: str | None) -> list[AblationRow]:
+    """Reconstruct completed ablation rows from a checkpoint file (empty if none)."""
+    if not checkpoint_path:
+        return []
+    path = Path(checkpoint_path)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    raw_rows = data.get("rows") if isinstance(data, dict) else None
+    if not isinstance(raw_rows, list):
+        return []
+    rows: list[AblationRow] = []
+    for raw in raw_rows:
+        if not isinstance(raw, dict) or not raw.get("name"):
+            continue
+        rows.append(
+            AblationRow(
+                name=str(raw.get("name")),
+                disabled=list(raw.get("disabled", [])),
+                applied=list(raw.get("applied", [])),
+                total=int(raw.get("total", 0)),
+                passed=int(raw.get("passed", 0)),
+                pass_rate=float(raw.get("pass_rate", 0.0)),
+                note=str(raw.get("note", "")),
+                results=list(raw.get("results", [])),
+            )
+        )
+    return rows
 
 
 def _progress(progress: ProgressReporter | None, message: str) -> None:

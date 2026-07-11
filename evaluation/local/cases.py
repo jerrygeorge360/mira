@@ -75,6 +75,7 @@ def run_evaluation_cases(
     debug_trace: bool = False,
     case_ids: list[str] | None = None,
     isolate_cases: bool = True,
+    resume: bool = False,
 ) -> dict[str, object]:
     """Run every case, score it, persist results, and return a summary.
 
@@ -82,21 +83,35 @@ def run_evaluation_cases(
     vector store, so a previous case's durable memory cannot leak into the next
     through retrieval. Pass ``isolate_cases=False`` for intentional multi-case
     continuity scenarios that share one database.
+
+    Results are checkpointed to the results file after every case, so a run that
+    dies partway (e.g. a provider outage) does not lose completed work. Pass
+    ``resume=True`` to skip cases already recorded in that file and continue with
+    the rest -- cases are isolated and independent, so resuming is exact.
     """
     if delay_s < 0:
         raise ValueError("delay_s must not be negative")
     if slow_path_batch_size < 1:
         raise ValueError("slow_path_batch_size must be a positive integer")
-    cases = _filter_cases(load_evaluation_cases(cases_path), case_ids)
-    total = len(cases)
+    all_cases = _filter_cases(load_evaluation_cases(cases_path), case_ids)
+    total = len(all_cases)
+    prior_results = _load_prior_results(cases_path) if resume else []
+    done_ids = {str(result.get("id")) for result in prior_results}
+    if resume and done_ids:
+        _progress(
+            progress,
+            f"resume: {len(done_ids)} already done, {total - len(done_ids)} remaining",
+        )
     interaction_counter = {"count": 0}
     debug_records: list[DebugRecord] = []
     _progress(progress, f"loaded cases={total} path={cases_path}")
     original_database = current_database_path()
     isolation_base = isolation_base_path(original_database) if isolate_cases else None
-    results: list[CaseResult] = []
+    results: list[CaseResult] = list(prior_results)
     try:
-        for index, case in enumerate(cases, start=1):
+        for index, case in enumerate(all_cases, start=1):
+            if str(case.get("id", "unnamed")) in done_ids:
+                continue
             if isolation_base is not None:
                 isolate_case_state(isolation_base, index, progress)
             results.append(
@@ -112,6 +127,8 @@ def run_evaluation_cases(
                     debug_records=debug_records if debug_trace else None,
                 )
             )
+            # Checkpoint after each case so a crash can resume from here.
+            _save_results(cases_path, _summarize(results))
     finally:
         if isolate_cases and original_database is not None:
             configure_database(original_database)
@@ -346,6 +363,21 @@ def _save_results(cases_path: str, summary: dict[str, object]) -> str:
         json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8"
     )
     return str(output_path)
+
+
+def _load_prior_results(cases_path: str) -> list[CaseResult]:
+    """Load previously checkpointed case results for a resumed run (empty if none)."""
+    output_path = Path(cases_path).with_suffix(".results.json")
+    if not output_path.is_file():
+        return []
+    try:
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    prior = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(prior, list):
+        return []
+    return [result for result in prior if isinstance(result, dict) and result.get("id")]
 
 
 def _check(name: str, passed: bool, observed: object = None) -> dict[str, object]:

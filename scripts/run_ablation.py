@@ -92,6 +92,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
     else:
         agent.call_qwen_json = _stub_llm  # type: ignore[attr-defined]
     progress = None if args.quiet else _print_progress
+    # Checkpoint to the same JSON output file so a crashed run can be resumed.
+    checkpoint_path = str(Path(args.out) / args.json_name)
     try:
         summary = run_ablation_study(
             str(cases_path),
@@ -102,6 +104,8 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             slow_path_batch_size=args.slow_path_batch_size,
             delay_s=args.delay_s,
             isolate_cases=not args.shared_db,
+            checkpoint_path=checkpoint_path,
+            resume=args.resume,
         )
     finally:
         agent.call_qwen_json = original_qwen  # type: ignore[attr-defined]
@@ -240,6 +244,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         "--quiet",
         action="store_true",
         help="Suppress per-config progress and structured logs on stderr.",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip configs already recorded in the output JSON and continue with the rest. "
+            "The table is checkpointed after every config, so a crashed run can be resumed."
+        ),
     )
     parser.set_defaults(live=False)
     return parser.parse_args(argv)
