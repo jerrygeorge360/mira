@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies import configure_runtime_database, load_runtime_environment
-from api.routes import chat, health, memory, retrieval, sessions, worker
+from api.routes import chat, evaluation, health, memory, retrieval, sessions, worker
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:8501",
@@ -40,6 +40,7 @@ def create_app() -> FastAPI:
     app.include_router(memory.router)
     app.include_router(retrieval.router)
     app.include_router(worker.router)
+    app.include_router(evaluation.router)
     return app
 
 
