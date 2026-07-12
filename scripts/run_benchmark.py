@@ -17,15 +17,17 @@ prototype / official / official-subset labeling.
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import hashlib
 import json
+import multiprocessing
 import os
 import sys
 import tempfile
 import time
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 Restore = Callable[[], None]
 JudgeCallAdapter = Callable[[list[dict[str, str]], str], dict[str, object]]
@@ -45,10 +47,15 @@ SUITES = ("longmemeval", "locomo_style")
 JUDGE_MODES = ("deterministic", "llm", "hybrid")
 
 # Estimated USD per 1K tokens (input, output). Clearly an estimate, not billing.
+# DeepSeek standard-hours list price (deepseek-chat): $0.27/1M in (cache miss), $1.10/1M out
+# -- verify at platform.deepseek.com/pricing; DeepSeek also runs a ~50% off-peak discount
+# and much cheaper cache-hit input, so real spend tends to come in under this estimate.
 PRICING: dict[str, tuple[float, float]] = {
     "qwen-plus": (0.0004, 0.0012),
     "qwen-flash": (0.0001, 0.0003),
     "qwen-max": (0.0024, 0.0096),
+    "deepseek-chat": (0.00027, 0.0011),
+    "deepseek-reasoner": (0.00055, 0.00219),
 }
 DEFAULT_PRICE = (0.0004, 0.0012)
 
@@ -123,59 +130,177 @@ def _run_examples(
     args: argparse.Namespace,
     estimate: CostEstimate,
 ) -> tuple[list[dict[str, object]], Ledger]:
-    from evaluation.benchmarks.longmemeval import import_conversations
-
-    cache = _Cache(Path(args.out) / "cache", enabled=bool(args.cache or args.resume))
     completed = _resume_completed(args) if args.resume else set()
     ledger = _new_ledger(args, estimate)
-    results: list[dict[str, object]] = []
     total_examples = len(examples)
     _progress(
         args,
         "starting benchmark "
-        f"mode={'live' if args.live else 'stub'} judge={args.judge} "
+        f"mode={'live' if args.live else 'stub'} judge={args.judge} parallel={args.parallel} "
         f"budget=${args.budget_usd:.2f} estimate=${float(estimate['estimated_cost_usd']):.4f}",
     )
 
+    # Each example is isolated in its own database + vector store, so one example's memory
+    # never leaks into another's retrieval (they are independent conversations) and examples
+    # can run concurrently. iso_base holds the per-example stores.
+    iso_base = Path(tempfile.mkdtemp(prefix="mira-benchmark-ex-"))
+    todo: list[tuple[int, dict[str, object]]] = []
     for index, example in enumerate(examples, start=1):
         question_id = str(example.get("question_id", "unknown"))
         if question_id in completed:
             ledger["examples_skipped"] = int(ledger["examples_skipped"]) + 1
             _progress(args, f"example {index}/{total_examples} {question_id}: skipped resume")
             continue
+        todo.append((index, example))
+
+    if args.parallel > 1:
+        return _run_examples_parallel(todo, args, ledger, iso_base, total_examples)
+    return _run_examples_sequential(todo, args, ledger, iso_base, total_examples)
+
+
+def _run_examples_sequential(
+    todo: list[tuple[int, dict[str, object]]],
+    args: argparse.Namespace,
+    ledger: Ledger,
+    iso_base: Path,
+    total_examples: int,
+) -> tuple[list[dict[str, object]], Ledger]:
+    results: list[dict[str, object]] = []
+    for index, example in todo:
+        question_id = str(example.get("question_id", "unknown"))
         if float(ledger["estimated_cost_usd"]) >= args.budget_usd:
             ledger["stopped_for_budget"] = True
             ledger["examples_skipped"] = int(ledger["examples_skipped"]) + 1
             _progress(args, f"example {index}/{total_examples} {question_id}: skipped budget")
             continue
-
-        # 1. Import conversation; 2. run slow path so durable memory forms.
-        turn_count = _turn_count(example)
-        _progress(
-            args,
-            f"example {index}/{total_examples} {question_id}: importing {turn_count} turns",
-        )
-        import_conversations(example)
-        _progress(args, f"example {index}/{total_examples} {question_id}: running slow path")
-        _run_slow_path(ledger, args)
-
-        # 3. Ask MIRA (gold answer is NOT passed in -- anti-leakage).
-        question = str(example.get("question", ""))
-        _progress(args, f"example {index}/{total_examples} {question_id}: answering")
-        captured = _answer_with_cache(cache, example, question, ledger, args)
-
-        # 4. Judge (deterministic / llm / hybrid) with caching.
-        _progress(args, f"example {index}/{total_examples} {question_id}: judging")
-        verdict = _judge_with_cache(cache, example, captured, ledger, args)
-        results.append(_example_result(example, captured, verdict, args))
+        outcome = _process_example((example, args, str(iso_base), index))
+        _merge_ledger_delta(ledger, cast("dict[str, Any]", outcome["ledger_delta"]))
+        results.append(cast("dict[str, object]", outcome["result"]))
         ledger["examples_completed"] = int(ledger["examples_completed"]) + 1
         _progress(
             args,
             f"example {index}/{total_examples} {question_id}: done "
             f"cost=${float(ledger['actual_cost_usd']):.4f}",
         )
-
     return results, ledger
+
+
+def _run_examples_parallel(
+    todo: list[tuple[int, dict[str, object]]],
+    args: argparse.Namespace,
+    ledger: Ledger,
+    iso_base: Path,
+    total_examples: int,
+) -> tuple[list[dict[str, object]], Ledger]:
+    """Run examples N at a time in isolated subprocesses; merge ledgers as each finishes.
+
+    Wave-based so the running estimate can gate the budget between waves (bounded overshoot).
+    Results are checkpointed after every wave so ``--resume`` can pick up after a crash.
+    """
+    results: list[dict[str, object]] = []
+    # fork so workers inherit the installed LLM mode (env or stub patches) and the loaded
+    # embedding model without re-initializing per worker.
+    context = multiprocessing.get_context("fork")
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=args.parallel, mp_context=context
+    ) as pool:
+        for start in range(0, len(todo), args.parallel):
+            if float(ledger["estimated_cost_usd"]) >= args.budget_usd:
+                ledger["stopped_for_budget"] = True
+                ledger["examples_skipped"] = int(ledger["examples_skipped"]) + (len(todo) - start)
+                break
+            wave = todo[start : start + args.parallel]
+            futures = {
+                pool.submit(_process_example, (example, args, str(iso_base), index)): (
+                    index,
+                    example,
+                )
+                for index, example in wave
+            }
+            for future in concurrent.futures.as_completed(futures):
+                index, example = futures[future]
+                outcome = future.result()
+                _merge_ledger_delta(ledger, cast("dict[str, Any]", outcome["ledger_delta"]))
+                results.append(cast("dict[str, object]", outcome["result"]))
+                ledger["examples_completed"] = int(ledger["examples_completed"]) + 1
+                question_id = str(example.get("question_id", "unknown"))
+                _progress(
+                    args,
+                    f"example {index}/{total_examples} {question_id}: done "
+                    f"cost=${float(ledger['actual_cost_usd']):.4f}",
+                )
+            _checkpoint_results(results, args)
+    return results, ledger
+
+
+def _process_example(
+    payload: tuple[dict[str, object], argparse.Namespace, str, int],
+) -> dict[str, object]:
+    """Run one example end-to-end in an isolated database + vector store.
+
+    Import the conversation, drain the slow path, answer the question (no gold answer passed
+    in -- anti-leakage), and judge it. Charges a local ledger and returns it as a delta so
+    the parent can merge costs from many workers.
+    """
+    from evaluation.benchmarks.longmemeval import import_conversations
+
+    example, args, iso_base, index = payload
+    _isolate_example(Path(iso_base), index)
+    cache = _Cache(Path(args.out) / "cache", enabled=bool(args.cache or args.resume))
+    local = _new_ledger(args, {"estimated_cost_usd": 0.0, "by_stage": {}})
+
+    import_conversations(example)
+    _run_slow_path(local, args)
+    question = str(example.get("question", ""))
+    captured = _answer_with_cache(cache, example, question, local, args)
+    verdict = _judge_with_cache(cache, example, captured, local, args)
+    result = _example_result(example, captured, verdict, args)
+    return {
+        "result": result,
+        "ledger_delta": {
+            "calls": local["calls"],
+            "estimated_cost_usd": local["estimated_cost_usd"],
+            "actual_cost_usd": local["actual_cost_usd"],
+        },
+    }
+
+
+def _isolate_example(iso_base: Path, index: int) -> None:
+    from core.db.chroma import reset_vector_store
+    from core.db.repositories import configure_database
+
+    os.environ["CHROMA_DB_PATH"] = str(iso_base / f"chroma-{index}")
+    reset_vector_store()
+    database_path = iso_base / f"db-{index}" / "benchmark.sqlite3"
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    configure_database(str(database_path))
+    reset_vector_store()
+
+
+def _merge_ledger_delta(ledger: Ledger, delta: dict[str, Any]) -> None:
+    for stage, call in delta["calls"].items():
+        master = ledger["calls"][stage]
+        master["count"] += int(call["count"])
+        master["input_tokens"] += int(call["input_tokens"])
+        master["output_tokens"] += int(call["output_tokens"])
+        master["estimated_cost_usd"] = round(
+            float(master["estimated_cost_usd"]) + float(call["estimated_cost_usd"]), 6
+        )
+    ledger["estimated_cost_usd"] = round(
+        float(ledger["estimated_cost_usd"]) + float(delta["estimated_cost_usd"]), 6
+    )
+    ledger["actual_cost_usd"] = round(
+        float(ledger["actual_cost_usd"]) + float(delta["actual_cost_usd"]), 6
+    )
+
+
+def _checkpoint_results(results: list[dict[str, object]], args: argparse.Namespace) -> None:
+    """Persist results-so-far so a crashed parallel run can resume by question_id."""
+    out = Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "benchmark_results.json").write_text(
+        json.dumps({"results": results}, indent=2, sort_keys=True, default=str), encoding="utf-8"
+    )
 
 
 def _answer_with_cache(
@@ -825,6 +950,16 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument("--max-output-tokens", type=int, default=DEFAULT_MAX_OUTPUT_TOKENS)
     parser.add_argument("--cache", action="store_true")
     parser.add_argument("--resume", action="store_true")
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Run N examples concurrently, each in its own isolated database (big wall-clock "
+            "win for the live run). Default 1. Keep N within the provider's concurrency limit."
+        ),
+    )
     parser.add_argument("--save-judge-prompts", action="store_true")
     parser.add_argument("--quiet", action="store_true")
     official = parser.add_mutually_exclusive_group()

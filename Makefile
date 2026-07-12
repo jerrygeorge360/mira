@@ -126,6 +126,7 @@ benchmark:
 		--budget-usd $${BUDGET_USD:-15} \
 		--model $${MODEL:-qwen-plus} \
 		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		$${PARALLEL:+--parallel $$PARALLEL} $${RESUME:+--resume} $${CACHE:+--cache} \
 		--out evaluation/results/benchmarks
 
 benchmark-subset:
@@ -139,6 +140,7 @@ benchmark-subset:
 		--budget-usd $${BUDGET_USD:-15} \
 		--model $${MODEL:-qwen-plus} \
 		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		$${PARALLEL:+--parallel $$PARALLEL} $${RESUME:+--resume} $${CACHE:+--cache} \
 		--out evaluation/results/benchmarks
 
 clean:
