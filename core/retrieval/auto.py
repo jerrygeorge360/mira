@@ -30,8 +30,11 @@ RoutingStrategy = str
 ROUTING_STRATEGIES = frozenset({"fast", "hybrid", "accurate"})
 
 # Under the "hybrid" strategy, a deterministic route below this confidence (or one
-# flagged ambiguous) defers to the LLM classifier.
-ROUTER_ESCALATION_CONFIDENCE = 0.72
+# flagged ambiguous) defers to the LLM classifier. Kept below the deterministic router's
+# base memory-cue confidence (0.7) so a correct-but-borderline personal-memory route is not
+# handed to the less reliable, non-deterministic LLM classifier (which was observed to flip
+# such a route to general_knowledge and abstain -- see the downgrade guard in route_retrieval).
+ROUTER_ESCALATION_CONFIDENCE = 0.65
 ROUTER_MODES = frozenset({"general", "quick", "deep", "relational", "auto"})
 
 GENERAL_KNOWLEDGE_INTENT = "general_knowledge"
@@ -208,9 +211,23 @@ def route_retrieval(
     # and offline runs stay deterministic and never attempt a network call.
     if strategy == "hybrid" and _should_escalate_to_llm(deterministic) and _llm_routing_available():
         llm_decision = _llm_route_retrieval(query)
-        if llm_decision is not None:
+        if llm_decision is not None and not _is_personal_to_general_downgrade(
+            deterministic, llm_decision
+        ):
             return llm_decision
     return deterministic
+
+
+def _is_personal_to_general_downgrade(deterministic: Decision, llm_decision: Decision) -> bool:
+    """True when the LLM would turn a personal-memory route into general knowledge.
+
+    A first-person memory question ("what did I ...") must still hit memory, so the
+    deterministic personal-memory intent is kept rather than abstaining as general knowledge.
+    """
+    return (
+        deterministic.get("intent") == PERSONAL_MEMORY_INTENT
+        and llm_decision.get("intent") == GENERAL_KNOWLEDGE_INTENT
+    )
 
 
 def _should_escalate_to_llm(decision: Decision) -> bool:

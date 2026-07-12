@@ -71,7 +71,7 @@ Related: [`docs/spec-alignment-plan.md`](spec-alignment-plan.md) (phased tracker
 
 ### B2. Hybrid retrieval router — **ADD** (paper likely describes deterministic Auto only)
 - **Decision (yours: recommended hybrid):** deterministic route first; escalate to an LLM
-  classifier only when the route is low-confidence (<0.72) or ambiguous, and only when a
+  classifier only when the route is low-confidence (<0.65) or ambiguous, and only when a
   provider key is configured (so offline/tests stay deterministic). Agent default
   `strategy="hybrid"`.
 - **Code:** `route_retrieval` + `_llm_route_retrieval` in `core/retrieval/auto.py`.

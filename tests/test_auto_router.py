@@ -139,7 +139,7 @@ def test_hybrid_stays_deterministic_without_llm(monkeypatch: pytest.MonkeyPatch)
 
 
 def test_hybrid_escalates_low_confidence_to_llm(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A low-confidence deterministic route defers to the LLM classifier under hybrid."""
+    """An ambiguous deterministic route defers to the LLM classifier under hybrid."""
     monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
 
     def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
@@ -147,10 +147,49 @@ def test_hybrid_escalates_low_confidence_to_llm(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
 
-    decision = route_retrieval("What do I prefer?", None, strategy="hybrid")
+    decision = route_retrieval("What should I do next?", None, strategy="hybrid")
 
     assert decision["mode"] == "relational"
     assert decision["reason"] == "preference comparison"
+
+
+def test_hybrid_keeps_borderline_personal_memory_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A borderline (0.7) personal-memory route is kept, not handed to the LLM classifier."""
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
+
+    def _no_call(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("a >=0.65-confidence route must not consult the LLM router")
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _no_call)
+
+    # A memory cue -> deterministic quick at 0.7, which is now above the 0.65 escalation bar.
+    decision = route_retrieval("What do I prefer?", None, strategy="hybrid")
+
+    assert decision["mode"] == "quick"
+    assert decision["intent"] == "personal_memory"
+
+
+def test_hybrid_blocks_personal_to_general_downgrade(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When a personal-memory route does escalate, the LLM may not downgrade it to general."""
+    from core.retrieval.auto import PERSONAL_MEMORY_INTENT, _decision
+
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
+    # Force a low-confidence personal-memory deterministic route so hybrid escalates.
+    monkeypatch.setattr(
+        "core.retrieval.auto._deterministic_route_retrieval",
+        lambda query: _decision("quick", "forced personal", 0.5, intent=PERSONAL_MEMORY_INTENT),
+    )
+
+    def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        return {"json": {"mode": "general", "reason": "no memory", "intent": "general_knowledge"}}
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
+
+    decision = route_retrieval("anything at all", None, strategy="hybrid")
+
+    # The general downgrade is rejected; the deterministic personal-memory route is kept.
+    assert decision["intent"] == "personal_memory"
+    assert decision["mode"] == "quick"
 
 
 def test_hybrid_keeps_confident_deterministic_route(monkeypatch: pytest.MonkeyPatch) -> None:
