@@ -89,7 +89,20 @@ root cause and the A/C/D fix that resolved it).
 
 ---
 
-## 4. D3 live re-run — PARTIALLY DONE (results below; ablation needs a clean rerun)
+## 4. D3 live re-run — DONE (clean run on the fixed system)
+
+**Final numbers (DeepSeek + local embeddings, fresh run):** Local eval **12/13 (0.92)** — only
+`contradiction-deadline-conflict` fails (known eval-case issue: same-subject conflict becomes
+`SUPERSEDED_BY` not `CONTRADICTS`; fix = rewrite the case). Reflection now works end-to-end
+(`reflection-user-knowledge` PASSES). Ablation **full_system 7/7 (1.00)** on the lean set;
+**every layer discriminates and attributes to the right case**, including the two that were
+previously inert: `session_working_set` (loses session-constraint) and `flat_memory` (loses
+structured-first — structured-first weighting is load-bearing on ranking queries). Baselines
+crater: vector_only 0.29, full_transcript 0.14. Older partial-run notes below are superseded.
+
+---
+
+## 4b. Earlier partial-run notes (superseded by the clean run above)
 
 Goal: run the honest system live and record real numbers for (a) the 13 local eval cases /
 6 demo scenarios and (b) the 11-config ablation. Use **DeepSeek** with local embeddings.
