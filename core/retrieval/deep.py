@@ -166,6 +166,27 @@ def _reflection_candidates(query: str, limit: int, workspace_id: str) -> list[Ev
                 "record": dict(row),
             }
         )
+    if not candidates:
+        query_tokens = _tokens(query)
+        for row in active_by_id.values():
+            relevance = _token_overlap(query_tokens, str(row["content"]))
+            if relevance <= 0.0:
+                continue
+            reflection_id = str(row["id"])
+            candidates.append(
+                {
+                    "source": "reflection",
+                    "source_id": reflection_id,
+                    "id": reflection_id,
+                    "content": str(row["content"]),
+                    "reflection_type": str(row["reflection_type"]),
+                    "relevance": relevance,
+                    "confidence": _float(row.get("confidence"), 1.0),
+                    "score": _score("reflection", relevance),
+                    "record": dict(row),
+                }
+            )
+    candidates.sort(key=_ranking_key)
     return candidates[:limit]
 
 

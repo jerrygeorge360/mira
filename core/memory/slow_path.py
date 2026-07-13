@@ -725,7 +725,12 @@ def _step_atomic_facts(
 
 
 def _step_entities(observation_id: str, content: str, workspace_id: str) -> dict[str, list[str]]:
-    entities = extract_entities(content, workspace_id=workspace_id)
+    try:
+        entities = extract_entities(content, workspace_id=workspace_id)
+    except TypeError as error:
+        if "workspace_id" not in str(error):
+            raise
+        entities = extract_entities(content)
     if not entities:
         return {}
     observation_node = _ensure_observation_node(observation_id, content, workspace_id)

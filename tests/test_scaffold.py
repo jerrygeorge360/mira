@@ -85,10 +85,15 @@ def test_application_modules_import_without_third_party() -> None:
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
         "core.memory.graph": frozenset({"networkx"}),
+        "api.dependencies": frozenset({"dotenv"}),
+        "scripts.check_provider": frozenset({"dotenv"}),
+        "scripts.cleanup_demos": frozenset({"dotenv"}),
         "scripts.inspect_graph": frozenset({"dotenv"}),
+        "scripts.run_ablation": frozenset({"dotenv"}),
         "scripts.run_local_eval": frozenset({"dotenv"}),
         "scripts.search_memory": frozenset({"dotenv"}),
         "scripts.slow_path_status": frozenset({"dotenv"}),
+        "ui.app": frozenset({"dotenv"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     for module_name in EXPECTED_MODULES:
@@ -105,10 +110,15 @@ def test_application_imports_are_standard_library_only() -> None:
     third_party_allowlist: dict[str, frozenset[str]] = {
         "core.llm.qwen": frozenset({"openai"}),
         "core.memory.graph": frozenset({"networkx"}),
+        "api.dependencies": frozenset({"dotenv"}),
+        "scripts.check_provider": frozenset({"dotenv"}),
+        "scripts.cleanup_demos": frozenset({"dotenv"}),
         "scripts.inspect_graph": frozenset({"dotenv"}),
+        "scripts.run_ablation": frozenset({"dotenv"}),
         "scripts.run_local_eval": frozenset({"dotenv"}),
         "scripts.search_memory": frozenset({"dotenv"}),
         "scripts.slow_path_status": frozenset({"dotenv"}),
+        "ui.app": frozenset({"dotenv"}),
         "slack.bot": frozenset({"slack_bolt", "dotenv"}),
     }
     allowed_modules = sys.stdlib_module_names | LOCAL_IMPORT_ROOTS
