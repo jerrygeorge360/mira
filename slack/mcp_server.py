@@ -18,8 +18,14 @@ import importlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 
-from core.db.repositories import list_active_foresight
+from core.db.repositories import (
+    WorkspaceContext,
+    bind_workspace,
+    configured_workspace_context,
+    list_active_foresight,
+)
 from core.memory.graph import find_edges_by_type, get_neighbors
 from core.memory.observation import persist_turn_fast_path
 from core.retrieval.auto import route_retrieval
@@ -100,14 +106,18 @@ class MCPServer:
         return self._running
 
 
-def build_mcp_server() -> MCPServer:
+def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     """Build a server with MIRA's memory tools registered."""
+    active_context = context or configured_workspace_context(
+        "MIRA_MCP_WORKSPACE_ID", allow_development_fallback=False
+    )
+    bind_workspace(active_context)
     server = MCPServer()
     server.register(
         MCPTool(
             "save_observation",
             "Persist a raw observation on the fast path.",
-            _save_observation,
+            partial(_save_observation, active_context),
             {
                 "session_id": "string",
                 "content": "string",
@@ -119,7 +129,7 @@ def build_mcp_server() -> MCPServer:
         MCPTool(
             "retrieve_memory",
             "Retrieve direct fact memory for a query (Quick Mode).",
-            _retrieve_memory,
+            partial(_retrieve_memory, active_context),
             {"query": "string", "session_id": "string (optional)", "limit": "int (optional)"},
         )
     )
@@ -127,7 +137,7 @@ def build_mcp_server() -> MCPServer:
         MCPTool(
             "inspect_session_working_set",
             "List prompt-ready Session Working Set items for a session.",
-            _inspect_session_working_set,
+            partial(_inspect_session_working_set, active_context),
             {"session_id": "string", "max_items": "int (optional)"},
         )
     )
@@ -135,7 +145,7 @@ def build_mcp_server() -> MCPServer:
         MCPTool(
             "inspect_graph",
             "Inspect typed graph neighbors of a node or edges of a type.",
-            _inspect_graph,
+            partial(_inspect_graph, active_context),
             {
                 "node_id": "string (optional)",
                 "edge_type": "string (optional)",
@@ -147,7 +157,7 @@ def build_mcp_server() -> MCPServer:
         MCPTool(
             "list_active_foresight",
             "List active foresight records, optionally scoped to a session.",
-            _list_active_foresight,
+            partial(_list_active_foresight, active_context),
             {"session_id": "string (optional)"},
         )
     )
@@ -155,7 +165,7 @@ def build_mcp_server() -> MCPServer:
         MCPTool(
             "run_retrieval_query",
             "Route a query and return retrieval results for the chosen mode.",
-            _run_retrieval_query,
+            partial(_run_retrieval_query, active_context),
             {
                 "query": "string",
                 "session_id": "string (optional)",
@@ -178,67 +188,80 @@ def run_mcp_server(server: MCPServer | None = None) -> MCPServer:
     return server
 
 
-def _save_observation(params: ToolParams) -> ToolResult:
+def _save_observation(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     session_id = _require_str(params, "session_id")
+    _require_owned_session(context, session_id)
     content = _require_str(params, "content")
     role = _optional_str(params, "role") or "user"
     observation_id = persist_turn_fast_path(session_id, role, content)
     return {"observation_id": observation_id}
 
 
-def _retrieve_memory(params: ToolParams) -> ToolResult:
+def _retrieve_memory(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     query = _require_str(params, "query")
     session_id = _optional_str(params, "session_id")
     limit = _int(params.get("limit"), DEFAULT_LIMIT)
-    results = retrieve_quick(query, session_id, limit)
+    if session_id:
+        _require_owned_session(context, session_id)
+    results = retrieve_quick(query, session_id, limit, workspace_id=context.workspace_id)
     return {"results": results, "count": len(results)}
 
 
-def _inspect_session_working_set(params: ToolParams) -> ToolResult:
+def _inspect_session_working_set(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     session_id = _require_str(params, "session_id")
+    _require_owned_session(context, session_id)
     max_items = _int(params.get("max_items"), DEFAULT_SESSION_ITEMS)
     items = export_prompt_ready_session_items(session_id, max_items)
     return {"items": items, "count": len(items)}
 
 
-def _inspect_graph(params: ToolParams) -> ToolResult:
+def _inspect_graph(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     node_id = _optional_str(params, "node_id")
     edge_type = _optional_str(params, "edge_type")
     if node_id:
         depth = _int(params.get("depth"), 1)
         edge_types = [edge_type] if edge_type else None
-        neighbors = get_neighbors(node_id, edge_types, depth)
+        neighbors = get_neighbors(node_id, edge_types, depth, workspace_id=context.workspace_id)
         return {"node_id": node_id, "neighbors": neighbors, "count": len(neighbors)}
     if edge_type:
-        edges = find_edges_by_type(edge_type)
+        edges = find_edges_by_type(edge_type, workspace_id=context.workspace_id)
         return {"edge_type": edge_type, "edges": edges, "count": len(edges)}
     raise ValueError("inspect_graph requires node_id or edge_type")
 
 
-def _list_active_foresight(params: ToolParams) -> ToolResult:
+def _list_active_foresight(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     session_id = _optional_str(params, "session_id")
-    records = list_active_foresight(session_id)
+    if session_id:
+        _require_owned_session(context, session_id)
+    records = list_active_foresight(session_id, workspace_id=context.workspace_id)
     return {"foresight": records, "count": len(records)}
 
 
-def _run_retrieval_query(params: ToolParams) -> ToolResult:
+def _run_retrieval_query(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     query = _require_str(params, "query")
     session_id = _optional_str(params, "session_id")
+    if session_id:
+        _require_owned_session(context, session_id)
     limit = _int(params.get("limit"), DEFAULT_LIMIT)
     decision = route_retrieval(query, session_id)
     mode = _optional_str(params, "mode") or str(decision["mode"])
     if mode == "deep":
-        results = retrieve_deep(query, session_id, limit)
+        results = retrieve_deep(query, session_id, limit, workspace_id=context.workspace_id)
     else:
         # Quick Mode also backs the relational fallback here: resolving graph
         # anchors from free text is agent-side logic and is not duplicated.
-        results = retrieve_quick(query, session_id, limit)
+        results = retrieve_quick(query, session_id, limit, workspace_id=context.workspace_id)
     return {
         "mode": mode,
         "reason": decision.get("reason"),
         "results": results,
         "count": len(results),
     }
+
+
+def _require_owned_session(context: WorkspaceContext, session_id: str) -> None:
+    if bind_workspace(context).get_session(session_id) is None:
+        raise ValueError("session does not belong to the configured MCP workspace")
 
 
 def _require_str(params: ToolParams, key: str) -> str:

@@ -7,7 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from core.db.repositories import configure_database, create_session
+from core.db.repositories import (
+    WorkspaceContext,
+    bind_workspace,
+    configure_database,
+    create_session,
+    create_workspace,
+)
 from core.llm.functions import (
     INSPECT_MEMORY_FUNCTION,
     inspect_memory,
@@ -83,3 +89,18 @@ def test_tool_result_context_record_is_prompt_ready(database_path: Path) -> None
     assert record["id"] == "tool:inspect_memory"
     assert record["source"] == "structured_tool"
     assert "Structured memory inspection result" in str(record["content"])
+
+
+def test_structured_memory_inspection_is_workspace_scoped(database_path: Path) -> None:
+    workspace_a = create_workspace("Inspector A", "inspector-a", "development")
+    workspace_b = create_workspace("Inspector B", "inspector-b", "development")
+    repo_a = bind_workspace(WorkspaceContext(workspace_a))
+    repo_b = bind_workspace(WorkspaceContext(workspace_b))
+    session_a = repo_a.create_session("a")
+    repo_a.save_observation(session_a, "user", "A memory")
+    session_b = repo_b.create_session("b")
+    repo_b.save_observation(session_b, "user", "B private memory")
+
+    result = inspect_memory(session_a, query="show memory")
+
+    assert result["counts"]["observations"] == 1

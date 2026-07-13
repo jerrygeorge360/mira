@@ -20,6 +20,7 @@ from core.db.repositories import (
     repository_connection,
     save_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.memory import slow_path
 from core.memory.graph import canonicalize_entity, find_edges_by_type
 from core.memory.slow_path import run_slow_path_batch, run_slow_path_for_observation
@@ -33,10 +34,10 @@ def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     monkeypatch.setenv("EMBEDDING_MODE", "deterministic")
     configure_database(path)
     for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
-        chroma.delete_collection(collection)
+        chroma.delete_collection_admin(collection)
     yield path
     for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
-        chroma.delete_collection(collection)
+        chroma.delete_collection_admin(collection)
 
 
 def _count(query: str, *params: object) -> int:
@@ -132,6 +133,7 @@ def test_orchestrator_processes_queued_observation(
         "observations",
         slow_path.embed_text("Jerry prefers the TypeScript backend."),
         top_k=1,
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
     assert vector_results[0]["sqlite_id"] == observation_id
 

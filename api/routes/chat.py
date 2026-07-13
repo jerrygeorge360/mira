@@ -2,23 +2,34 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from api.auth import WorkspaceAuth, require_csrf
 from api.schemas.chat import ChatRequest, ChatResponse
 from core.agent import Agent
-from core.db.repositories import create_session
+from core.db.repositories import bind_workspace
 
 router = APIRouter(tags=["chat"])
 
 
 @router.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest) -> ChatResponse:
+def chat(
+    request: Request,
+    payload: ChatRequest,
+    auth: WorkspaceAuth,
+) -> ChatResponse:
     """Run one real MIRA agent turn."""
-    session_id = request.session_id or create_session(request.user_id, "API chat")
+    require_csrf(request, auth)
+    repository = bind_workspace(auth.context)
+    session_id = payload.session_id or repository.create_session(
+        auth.context.user_id or "development", "API chat"
+    )
+    if repository.get_session(session_id) is None:
+        raise HTTPException(status_code=404, detail="session_id not found")
     try:
         result = Agent(session_id).respond(
-            request.message,
-            routing_strategy=request.routing_strategy,
+            payload.message,
+            routing_strategy=payload.routing_strategy,
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error

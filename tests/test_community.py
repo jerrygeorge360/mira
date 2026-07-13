@@ -17,9 +17,11 @@ from core.db import chroma
 from core.db.repositories import (
     configure_database,
     create_session,
+    create_workspace,
     repository_connection,
     save_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.memory import community
 from core.memory.community import (
     detect_graph_communities,
@@ -170,7 +172,12 @@ def test_summary_can_be_indexed_for_retrieval(database_path: Path) -> None:
     embedding = community._embed_text(
         "Persistence Architecture SQLite stores durable memory while indexes remain rebuildable."
     )
-    pointers = chroma.query_embeddings(community.INDEX_COLLECTION, embedding, top_k=5)
+    pointers = chroma.query_embeddings(
+        community.INDEX_COLLECTION,
+        embedding,
+        top_k=5,
+        workspace_id=LEGACY_WORKSPACE_ID,
+    )
     assert summary_id in [str(pointer["sqlite_id"]) for pointer in pointers]
 
 
@@ -183,5 +190,23 @@ def test_store_rejects_summary_without_members(database_path: Path) -> None:
                 "title": "Title",
                 "summary": "Body",
                 "member_node_ids": [],
+            }
+        )
+
+
+def test_store_rejects_member_from_another_workspace(database_path: Path) -> None:
+    workspace_a = create_workspace("A", "community-a", "development")
+    workspace_b = create_workspace("B", "community-b", "development")
+    node_a = create_graph_node(node_type="entity", label="A", workspace_id=workspace_a)
+    node_b = create_graph_node(node_type="entity", label="B", workspace_id=workspace_b)
+
+    with pytest.raises(ValueError, match="belong to the workspace"):
+        store_community_summary(
+            {
+                "workspace_id": workspace_a,
+                "community_id": "mixed-community",
+                "title": "Invalid mixed community",
+                "summary": "This must not be stored.",
+                "member_node_ids": [node_a, node_b],
             }
         )

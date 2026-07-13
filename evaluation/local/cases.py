@@ -26,6 +26,7 @@ from core.db.repositories import (
 from evaluation.runtime.case_runner import (
     DebugRecord,
     ProgressReporter,
+    create_evaluation_workspace,
     isolate_case_state,
     isolation_base_path,
     json_dump,
@@ -108,12 +109,20 @@ def run_evaluation_cases(
     original_database = current_database_path()
     isolation_base = isolation_base_path(original_database) if isolate_cases else None
     results: list[CaseResult] = list(prior_results)
+    shared_workspace_id = (
+        None if isolation_base is not None else create_evaluation_workspace("local-shared")
+    )
     try:
         for index, case in enumerate(all_cases, start=1):
             if str(case.get("id", "unnamed")) in done_ids:
                 continue
             if isolation_base is not None:
                 isolate_case_state(isolation_base, index, progress)
+                workspace_id = create_evaluation_workspace(f"local-{index}")
+            else:
+                if shared_workspace_id is None:
+                    raise RuntimeError("shared evaluation workspace was not initialized")
+                workspace_id = shared_workspace_id
             results.append(
                 _evaluate_case(
                     case,
@@ -125,6 +134,7 @@ def run_evaluation_cases(
                     run_slow_path=run_slow_path,
                     slow_path_batch_size=slow_path_batch_size,
                     debug_records=debug_records if debug_trace else None,
+                    workspace_id=workspace_id,
                 )
             )
             # Checkpoint after each case so a crash can resume from here.
@@ -295,6 +305,7 @@ def _evaluate_case(
     run_slow_path: bool,
     slow_path_batch_size: int,
     debug_records: list[DebugRecord] | None,
+    workspace_id: str,
 ) -> CaseResult:
     case_id = str(case.get("id", "unnamed"))
     category = str(case.get("category", "uncategorized"))
@@ -310,6 +321,7 @@ def _evaluate_case(
             case,
             case_id=case_id,
             session_user="evaluation",
+            workspace_id=workspace_id,
             progress=progress,
             delay_s=delay_s,
             interaction_counter=interaction_counter,

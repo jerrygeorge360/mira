@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from core.db.repositories import repository_connection
+from core.db.schema import LEGACY_WORKSPACE_ID
 from scripts.seed_demo import seed_demo_data
 from ui.foresight_view import load_foresight
 from ui.graph_viz import load_graph
@@ -33,7 +34,7 @@ def _count(table: str) -> int:
 
 def test_seed_creates_demo_database(database_path: Path) -> None:
     """Running the seed populates every demo-relevant table."""
-    summary = seed_demo_data(str(database_path))
+    summary = seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID)
 
     assert summary["status"] == "seeded"
     assert database_path.exists()
@@ -52,11 +53,11 @@ def test_seed_creates_demo_database(database_path: Path) -> None:
 
 def test_running_twice_does_not_corrupt(database_path: Path) -> None:
     """A second seed is idempotent: it detects existing data and no-ops."""
-    first = seed_demo_data(str(database_path))
+    first = seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID)
     observations_before = _count("observations")
     edges_before = _count("graph_edges")
 
-    second = seed_demo_data(str(database_path))
+    second = seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID)
 
     assert second["status"] == "already_seeded"
     assert second["session_id"] == first["session_id"]
@@ -67,10 +68,10 @@ def test_running_twice_does_not_corrupt(database_path: Path) -> None:
 
 def test_reset_rebuilds_demo(database_path: Path) -> None:
     """The reset flag rebuilds the demo without accumulating duplicates."""
-    seed_demo_data(str(database_path))
+    seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID)
     observations_before = _count("observations")
 
-    summary = seed_demo_data(str(database_path), reset=True)
+    summary = seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID, reset=True)
 
     assert summary["status"] == "seeded"
     assert _count("sessions") == 1
@@ -80,15 +81,15 @@ def test_reset_rebuilds_demo(database_path: Path) -> None:
 
 def test_ui_pages_have_meaningful_data(database_path: Path) -> None:
     """The seeded data is consumable by the UI page loaders."""
-    summary = seed_demo_data(str(database_path))
+    summary = seed_demo_data(str(database_path), LEGACY_WORKSPACE_ID)
     session_id = str(summary["session_id"])
 
     session_items = load_session_items(session_id)
     assert {str(item["status"]) for item in session_items} >= {"provisional", "rejected"}
 
-    graph = load_graph()
+    graph = load_graph(LEGACY_WORKSPACE_ID)
     edge_types = {str(edge["type"]) for edge in graph["edges"]}
     assert {"CONTRADICTS", "SUPERSEDED_BY"} <= edge_types
 
-    foresight = load_foresight()
+    foresight = load_foresight(LEGACY_WORKSPACE_ID)
     assert any("hackathon" in str(record["content"]).lower() for record in foresight)

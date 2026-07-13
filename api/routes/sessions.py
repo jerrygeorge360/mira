@@ -2,38 +2,99 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
+from api.auth import WorkspaceAuth, require_csrf
 from api.dependencies import fetch_one
 from api.schemas.sessions import (
+    ChatMessage,
     CreateSessionRequest,
+    SessionListResponse,
+    SessionMessagesResponse,
     SessionResponse,
+    SessionSummary,
     SessionWorkingSetResponse,
 )
-from core.db.repositories import create_session
+from core.db.repositories import bind_workspace, list_observations, message_counts_by_session
 from core.session.working_set import list_active_session_items
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
+_MESSAGE_ROLES = frozenset({"user", "assistant"})
+
 
 @router.post("", response_model=SessionResponse)
-def create_session_route(request: CreateSessionRequest) -> SessionResponse:
+def create_session_route(
+    request: Request,
+    payload: CreateSessionRequest,
+    auth: WorkspaceAuth,
+) -> SessionResponse:
     """Create a MIRA session."""
-    session_id = create_session(request.user_id, request.title)
-    session = _get_session_or_404(session_id)
+    require_csrf(request, auth)
+    repository = bind_workspace(auth.context)
+    session_id = repository.create_session(auth.context.user_id or "development", payload.title)
+    session = _get_session_or_404(session_id, auth.context.workspace_id)
     return _session_response(session)
 
 
+@router.get("", response_model=SessionListResponse)
+def list_sessions_route(
+    auth: WorkspaceAuth,
+    limit: int = 50,
+) -> SessionListResponse:
+    """List sessions (most recently updated first) for the conversation-history sidebar."""
+    counts = message_counts_by_session()
+    sessions = [
+        SessionSummary(
+            session_id=str(row["id"]),
+            title=str(row["title"]) if row.get("title") is not None else None,
+            user_id=str(row["user_id"]),
+            status=str(row["status"]),
+            created_at=str(row["created_at"]),
+            updated_at=str(row["updated_at"]) if row.get("updated_at") is not None else None,
+            message_count=counts.get(str(row["id"]), 0),
+        )
+        for row in bind_workspace(auth.context).list_sessions(limit=limit)
+    ]
+    return SessionListResponse(sessions=sessions)
+
+
+@router.get("/{session_id}/messages", response_model=SessionMessagesResponse)
+def get_session_messages_route(
+    session_id: str,
+    auth: WorkspaceAuth,
+    limit: int = 200,
+) -> SessionMessagesResponse:
+    """Return a session's user/assistant turns in order, to reopen a conversation."""
+    _get_session_or_404(session_id, auth.context.workspace_id)
+    messages = [
+        ChatMessage(
+            role=str(row["role"]),
+            content=str(row["content"]),
+            created_at=str(row["created_at"]),
+        )
+        for row in list_observations(session_id, limit)
+        if str(row.get("role")) in _MESSAGE_ROLES
+    ]
+    return SessionMessagesResponse(session_id=session_id, messages=messages)
+
+
 @router.get("/{session_id}", response_model=SessionResponse)
-def get_session_route(session_id: str) -> SessionResponse:
+def get_session_route(
+    session_id: str,
+    auth: WorkspaceAuth,
+) -> SessionResponse:
     """Return session metadata."""
-    return _session_response(_get_session_or_404(session_id))
+    return _session_response(_get_session_or_404(session_id, auth.context.workspace_id))
 
 
 @router.get("/{session_id}/working-set", response_model=SessionWorkingSetResponse)
-def get_working_set_route(session_id: str) -> SessionWorkingSetResponse:
+def get_working_set_route(
+    session_id: str,
+    auth: WorkspaceAuth,
+) -> SessionWorkingSetResponse:
     """Return active Session Working Set state grouped for UI clients."""
-    _get_session_or_404(session_id)
+    _get_session_or_404(session_id, auth.context.workspace_id)
     items = list_active_session_items(session_id)
     return SessionWorkingSetResponse(
         session_id=session_id,
@@ -50,8 +111,11 @@ def get_working_set_route(session_id: str) -> SessionWorkingSetResponse:
     )
 
 
-def _get_session_or_404(session_id: str) -> dict[str, object]:
-    row = fetch_one("SELECT * FROM sessions WHERE id = ?", (session_id,))
+def _get_session_or_404(session_id: str, workspace_id: str) -> dict[str, object]:
+    row = fetch_one(
+        "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+        (session_id, workspace_id),
+    )
     if row is None:
         raise HTTPException(status_code=404, detail="session_id not found")
     return row

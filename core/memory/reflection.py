@@ -23,6 +23,7 @@ from core.db.repositories import (
     link_reflection_evidence,
     repository_connection,
     validate_enum_value,
+    workspace_id_for_observation,
 )
 from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
@@ -118,9 +119,16 @@ def store_reflection_with_evidence(
     grounded_observation_ids = _existing_observation_ids(evidence_observation_ids)
     if not grounded_observation_ids:
         raise ValueError("reflections must be source-backed by at least one existing observation")
+    workspace_id = workspace_id_for_observation(grounded_observation_ids[0])
+    if any(
+        workspace_id_for_observation(observation_id) != workspace_id
+        for observation_id in grounded_observation_ids[1:]
+    ):
+        raise ValueError("reflection evidence cannot cross workspaces")
 
     reflection_id = create_reflection(
         {
+            "workspace_id": workspace_id,
             "reflection_type": reflection_type,
             "content": content,
             "confidence": confidence,
@@ -136,18 +144,20 @@ def store_reflection_with_evidence(
         reflection_id,
         embed_text(content),
         metadata={"reflection_type": reflection_type},
+        workspace_id=workspace_id,
     )
     reflection_node_id = create_graph_node(
         node_type="reflection",
         label=_label(content) or reflection_type,
         source_table="reflections",
         source_id=reflection_id,
+        workspace_id=workspace_id,
     )
     for observation_id in grounded_observation_ids:
         link_reflection_evidence(reflection_id, observation_id)
         create_graph_edge(
             reflection_node_id,
-            _observation_node_id(observation_id),
+            _observation_node_id(observation_id, workspace_id),
             "DERIVED_FROM",
             confidence=confidence,
             source_observations=[observation_id],
@@ -359,16 +369,16 @@ def _existing_observation_ids(observation_ids: list[str]) -> list[str]:
     return existing
 
 
-def _observation_node_id(observation_id: str) -> str:
+def _observation_node_id(observation_id: str, workspace_id: str) -> str:
     with repository_connection() as connection:
         row = connection.execute(
             """
             SELECT id FROM graph_nodes
-            WHERE node_type = ? AND source_table = ? AND source_id = ?
+            WHERE workspace_id = ? AND node_type = ? AND source_table = ? AND source_id = ?
             ORDER BY created_at ASC
             LIMIT 1
             """,
-            ("observation", "observations", observation_id),
+            (workspace_id, "observation", "observations", observation_id),
         ).fetchone()
     if row is not None:
         return str(row["id"])
@@ -378,6 +388,7 @@ def _observation_node_id(observation_id: str) -> str:
         label=_label(content) or observation_id,
         source_table="observations",
         source_id=observation_id,
+        workspace_id=workspace_id,
     )
 
 

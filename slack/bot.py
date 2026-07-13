@@ -7,14 +7,19 @@ Architecture area: Slack.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from collections.abc import Callable
-from datetime import datetime, timezone
 from typing import Any
 
 from core.agent import handle_user_message as agent_handle_message
-from core.db.repositories import configure_database, repository_connection
+from core.db.repositories import (
+    WorkspaceContext,
+    bind_workspace,
+    configure_database,
+    ensure_workspace_session,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -30,20 +35,9 @@ def build_session_id(channel_id: str, thread_ts: str | None, user_id: str) -> st
     return f"slack:{channel_id}:user:{user_id}"
 
 
-def _ensure_session(session_id: str, user_id: str) -> str:
+def _ensure_session(session_id: str, user_id: str, context: WorkspaceContext) -> str:
     """Create the MIRA session if it doesn't already exist."""
-    now = datetime.now(timezone.utc).isoformat()  # noqa: UP017
-    with repository_connection() as connection:
-        existing = connection.execute(
-            "SELECT id FROM sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-        if existing is None:
-            connection.execute(
-                "INSERT INTO sessions (id, user_id, status, created_at, updated_at) "
-                "VALUES (?, ?, 'active', ?, ?)",
-                (session_id, user_id, now, now),
-            )
-    return session_id
+    return ensure_workspace_session(context, session_id, user_id, source="slack")
 
 
 def build_answer_blocks(answer: str, retrieval_mode: str, trace_id: str) -> list[dict[str, object]]:
@@ -77,14 +71,19 @@ def build_error_blocks(error_message: str) -> list[dict[str, object]]:
 
 
 def handle_message(
-    channel_id: str, user_id: str, text: str, thread_ts: str | None = None
+    channel_id: str,
+    user_id: str,
+    text: str,
+    thread_ts: str | None = None,
+    *,
+    context: WorkspaceContext,
 ) -> dict[str, object]:
     """Process a Slack message through MIRA and return response data."""
     if not text.strip():
         raise ValueError("message text must not be empty")
 
     session_id = build_session_id(channel_id, thread_ts, user_id)
-    _ensure_session(session_id, user_id)
+    _ensure_session(session_id, user_id, context)
 
     response = agent_handle_message(session_id, text)
 
@@ -120,6 +119,7 @@ def run_bot() -> None:
         raise ValueError("SLACK_BOT_TOKEN environment variable is required")
     if not app_token:
         raise ValueError("SLACK_APP_TOKEN environment variable is required")
+    team_bindings = configured_slack_team_bindings()
 
     from slack_bolt import App
     from slack_bolt.adapter.socket_mode import SocketModeHandler
@@ -136,17 +136,21 @@ def run_bot() -> None:
             return
 
         channel_id = str(message.get("channel", ""))
+        team_id = str(message.get("team") or message.get("team_id") or "")
         user_id = str(message.get("user", ""))
         text = str(message.get("text", ""))
         thread_ts: str | None = message.get("thread_ts") or message.get("ts")  # type: ignore[assignment]
 
-        if not user_id or not text.strip():
+        if not team_id or not user_id or not text.strip():
             return
 
         LOGGER.info("Slack message from %s in %s", user_id, channel_id)
 
         try:
-            result = handle_message(channel_id, user_id, text, thread_ts)
+            context = team_bindings.get(team_id)
+            if context is None:
+                raise ValueError("Slack team is not bound to a MIRA workspace")
+            result = handle_message(channel_id, user_id, text, thread_ts, context=context)
             answer = str(result["answer"])
             retrieval_mode = str(result["retrieval_mode"])
             trace_id = str(result["trace_id"])
@@ -163,6 +167,29 @@ def run_bot() -> None:
     handler = SocketModeHandler(app, app_token)
     LOGGER.info("Starting MIRA Slack bot in Socket Mode")
     handler.start()  # type: ignore[no-untyped-call, unused-ignore]
+
+
+def configured_slack_team_bindings() -> dict[str, WorkspaceContext]:
+    """Parse and validate the explicit Slack team-to-workspace mapping."""
+    raw = os.environ.get("MIRA_SLACK_TEAM_WORKSPACES", "").strip()
+    if not raw:
+        raise ValueError("MIRA_SLACK_TEAM_WORKSPACES must bind each Slack team")
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise ValueError("MIRA_SLACK_TEAM_WORKSPACES must be a JSON object") from error
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("MIRA_SLACK_TEAM_WORKSPACES must be a non-empty JSON object")
+    bindings: dict[str, WorkspaceContext] = {}
+    for team_id, workspace_id in payload.items():
+        if not isinstance(team_id, str) or not team_id.strip():
+            raise ValueError("Slack team IDs must be non-empty strings")
+        if not isinstance(workspace_id, str) or not workspace_id.strip():
+            raise ValueError("Slack workspace IDs must be non-empty strings")
+        context = WorkspaceContext(workspace_id.strip(), auth_mode="slack")
+        bind_workspace(context)
+        bindings[team_id.strip()] = context
+    return bindings
 
 
 if __name__ == "__main__":

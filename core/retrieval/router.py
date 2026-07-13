@@ -7,7 +7,8 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
-from core.db.repositories import repository_connection
+from core.db.repositories import repository_connection, workspace_id_for_session
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.retrieval.auto import route_retrieval as choose_retrieval_mode
 from core.retrieval.deep import retrieve_deep
 from core.retrieval.quick import retrieve_quick
@@ -33,17 +34,20 @@ def route_retrieval(
         selected_mode = str(decision.get("mode", "quick"))
         if selected_mode == "general":
             return []
+    workspace_id = (
+        workspace_id_for_session(session_id) if session_id is not None else LEGACY_WORKSPACE_ID
+    )
     if selected_mode == "deep":
         return retrieve_deep(query, session_id, limit)
     if selected_mode == "relational":
-        anchors = _matching_graph_node_ids(query, limit)
+        anchors = _matching_graph_node_ids(query, limit, workspace_id)
         if anchors:
-            return relational_retrieve(anchors, set(), limit)
+            return relational_retrieve(anchors, set(), limit, workspace_id=workspace_id)
         return retrieve_quick(query, session_id, limit)
     return retrieve_quick(query, session_id, limit)
 
 
-def _matching_graph_node_ids(query: str, limit: int) -> list[str]:
+def _matching_graph_node_ids(query: str, limit: int, workspace_id: str) -> list[str]:
     terms = [term for term in query.split() if len(term) > 2]
     if not terms:
         return []
@@ -53,11 +57,11 @@ def _matching_graph_node_ids(query: str, limit: int) -> list[str]:
             rows = connection.execute(
                 """
                 SELECT id FROM graph_nodes
-                WHERE label LIKE ?
+                WHERE workspace_id = ? AND label LIKE ?
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (f"%{term}%", limit),
+                (workspace_id, f"%{term}%", limit),
             ).fetchall()
             matches.extend(str(row["id"]) for row in rows)
     return list(dict.fromkeys(matches))[:limit]

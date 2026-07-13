@@ -195,8 +195,14 @@ def test_gold_answer_not_leaked_into_generation(
 
     seen_questions: list[str] = []
 
-    def _spy(question: str, session_id: str | None = None) -> dict[str, object]:
+    def _spy(
+        question: str,
+        session_id: str | None = None,
+        *,
+        workspace_id: str | None = None,
+    ) -> dict[str, object]:
         seen_questions.append(question)
+        assert workspace_id is not None
         return {"answer": "stub answer", "retrieval_mode": "quick", "used_memory_items": []}
 
     monkeypatch.setattr(lme, "run_question", _spy)

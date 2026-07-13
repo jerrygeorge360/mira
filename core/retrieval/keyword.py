@@ -11,20 +11,23 @@ import re
 from collections.abc import Iterable
 
 from core.db.repositories import repository_connection
+from core.db.schema import LEGACY_WORKSPACE_ID
 
 Record = dict[str, object]
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 
 
-def keyword_search_observations(query: str, limit: int) -> list[Record]:
+def keyword_search_observations(
+    query: str, limit: int, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[Record]:
     """Search raw observations with exact phrase and token scoring."""
     terms = _query_terms(query)
     _validate_limit(limit)
     if not terms.normalized_query:
         return []
 
-    rows = _fetch_observation_candidates(terms)
+    rows = _fetch_observation_candidates(terms, workspace_id)
     scored = [
         _with_score(dict(row), _score_text(str(row["content"]), terms), "observation")
         for row in rows
@@ -32,14 +35,16 @@ def keyword_search_observations(query: str, limit: int) -> list[Record]:
     return _top_results(scored, limit)
 
 
-def keyword_search_atomic_facts(query: str, limit: int) -> list[Record]:
+def keyword_search_atomic_facts(
+    query: str, limit: int, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[Record]:
     """Search atomic facts by subject, predicate, and object text."""
     terms = _query_terms(query)
     _validate_limit(limit)
     if not terms.normalized_query:
         return []
 
-    rows = _fetch_atomic_fact_candidates(terms)
+    rows = _fetch_atomic_fact_candidates(terms, workspace_id)
     scored = [
         _with_score(
             dict(row),
@@ -78,34 +83,35 @@ def _validate_limit(limit: int) -> None:
         raise ValueError("limit must be a positive integer")
 
 
-def _fetch_observation_candidates(terms: _QueryTerms) -> list[Record]:
+def _fetch_observation_candidates(terms: _QueryTerms, workspace_id: str) -> list[Record]:
     clauses, parameters = _like_clauses(("content",), terms)
     if not clauses:
         return []
     statement = f"""
-        SELECT id, session_id, role, content, source, metadata_json, created_at, processed_at
+        SELECT id, workspace_id, session_id, role, content, source, metadata_json,
+               created_at, processed_at
         FROM observations
-        WHERE {" OR ".join(clauses)}
+        WHERE workspace_id = ? AND ({" OR ".join(clauses)})
         ORDER BY created_at DESC
         """  # nosec B608
     with repository_connection() as connection:
-        rows = connection.execute(statement, parameters).fetchall()
+        rows = connection.execute(statement, (workspace_id, *parameters)).fetchall()
     return [dict(row) for row in rows]
 
 
-def _fetch_atomic_fact_candidates(terms: _QueryTerms) -> list[Record]:
+def _fetch_atomic_fact_candidates(terms: _QueryTerms, workspace_id: str) -> list[Record]:
     clauses, parameters = _like_clauses(("subject", "predicate", "object"), terms)
     if not clauses:
         return []
     statement = f"""
-        SELECT id, subject, predicate, object, confidence, status,
+        SELECT id, workspace_id, subject, predicate, object, confidence, status,
                source_observation_id, created_at, valid_from, valid_until
         FROM atomic_facts
-        WHERE status = ? AND ({" OR ".join(clauses)})
+        WHERE workspace_id = ? AND status = ? AND ({" OR ".join(clauses)})
         ORDER BY created_at DESC
         """  # nosec B608
     with repository_connection() as connection:
-        rows = connection.execute(statement, ("active", *parameters)).fetchall()
+        rows = connection.execute(statement, (workspace_id, "active", *parameters)).fetchall()
     return [dict(row) for row in rows]
 
 

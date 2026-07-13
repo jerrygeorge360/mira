@@ -24,7 +24,9 @@ from core.db.repositories import (
     create_working_memory_item,
     repository_connection,
     validate_enum_value,
+    workspace_id_for_session,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 
 Candidate = dict[str, object]
 HotMemoryItem = dict[str, object]
@@ -103,17 +105,19 @@ def promote_to_hot_memory(candidate: Candidate) -> str:
     content = _string(candidate.get("content"))
     scope = _string(candidate.get("scope")) or "cross_session"
     priority = _float(candidate.get("promotion_score"))
+    workspace_id = _string(candidate.get("workspace_id")) or LEGACY_WORKSPACE_ID
     if not content or not memory_type:
         raise ValueError("candidate is missing content or memory_type")
 
-    existing = _existing_hot_item(record_type, record_id)
+    existing = _existing_hot_item(record_type, record_id, workspace_id)
     if existing is not None:
         _update_hot_priority(str(existing["id"]), priority, content)
         return str(existing["id"])
 
-    _enforce_capacity()
+    _enforce_capacity(workspace_id)
     item_id = create_working_memory_item(
         {
+            "workspace_id": workspace_id,
             "content": content,
             "memory_type": memory_type,
             "scope": scope,
@@ -144,11 +148,13 @@ def list_hot_memory_for_context(
     """List active, still-valid hot memory ranked for prompt injection."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
-    del session_id  # Durable hot memory is cross-session; kept for interface parity.
+    workspace_id = (
+        workspace_id_for_session(session_id) if session_id is not None else LEGACY_WORKSPACE_ID
+    )
 
     query_tokens = _tokens(query)
     items: list[HotMemoryItem] = []
-    for row in _active_hot_items():
+    for row in _active_hot_items(workspace_id):
         if not _source_still_valid(row):
             continue
         priority = _float(row.get("priority"))
@@ -316,6 +322,7 @@ def _candidate(
     content: str = "",
     scope: str = "",
 ) -> Candidate:
+    record = _fetch_source_record(record_type, record_id)
     return {
         "record_type": record_type,
         "record_id": record_id,
@@ -325,43 +332,63 @@ def _candidate(
         "content": content,
         "scope": scope,
         "reason": reason,
+        "workspace_id": (
+            str(record.get("workspace_id"))
+            if record is not None and record.get("workspace_id")
+            else LEGACY_WORKSPACE_ID
+        ),
     }
 
 
 def _fetch_source_record(record_type: str, record_id: str) -> dict[str, object] | None:
     with repository_connection() as connection:
-        row = connection.execute(
-            f"SELECT * FROM {record_type} WHERE id = ?",  # nosec B608
-            (record_id,),
-        ).fetchone()
+        if record_type == "session_working_set":
+            row = connection.execute(
+                """
+                SELECT session_working_set.*, sessions.workspace_id
+                FROM session_working_set
+                JOIN sessions ON sessions.id = session_working_set.session_id
+                WHERE session_working_set.id = ?
+                """,
+                (record_id,),
+            ).fetchone()
+        else:
+            row = connection.execute(
+                f"SELECT * FROM {record_type} WHERE id = ?",  # nosec B608
+                (record_id,),
+            ).fetchone()
     return None if row is None else dict(row)
 
 
-def _existing_hot_item(record_type: str, record_id: str) -> dict[str, object] | None:
+def _existing_hot_item(
+    record_type: str, record_id: str, workspace_id: str
+) -> dict[str, object] | None:
     with repository_connection() as connection:
         row = connection.execute(
             """
             SELECT * FROM working_memory
-            WHERE source_record_type = ? AND source_record_id = ? AND status = ?
+            WHERE workspace_id = ? AND source_record_type = ?
+              AND source_record_id = ? AND status = ?
             ORDER BY created_at ASC
             LIMIT 1
             """,
-            (record_type, record_id, "active"),
+            (workspace_id, record_type, record_id, "active"),
         ).fetchone()
     return None if row is None else dict(row)
 
 
-def _active_hot_items() -> list[dict[str, object]]:
+def _active_hot_items(workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM working_memory WHERE status = ? ORDER BY priority DESC, created_at ASC",
-            ("active",),
+            "SELECT * FROM working_memory WHERE workspace_id = ? AND status = ? "
+            "ORDER BY priority DESC, created_at ASC",
+            (workspace_id, "active"),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def _enforce_capacity() -> None:
-    active = _active_hot_items()
+def _enforce_capacity(workspace_id: str) -> None:
+    active = _active_hot_items(workspace_id)
     overflow = len(active) - HOT_TIER_MAX + 1
     if overflow <= 0:
         return

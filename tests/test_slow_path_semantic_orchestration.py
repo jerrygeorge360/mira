@@ -57,7 +57,7 @@ def _reflection_status(reflection_id: str) -> str:
 
 def _stub_factual_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(slow_path, "extract_atomic_facts", lambda oid, content: [])
-    monkeypatch.setattr(slow_path, "extract_entities", lambda text: [])
+    monkeypatch.setattr(slow_path, "extract_entities", lambda text, **kwargs: [])
 
 
 def test_foresight_runs_in_per_observation_slow_path(
@@ -199,12 +199,12 @@ def test_community_refresh_is_periodic_and_evidence_backed(
     monkeypatch.setattr(
         slow_path,
         "detect_graph_communities",
-        lambda: [{"community_id": "community_eval", "member_node_ids": [left, right]}],
+        lambda **kwargs: [{"community_id": "community_eval", "member_node_ids": [left, right]}],
     )
     monkeypatch.setattr(
         slow_path,
         "summarize_community",
-        lambda community_id, member_node_ids: {
+        lambda community_id, member_node_ids, **kwargs: {
             "community_id": community_id,
             "title": "MIRA evaluation work",
             "summary": "Benchmark work uses LLM-as-Judge and budget controls.",
@@ -215,9 +215,13 @@ def test_community_refresh_is_periodic_and_evidence_backed(
 
     # The trigger is a cumulative observation count derived from the store, so drive it
     # through the counter helper rather than a per-call batch size.
-    monkeypatch.setattr(slow_path, "_observations_since_last_community_refresh", lambda: 1)
+    monkeypatch.setattr(
+        slow_path, "_observations_since_last_community_refresh", lambda workspace_id: 1
+    )
     skipped = maybe_run_community_refresh(config)
-    monkeypatch.setattr(slow_path, "_observations_since_last_community_refresh", lambda: 2)
+    monkeypatch.setattr(
+        slow_path, "_observations_since_last_community_refresh", lambda workspace_id: 2
+    )
     created = maybe_run_community_refresh(config)
     duplicate = maybe_run_community_refresh(config)
 
@@ -290,12 +294,12 @@ def test_retrieval_can_use_semantic_records(
     monkeypatch.setattr(
         slow_path,
         "detect_graph_communities",
-        lambda: [{"community_id": "community_demo", "member_node_ids": [left, right]}],
+        lambda **kwargs: [{"community_id": "community_demo", "member_node_ids": [left, right]}],
     )
     monkeypatch.setattr(
         slow_path,
         "summarize_community",
-        lambda community_id, member_node_ids: {
+        lambda community_id, member_node_ids, **kwargs: {
             "community_id": community_id,
             "title": "Official benchmark demo readiness",
             "summary": "The demo work centers on official benchmark credibility.",

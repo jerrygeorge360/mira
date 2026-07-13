@@ -94,12 +94,19 @@ def load_memory_snapshot(
     """Load memory records from existing read models."""
     if loader is not None:
         return loader(session_id, limit)
+    from core.db.repositories import workspace_id_for_session
+
+    workspace_id = workspace_id_for_session(session_id)
     snapshot: MemorySnapshot = {
         "session_working_set": list_active_session_items(session_id)[:limit],
         "hot_memory": list_hot_memory_for_context(session_id, "", limit),
-        "reflections": list_reflections_read_model(limit),
-        "foresight": list_foresight_read_model(session_id=session_id, limit=limit),
-        "community_summaries": list_community_summaries_read_model(limit),
+        "reflections": list_reflections_read_model(limit, workspace_id=workspace_id),
+        "foresight": list_foresight_read_model(
+            session_id=session_id, limit=limit, workspace_id=workspace_id
+        ),
+        "community_summaries": list_community_summaries_read_model(
+            limit, workspace_id=workspace_id
+        ),
     }
     return snapshot
 

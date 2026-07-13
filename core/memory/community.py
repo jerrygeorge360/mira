@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from core.db import chroma
 from core.db.repositories import create_community_summary as create_community_summary_record
 from core.db.repositories import repository_connection
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
@@ -37,14 +38,14 @@ INDEX_COLLECTION = "community_summaries"
 LEIDEN_SEED = 0
 
 
-def detect_graph_communities() -> list[Community]:
+def detect_graph_communities(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> list[Community]:
     """Detect communities over active typed-graph edges (background work).
 
     Uses Leiden (via igraph) for modularity-based communities, seeded for
     reproducibility. Falls back to connected components if the optional graph
     libraries are unavailable, so the slow path degrades gracefully.
     """
-    edges = _undirected_edges(_active_edges())
+    edges = _undirected_edges(_active_edges(workspace_id))
     if not edges:
         return []
 
@@ -57,7 +58,13 @@ def detect_graph_communities() -> list[Community]:
         if len(member_node_ids) < MIN_COMMUNITY_SIZE:
             continue
         members = sorted(member_node_ids)
-        communities.append({"community_id": _community_id(members), "member_node_ids": members})
+        communities.append(
+            {
+                "community_id": _community_id(members, workspace_id),
+                "member_node_ids": members,
+                "workspace_id": workspace_id,
+            }
+        )
     communities.sort(key=lambda community: str(community["community_id"]))
     return communities
 
@@ -103,14 +110,21 @@ def _undirected_edges(edges: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return sorted(unique)
 
 
-def summarize_community(community_id: str, member_node_ids: list[str]) -> CommunitySummary:
+def summarize_community(
+    community_id: str,
+    member_node_ids: list[str],
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+) -> CommunitySummary:
     """Summarize one community into a title and concise graph-derived summary."""
     if not community_id:
         raise ValueError("community_id must not be empty")
     if not member_node_ids:
         raise ValueError("member_node_ids must not be empty")
 
-    nodes = _fetch_nodes(member_node_ids)
+    nodes = _fetch_nodes(member_node_ids, workspace_id)
+    if len(nodes) != len(set(member_node_ids)):
+        raise ValueError("all community member nodes must belong to the workspace")
     if not nodes:
         raise ValueError("no member nodes found for community")
 
@@ -133,6 +147,7 @@ def summarize_community(community_id: str, member_node_ids: list[str]) -> Commun
         "title": title,
         "summary": summary_text,
         "member_node_ids": [str(node["id"]) for node in nodes],
+        "workspace_id": workspace_id,
     }
 
 
@@ -142,34 +157,38 @@ def store_community_summary(summary: CommunitySummary) -> str:
     title = _string(summary.get("title"))
     summary_text = _string(summary.get("summary"))
     member_node_ids = _string_list(summary.get("member_node_ids"))
+    workspace_id = _string(summary.get("workspace_id")) or LEGACY_WORKSPACE_ID
     if not community_id:
         raise ValueError("summary must include community_id")
     if not title or not summary_text:
         raise ValueError("summary must include a title and summary")
     if not member_node_ids:
         raise ValueError("summary must link to at least one member node")
+    if len(_fetch_nodes(member_node_ids, workspace_id)) != len(set(member_node_ids)):
+        raise ValueError("all community member nodes must belong to the workspace")
 
     summary_id = create_community_summary_record(
         {
+            "workspace_id": workspace_id,
             "community_id": community_id,
             "title": title,
             "summary": summary_text,
             "member_nodes_json": member_node_ids,
         }
     )
-    _index_summary(summary_id, title, summary_text, community_id, member_node_ids)
+    _index_summary(summary_id, title, summary_text, community_id, member_node_ids, workspace_id)
     LOGGER.info("Stored community summary %s with %d members", summary_id, len(member_node_ids))
     return summary_id
 
 
-def mark_community_summary_stale(summary_id: str) -> None:
+def mark_community_summary_stale(summary_id: str, *, workspace_id: str) -> None:
     """Touch a community summary so refresh tooling can detect reviewer intent."""
     if not summary_id:
         raise ValueError("summary_id must not be empty")
     with repository_connection() as connection:
         cursor = connection.execute(
-            "UPDATE community_summaries SET updated_at = ? WHERE id = ?",
-            (_now(), summary_id),
+            "UPDATE community_summaries SET updated_at = ? WHERE id = ? AND workspace_id = ?",
+            (_now(), summary_id, workspace_id),
         )
         if cursor.rowcount == 0:
             raise ValueError(f"community summary not found: {summary_id}")
@@ -181,6 +200,7 @@ def _index_summary(
     summary_text: str,
     community_id: str,
     member_node_ids: list[str],
+    workspace_id: str,
 ) -> None:
     embedding = _embed_text(f"{title} {summary_text}")
     chroma.add_embedding(
@@ -189,6 +209,7 @@ def _index_summary(
         summary_id,
         embedding,
         metadata={"community_id": community_id, "member_count": len(member_node_ids)},
+        workspace_id=workspace_id,
     )
 
 
@@ -196,28 +217,30 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()  # noqa: UP017
 
 
-def _active_edges() -> list[tuple[str, str]]:
+def _active_edges(workspace_id: str) -> list[tuple[str, str]]:
     with repository_connection() as connection:
         rows = connection.execute(
             """
             SELECT source_node_id, target_node_id
             FROM graph_edges
-            WHERE invalidated_at IS NULL
+            WHERE workspace_id = ? AND invalidated_at IS NULL
             ORDER BY created_at ASC
-            """
+            """,
+            (workspace_id,),
         ).fetchall()
     return [(str(row["source_node_id"]), str(row["target_node_id"])) for row in rows]
 
 
-def _fetch_nodes(member_node_ids: list[str]) -> list[dict[str, object]]:
+def _fetch_nodes(member_node_ids: list[str], workspace_id: str) -> list[dict[str, object]]:
     unique_ids = sorted(dict.fromkeys(member_node_ids))
     if not unique_ids:
         return []
     placeholders = ", ".join("?" for _ in unique_ids)
     with repository_connection() as connection:
         rows = connection.execute(
-            f"SELECT id, node_type, label FROM graph_nodes WHERE id IN ({placeholders})",  # nosec B608
-            tuple(unique_ids),
+            f"SELECT id, node_type, label FROM graph_nodes "  # nosec B608
+            f"WHERE workspace_id = ? AND id IN ({placeholders})",
+            (workspace_id, *unique_ids),
         ).fetchall()
     nodes = [dict(row) for row in rows]
     nodes.sort(key=lambda node: str(node["id"]))
@@ -230,8 +253,9 @@ def _format_nodes(nodes: list[dict[str, object]]) -> str:
     )
 
 
-def _community_id(member_node_ids: list[str]) -> str:
-    digest = hashlib.sha256("|".join(sorted(member_node_ids)).encode("utf-8")).hexdigest()
+def _community_id(member_node_ids: list[str], workspace_id: str) -> str:
+    identity = "|".join((workspace_id, *sorted(member_node_ids)))
+    digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
     return f"community_{digest[:12]}"
 
 

@@ -43,27 +43,31 @@ DEMO_COMMUNITY_PREFIX = "demo_"
 DEFAULT_DB_PATH = os.environ.get("MIRA_DB_PATH", "./mira.db")
 
 
-def seed_demo_data(database_path: str = DEFAULT_DB_PATH, reset: bool = False) -> dict[str, object]:
+def seed_demo_data(
+    database_path: str,
+    workspace_id: str,
+    reset: bool = False,
+) -> dict[str, object]:
     """Seed deterministic demo data and return a summary of what was created."""
     configure_database(database_path)
 
-    existing = _find_demo_session()
+    existing = _find_demo_session(workspace_id)
     if existing is not None:
         if not reset:
             return {"status": "already_seeded", "session_id": existing}
-        _reset_demo(existing)
+        _reset_demo(existing, workspace_id)
 
-    session_id = create_session(DEMO_USER, DEMO_TITLE)
+    session_id = create_session(DEMO_USER, DEMO_TITLE, workspace_id=workspace_id)
     observations = _seed_observations(session_id)
     nodes: dict[str, str] = {}
 
     _seed_session_working_set(session_id, observations)
-    contradiction_edges = _seed_contradiction(observations, nodes)
-    supersession_edges = _seed_supersession(observations, nodes)
-    _seed_mentions(observations, nodes)
+    contradiction_edges = _seed_contradiction(observations, nodes, workspace_id)
+    supersession_edges = _seed_supersession(observations, nodes, workspace_id)
+    _seed_mentions(observations, nodes, workspace_id)
     foresight_id = _seed_foresight(observations)
     reflection_ids = _seed_reflections(observations)
-    community_id = _seed_community(observations, nodes)
+    community_id = _seed_community(observations, nodes, workspace_id)
     _seed_logs(session_id, observations)
 
     return {
@@ -81,9 +85,10 @@ def main() -> None:
     """CLI entry point: ``python -m scripts.seed_demo [--db PATH] [--reset]``."""
     parser = argparse.ArgumentParser(description="Seed deterministic MIRA demo data.")
     parser.add_argument("--db", default=DEFAULT_DB_PATH, help="SQLite database path.")
+    parser.add_argument("--workspace-id", required=True, help="Workspace to seed.")
     parser.add_argument("--reset", action="store_true", help="Rebuild demo data from scratch.")
     args = parser.parse_args()
-    summary = seed_demo_data(args.db, reset=args.reset)
+    summary = seed_demo_data(args.db, args.workspace_id, reset=args.reset)
     print(f"Demo seed {summary['status']}: session {summary['session_id']}")
 
 
@@ -143,7 +148,9 @@ def _seed_session_working_set(session_id: str, observations: dict[str, str]) -> 
         upsert_session_item(session_id, item)
 
 
-def _seed_contradiction(observations: dict[str, str], nodes: dict[str, str]) -> int:
+def _seed_contradiction(
+    observations: dict[str, str], nodes: dict[str, str], workspace_id: str
+) -> int:
     create_atomic_fact(
         {
             "subject": "Jerry",
@@ -164,13 +171,22 @@ def _seed_contradiction(observations: dict[str, str], nodes: dict[str, str]) -> 
             "source_observation_id": observations["rust"],
         }
     )
-    python_node = _entity_node("Python", nodes)
-    rust_node = _entity_node("Rust", nodes)
-    create_graph_edge(python_node, rust_node, "CONTRADICTS", 0.85, [observations["rust"]])
+    python_node = _entity_node("Python", nodes, workspace_id)
+    rust_node = _entity_node("Rust", nodes, workspace_id)
+    create_graph_edge(
+        python_node,
+        rust_node,
+        "CONTRADICTS",
+        0.85,
+        [observations["rust"]],
+        workspace_id=workspace_id,
+    )
     return 1
 
 
-def _seed_supersession(observations: dict[str, str], nodes: dict[str, str]) -> int:
+def _seed_supersession(
+    observations: dict[str, str], nodes: dict[str, str], workspace_id: str
+) -> int:
     create_atomic_fact(
         {
             "subject": "Jerry",
@@ -191,18 +207,41 @@ def _seed_supersession(observations: dict[str, str], nodes: dict[str, str]) -> i
             "source_observation_id": observations["migration"],
         }
     )
-    mongo_node = _entity_node("MongoDB", nodes)
-    postgres_node = _entity_node("PostgreSQL", nodes)
-    create_graph_edge(mongo_node, postgres_node, "SUPERSEDED_BY", 0.95, [observations["migration"]])
+    mongo_node = _entity_node("MongoDB", nodes, workspace_id)
+    postgres_node = _entity_node("PostgreSQL", nodes, workspace_id)
+    create_graph_edge(
+        mongo_node,
+        postgres_node,
+        "SUPERSEDED_BY",
+        0.95,
+        [observations["migration"]],
+        workspace_id=workspace_id,
+    )
     return 1
 
 
-def _seed_mentions(observations: dict[str, str], nodes: dict[str, str]) -> None:
-    mira_node = _entity_node("MIRA", nodes)
-    postgres_node = _entity_node("PostgreSQL", nodes)
-    migration_node = _observation_node(observations["migration"], "switched to PostgreSQL")
-    create_graph_edge(mira_node, postgres_node, "WORKS_ON", 0.9, [observations["migration"]])
-    create_graph_edge(migration_node, postgres_node, "MENTIONS", 1.0, [observations["migration"]])
+def _seed_mentions(observations: dict[str, str], nodes: dict[str, str], workspace_id: str) -> None:
+    mira_node = _entity_node("MIRA", nodes, workspace_id)
+    postgres_node = _entity_node("PostgreSQL", nodes, workspace_id)
+    migration_node = _observation_node(
+        observations["migration"], "switched to PostgreSQL", workspace_id
+    )
+    create_graph_edge(
+        mira_node,
+        postgres_node,
+        "WORKS_ON",
+        0.9,
+        [observations["migration"]],
+        workspace_id=workspace_id,
+    )
+    create_graph_edge(
+        migration_node,
+        postgres_node,
+        "MENTIONS",
+        1.0,
+        [observations["migration"]],
+        workspace_id=workspace_id,
+    )
 
 
 def _seed_foresight(observations: dict[str, str]) -> str:
@@ -243,11 +282,12 @@ def _seed_reflections(observations: dict[str, str]) -> list[str]:
     ]
 
 
-def _seed_community(observations: dict[str, str], nodes: dict[str, str]) -> str:
-    postgres_node = _entity_node("PostgreSQL", nodes)
-    mongo_node = _entity_node("MongoDB", nodes)
+def _seed_community(observations: dict[str, str], nodes: dict[str, str], workspace_id: str) -> str:
+    postgres_node = _entity_node("PostgreSQL", nodes, workspace_id)
+    mongo_node = _entity_node("MongoDB", nodes, workspace_id)
     community_summary_id = create_community_summary(
         {
+            "workspace_id": workspace_id,
             "community_id": f"{DEMO_COMMUNITY_PREFIX}persistence",
             "title": "Persistence Architecture",
             "summary": "SQLite is the source of truth; ChromaDB indexes stay rebuildable.",
@@ -259,10 +299,25 @@ def _seed_community(observations: dict[str, str], nodes: dict[str, str]) -> str:
         label="Persistence Architecture",
         source_table="community_summaries",
         source_id=community_summary_id,
+        workspace_id=workspace_id,
     )
     evidence = [observations["migration"]]
-    create_graph_edge(postgres_node, community_node, "PART_OF_COMMUNITY", 0.7, evidence)
-    create_graph_edge(mongo_node, community_node, "PART_OF_COMMUNITY", 0.7, evidence)
+    create_graph_edge(
+        postgres_node,
+        community_node,
+        "PART_OF_COMMUNITY",
+        0.7,
+        evidence,
+        workspace_id=workspace_id,
+    )
+    create_graph_edge(
+        mongo_node,
+        community_node,
+        "PART_OF_COMMUNITY",
+        0.7,
+        evidence,
+        workspace_id=workspace_id,
+    )
     return community_summary_id
 
 
@@ -307,36 +362,42 @@ def _seed_logs(session_id: str, observations: dict[str, str]) -> None:
     )
 
 
-def _entity_node(name: str, nodes: dict[str, str]) -> str:
+def _entity_node(name: str, nodes: dict[str, str], workspace_id: str) -> str:
     if name in nodes:
         return nodes[name]
-    entity_id = canonicalize_entity(name)
+    entity_id = canonicalize_entity(name, workspace_id=workspace_id)
     node_id = create_graph_node(
-        node_type="entity", label=name, source_table="entities", source_id=entity_id
+        node_type="entity",
+        label=name,
+        source_table="entities",
+        source_id=entity_id,
+        workspace_id=workspace_id,
     )
     nodes[name] = node_id
     return node_id
 
 
-def _observation_node(observation_id: str, label: str) -> str:
+def _observation_node(observation_id: str, label: str, workspace_id: str) -> str:
     return create_graph_node(
         node_type="observation",
         label=label,
         source_table="observations",
         source_id=observation_id,
+        workspace_id=workspace_id,
     )
 
 
-def _find_demo_session() -> str | None:
+def _find_demo_session(workspace_id: str) -> str | None:
     with repository_connection() as connection:
         row = connection.execute(
-            "SELECT id FROM sessions WHERE title = ? ORDER BY created_at ASC LIMIT 1",
-            (DEMO_TITLE,),
+            "SELECT id FROM sessions WHERE workspace_id = ? AND title = ? "
+            "ORDER BY created_at ASC LIMIT 1",
+            (workspace_id, DEMO_TITLE),
         ).fetchone()
     return None if row is None else str(row["id"])
 
 
-def _reset_demo(session_id: str) -> None:
+def _reset_demo(session_id: str, workspace_id: str) -> None:
     with repository_connection() as connection:
         observation_ids = [
             str(row["id"])
@@ -360,7 +421,10 @@ def _reset_demo(session_id: str) -> None:
         demo_source_ids = set(observation_ids) | set(reflection_ids)
         node_ids = [
             str(row["id"])
-            for row in connection.execute("SELECT id, source_id FROM graph_nodes").fetchall()
+            for row in connection.execute(
+                "SELECT id, source_id FROM graph_nodes WHERE workspace_id = ?",
+                (workspace_id,),
+            ).fetchall()
             if str(row["source_id"]) in demo_source_ids
             or str(row["source_id"]).startswith(DEMO_COMMUNITY_PREFIX)
         ]
@@ -390,6 +454,7 @@ def _reset_demo(session_id: str) -> None:
             for table, column in (
                 ("atomic_facts", "source_observation_id"),
                 ("foresight_records", "source_observation_id"),
+                ("slow_path_step_journal", "observation_id"),
                 ("slow_path_queue", "observation_id"),
             ):
                 connection.execute(
@@ -397,8 +462,8 @@ def _reset_demo(session_id: str) -> None:
                     tuple(observation_ids),
                 )
         connection.execute(
-            "DELETE FROM community_summaries WHERE community_id LIKE ?",
-            (f"{DEMO_COMMUNITY_PREFIX}%",),
+            "DELETE FROM community_summaries WHERE workspace_id = ? AND community_id LIKE ?",
+            (workspace_id, f"{DEMO_COMMUNITY_PREFIX}%"),
         )
         for table in ("session_working_set", "retrieval_logs", "prompt_logs", "answer_traces"):
             connection.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))  # noqa: S608  # nosec B608

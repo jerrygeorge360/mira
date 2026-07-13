@@ -26,6 +26,7 @@ from core.db.repositories import configure_database, current_database_path
 from evaluation.local.cases import load_evaluation_cases, score_case
 from evaluation.runtime.case_runner import (
     ProgressReporter,
+    create_evaluation_workspace,
     isolate_case_state,
     isolation_base_path,
     run_case_interactions,
@@ -429,6 +430,11 @@ def _run_config(
     disabled_label = ", ".join(sorted(config.disabled)) or "none"
     _progress(progress, f"config {index}/{total} {config.name}: start (disabled: {disabled_label})")
     results: list[dict[str, object]] = []
+    shared_workspace_id = (
+        None
+        if isolation_base is not None
+        else create_evaluation_workspace(f"ablation-{index}-{config.name}")
+    )
     with apply_ablation(config) as applied:
         interaction_counter = {"count": 0}
         for case_index, case in enumerate(cases, start=1):
@@ -439,6 +445,11 @@ def _run_config(
                     progress,
                     progress_prefix="ablation-case",
                 )
+                workspace_id = create_evaluation_workspace(f"ablation-{index}-{case_index}")
+            else:
+                if shared_workspace_id is None:
+                    raise RuntimeError("shared ablation workspace was not initialized")
+                workspace_id = shared_workspace_id
             result = _run_case(
                 case,
                 progress=progress,
@@ -446,6 +457,7 @@ def _run_config(
                 slow_path_batch_size=slow_path_batch_size,
                 delay_s=delay_s,
                 interaction_counter=interaction_counter,
+                workspace_id=workspace_id,
             )
             results.append(result)
             outcome = "passed" if result["passed"] else "failed"
@@ -481,6 +493,7 @@ def _run_case(
     slow_path_batch_size: int,
     delay_s: float,
     interaction_counter: dict[str, int],
+    workspace_id: str,
 ) -> dict[str, object]:
     expected = case.get("expect")
     expected_dict = expected if isinstance(expected, dict) else {}
@@ -491,6 +504,7 @@ def _run_case(
             case,
             case_id=case_id,
             session_user="ablation",
+            workspace_id=workspace_id,
             progress=progress,
             delay_s=delay_s,
             interaction_counter=interaction_counter,

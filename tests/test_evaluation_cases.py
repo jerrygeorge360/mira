@@ -173,7 +173,7 @@ def test_evaluation_cases_run_and_results_saved(
     summary = run_evaluation_cases(str(cases_path))
 
     assert summary["total"] == 3
-    assert summary["passed"] == 3
+    assert summary["passed"] == 3, summary
     assert summary["pass_rate"] == 1.0
     assert summary["by_category"]["direct_fact_recall"] == {"total": 1, "passed": 1}
 
@@ -209,7 +209,7 @@ def test_evaluation_cases_report_progress(
 
     summary = run_evaluation_cases(str(cases_path), progress=messages.append)
 
-    assert summary["passed"] == 3
+    assert summary["passed"] == 3, summary
     assert messages[0].startswith("loaded cases=3")
     assert any(message.startswith("case 1/3 fact-recall: start") for message in messages)
     assert "case fact-recall: interaction 1/2 answering" in messages
@@ -229,9 +229,10 @@ def test_evaluation_cases_can_drain_slow_path(
     messages: list[str] = []
     calls = {"count": 0}
 
-    def _fake_batch(batch_size: int) -> list[dict[str, object]]:
+    def _fake_batch(batch_size: int, *, workspace_id: str | None = None) -> list[dict[str, object]]:
         calls["count"] += 1
         assert batch_size == 7
+        assert workspace_id is not None
         if calls["count"] % 2 == 1:
             return [{"observation_id": f"obs-{calls['count']}", "succeeded": True}]
         return []
@@ -247,7 +248,9 @@ def test_evaluation_cases_can_drain_slow_path(
 
     assert summary["passed"] == 3
     assert calls["count"] >= 2
-    assert any("slow path batch processed=1 failed=0" in message for message in messages)
+    assert any("slow path batch processed=1 failed=0" in message for message in messages), (
+        "\n".join(messages)
+    )
     assert any("slow path idle processed=1 failed=0" in message for message in messages)
 
 

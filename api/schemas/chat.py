@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 RetrievalMode = Literal["auto"]
 RoutingStrategy = Literal["fast", "accurate"]
@@ -13,7 +13,8 @@ RoutingStrategy = Literal["fast", "accurate"]
 class ChatRequest(BaseModel):
     """Request body for one MIRA chat turn."""
 
-    user_id: str = Field(min_length=1)
+    model_config = ConfigDict(extra="forbid")
+
     message: str = Field(min_length=1)
     session_id: str | None = None
     retrieval_mode: RetrievalMode = "auto"

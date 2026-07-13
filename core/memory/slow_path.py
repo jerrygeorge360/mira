@@ -23,9 +23,17 @@ from core.db.repositories import (
     list_session_items_by_status,
     mark_done,
     mark_failed,
+    mark_slow_path_step_completed,
+    mark_slow_path_step_failed,
+    mark_slow_path_step_started,
+    quarantine_queue_job,
     repository_connection,
+    require_active_workspace,
     resolve_canonical_form,
+    slow_path_step_completed,
+    workspace_id_for_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
 from core.llm.qwen import LLMClientError, call_qwen_json
@@ -57,7 +65,7 @@ from core.session.confirmation import (
     promote_session_item_to_durable_candidate,
 )
 
-QUEUE_STATUSES = ("pending", "processing", "done", "failed", "dead_letter")
+QUEUE_STATUSES = ("pending", "processing", "done", "failed", "dead_letter", "quarantined")
 
 WorkerRunRecord = dict[str, object]
 OrchestratorResult = dict[str, object]
@@ -285,6 +293,7 @@ def run_slow_path_for_observation(
     if observation.get("processed_at"):
         _add_step(result, "already_processed", succeeded=True, created=[])
         return result
+    workspace_id = workspace_id_for_observation(observation_id)
 
     content = str(observation["content"])
     session_id = observation.get("session_id")
@@ -295,9 +304,12 @@ def run_slow_path_for_observation(
     steps: tuple[tuple[str, Callable[[], dict[str, list[str]]]], ...] = (
         ("session_confirmation", lambda: _step_session_confirmation(observation_id, session_id)),
         ("durable_promotion", lambda: _step_durable_promotion(observation_id, session_id)),
-        ("embedding_index", lambda: _step_embedding_index(observation_id, content, observation)),
+        (
+            "embedding_index",
+            lambda: _step_embedding_index(observation_id, content, observation, workspace_id),
+        ),
         ("atomic_fact_extraction", lambda: _step_atomic_facts(observation_id, content, context)),
-        ("graph_update", lambda: _step_entities(observation_id, content)),
+        ("graph_update", lambda: _step_entities(observation_id, content, workspace_id)),
         ("contradiction_supersession", lambda: _step_changes(context, observation_id, content)),
         (
             "reflection_invalidation",
@@ -307,15 +319,21 @@ def run_slow_path_for_observation(
         ("foresight_detection", lambda: _step_foresight(observation_id, content, semantic_config)),
     )
     for step_name, step in steps:
+        if slow_path_step_completed(workspace_id, observation_id, step_name):
+            _add_step(result, step_name, succeeded=True, created=[])
+            continue
+        mark_slow_path_step_started(workspace_id, observation_id, step_name)
         try:
             created = step()
         except Exception as error:  # noqa: BLE001 - any step failure must be isolated and reported
             message = str(error) or error.__class__.__name__
             LOGGER.exception("Slow-path step %s failed for %s", step_name, observation_id)
+            mark_slow_path_step_failed(workspace_id, observation_id, step_name, message)
             _add_step(result, step_name, succeeded=False, created=[], error_message=message)
             result["succeeded"] = False
             result["error_message"] = message
             return result
+        mark_slow_path_step_completed(workspace_id, observation_id, step_name)
         _record_created(result, step_name, created)
         _add_step(result, step_name, succeeded=True, created=_flatten(created))
 
@@ -327,28 +345,44 @@ def run_slow_path_for_observation(
 def run_slow_path_batch(
     batch_size: int,
     config: SlowPathSemanticConfig | None = None,
+    *,
+    workspace_id: str | None = None,
 ) -> list[OrchestratorResult]:
     """Claim pending queue items and orchestrate each through the chain."""
     if batch_size < 1:
         raise ValueError("batch_size must be a positive integer")
-    queue_records = claim_pending_batch(batch_size)
+    queue_records = (
+        claim_pending_batch(batch_size)
+        if workspace_id is None
+        else claim_pending_batch(batch_size, workspace_id=workspace_id)
+    )
     results: list[OrchestratorResult] = []
+    workspace_ids: set[str] = set()
     for record in queue_records:
         observation_id = str(record["observation_id"])
         queue_id = str(record["id"])
+        try:
+            workspace_ids.add(_validate_queue_workspace(record))
+        except ValueError as error:
+            message = str(error) or "queue ownership validation failed"
+            quarantine_queue_job(queue_id, message)
+            results.append(_fail_result(_new_result(observation_id), message))
+            continue
         result = run_slow_path_for_observation(observation_id, config=config)
         if result["succeeded"]:
             mark_done(queue_id)
         else:
             mark_failed(queue_id, str(result.get("error_message") or "slow-path step failed"))
         results.append(result)
-    if results:
-        run_semantic_passes(config)
+    for workspace_id in sorted(workspace_ids):
+        run_semantic_passes(config, workspace_id=workspace_id)
     return results
 
 
 def run_semantic_passes(
     config: SlowPathSemanticConfig | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[SlowPathStepResult]:
     """Run the batch-level consolidation passes: reflection and community refresh.
 
@@ -358,8 +392,8 @@ def run_semantic_passes(
     no-op until enough evidence exists.
     """
     semantic_results = [
-        *maybe_run_reflection_pass(config),
-        *maybe_run_community_refresh(config),
+        *maybe_run_reflection_pass(config, workspace_id=workspace_id),
+        *maybe_run_community_refresh(config, workspace_id=workspace_id),
     ]
     for semantic_result in semantic_results:
         if semantic_result.created_record_ids or semantic_result.updated_record_ids:
@@ -372,6 +406,31 @@ def run_semantic_passes(
                 succeeded=semantic_result.succeeded,
             )
     return semantic_results
+
+
+def _validate_queue_workspace(record: dict[str, object]) -> str:
+    """Cross-check queue, observation, and session ownership before processing."""
+    queue_workspace = str(record.get("workspace_id") or "")
+    observation_id = str(record.get("observation_id") or "")
+    with repository_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT observations.workspace_id AS observation_workspace,
+                   sessions.workspace_id AS session_workspace
+            FROM observations
+            JOIN sessions ON sessions.id = observations.session_id
+            WHERE observations.id = ?
+            """,
+            (observation_id,),
+        ).fetchone()
+    if row is None:
+        raise ValueError("queued observation not found")
+    if not queue_workspace or not (
+        queue_workspace == str(row["observation_workspace"]) == str(row["session_workspace"])
+    ):
+        raise ValueError("queue, observation, and session workspace mismatch")
+    require_active_workspace(queue_workspace)
+    return queue_workspace
 
 
 # --- background worker runtime (ISSUE-124) ----------------------------------
@@ -502,30 +561,42 @@ def run_worker(
     return {"processed": processed, "failed": failed, "iterations": iterations}
 
 
-def get_slow_path_queue_status() -> dict[str, int]:
+def get_slow_path_queue_status(workspace_id: str | None = None) -> dict[str, int]:
     """Return queue health: a count per slow-path queue status."""
     counts = dict.fromkeys(QUEUE_STATUSES, 0)
     with repository_connection() as connection:
-        rows = connection.execute(
-            "SELECT status, COUNT(*) AS count FROM slow_path_queue GROUP BY status"
-        ).fetchall()
+        if workspace_id is None:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM slow_path_queue GROUP BY status"
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT status, COUNT(*) AS count FROM slow_path_queue "
+                "WHERE workspace_id = ? GROUP BY status",
+                (workspace_id,),
+            ).fetchall()
     for row in rows:
         counts[str(row["status"])] = int(row["count"])
     return counts
 
 
-def get_slow_path_health(limit: int = 10) -> dict[str, object]:
+def get_slow_path_health(
+    limit: int = 10, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> dict[str, object]:
     """Return queue, processing, and durable artifact health for inspection."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
     with repository_connection() as connection:
         unprocessed = connection.execute(
-            "SELECT COUNT(*) AS count FROM observations WHERE processed_at IS NULL"
+            "SELECT COUNT(*) AS count FROM observations "
+            "WHERE workspace_id = ? AND processed_at IS NULL",
+            (workspace_id,),
         ).fetchone()
         artifacts = {
             table: int(
                 connection.execute(
-                    f"SELECT COUNT(*) AS count FROM {table}"  # nosec B608
+                    f"SELECT COUNT(*) AS count FROM {table} WHERE workspace_id = ?",  # nosec B608
+                    (workspace_id,),
                 ).fetchone()["count"]
             )
             for table in (
@@ -543,14 +614,14 @@ def get_slow_path_health(limit: int = 10) -> dict[str, object]:
             """
             SELECT id, observation_id, status, attempt_count, last_error, updated_at
             FROM slow_path_queue
-            WHERE status IN ('failed', 'dead_letter')
+            WHERE workspace_id = ? AND status IN ('failed', 'dead_letter', 'quarantined')
             ORDER BY updated_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (workspace_id, limit),
         ).fetchall()
     return {
-        "queue": get_slow_path_queue_status(),
+        "queue": get_slow_path_queue_status(workspace_id),
         "unprocessed_observations": 0 if unprocessed is None else int(unprocessed["count"]),
         "artifacts": artifacts,
         "recent_failures": [dict(row) for row in failed_rows],
@@ -592,6 +663,7 @@ def _step_embedding_index(
     observation_id: str,
     content: str,
     observation: dict[str, object],
+    workspace_id: str,
 ) -> dict[str, list[str]]:
     chroma.add_embedding(
         "observations",
@@ -603,6 +675,7 @@ def _step_embedding_index(
             "role": str(observation.get("role", "")),
             "source": str(observation.get("source", "")),
         },
+        workspace_id=workspace_id,
     )
     return {"observations": [observation_id]}
 
@@ -651,11 +724,11 @@ def _step_atomic_facts(
     return {"atomic_facts": fact_ids}
 
 
-def _step_entities(observation_id: str, content: str) -> dict[str, list[str]]:
-    entities = extract_entities(content)
+def _step_entities(observation_id: str, content: str, workspace_id: str) -> dict[str, list[str]]:
+    entities = extract_entities(content, workspace_id=workspace_id)
     if not entities:
         return {}
-    observation_node = _ensure_observation_node(observation_id, content)
+    observation_node = _ensure_observation_node(observation_id, content, workspace_id)
     entity_ids: list[str] = []
     node_ids: list[str] = [observation_node]
     edge_ids: list[str] = []
@@ -975,6 +1048,8 @@ def run_foresight_step_for_observation(
 
 def maybe_run_reflection_pass(
     config: SlowPathSemanticConfig | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[SlowPathStepResult]:
     """Run gated reflection synthesis when enough important evidence has accumulated.
 
@@ -985,7 +1060,7 @@ def maybe_run_reflection_pass(
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_reflection:
         return [_semantic_result("reflection_check")]
-    evidence_ids = _recent_unreflected_observation_ids(semantic_config)
+    evidence_ids = _recent_unreflected_observation_ids(semantic_config, workspace_id)
     importance = {
         observation_id: _importance_score(str(row["content"]))
         for observation_id, row in _observations_by_id(evidence_ids).items()
@@ -1002,7 +1077,7 @@ def maybe_run_reflection_pass(
         ]:
             content = str(reflection.get("content", "")).strip()
             evidence = _json_string_list(reflection.get("evidence_ids")) or evidence_ids
-            if not content or _active_reflection_exists(content):
+            if not content or _active_reflection_exists(content, workspace_id):
                 continue
             created.append(store_reflection_with_evidence(reflection, evidence))
     except Exception as error:  # noqa: BLE001 - reflection failures should not break factual memory
@@ -1017,7 +1092,7 @@ def maybe_run_reflection_pass(
     return [_semantic_result("reflection_check", created_record_ids=created)]
 
 
-def _observations_since_last_community_refresh() -> int:
+def _observations_since_last_community_refresh(workspace_id: str) -> int:
     """Count observations processed since the last community summary was written.
 
     Community detection is a background job over the accumulated graph (paper,
@@ -1027,45 +1102,50 @@ def _observations_since_last_community_refresh() -> int:
     """
     with repository_connection() as connection:
         last_refresh = connection.execute(
-            "SELECT MAX(created_at) AS ts FROM community_summaries"
+            "SELECT MAX(created_at) AS ts FROM community_summaries WHERE workspace_id = ?",
+            (workspace_id,),
         ).fetchone()["ts"]
         if last_refresh is None:
             row = connection.execute(
-                "SELECT COUNT(*) AS n FROM observations WHERE processed_at IS NOT NULL"
+                "SELECT COUNT(*) AS n FROM observations "
+                "WHERE workspace_id = ? AND processed_at IS NOT NULL",
+                (workspace_id,),
             ).fetchone()
         else:
             row = connection.execute(
                 "SELECT COUNT(*) AS n FROM observations "
-                "WHERE processed_at IS NOT NULL AND processed_at > ?",
-                (last_refresh,),
+                "WHERE workspace_id = ? AND processed_at IS NOT NULL AND processed_at > ?",
+                (workspace_id, last_refresh),
             ).fetchone()
     return int(row["n"])
 
 
 def maybe_run_community_refresh(
     config: SlowPathSemanticConfig | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[SlowPathStepResult]:
     """Run graph community detection and summary refresh when enough has accumulated."""
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_community_summaries:
         return [_semantic_result("community_update")]
     if (
-        _observations_since_last_community_refresh()
+        _observations_since_last_community_refresh(workspace_id)
         < semantic_config.community_refresh_every_observations
     ):
         return [_semantic_result("community_update")]
 
     created: list[str] = []
     try:
-        communities = detect_graph_communities()
+        communities = detect_graph_communities(workspace_id=workspace_id)
         for community in communities[: semantic_config.max_community_summaries_per_run]:
             community_id = str(community.get("community_id", ""))
-            if not community_id or _community_summary_exists(community_id):
+            if not community_id or _community_summary_exists(community_id, workspace_id):
                 continue
             member_node_ids = _json_string_list(community.get("member_node_ids"))
             if not member_node_ids:
                 continue
-            summary = summarize_community(community_id, member_node_ids)
+            summary = summarize_community(community_id, member_node_ids, workspace_id=workspace_id)
             created.append(store_community_summary(summary))
     except Exception as error:  # noqa: BLE001 - community work is periodic and recoverable
         return [
@@ -1418,8 +1498,8 @@ def _durable_candidate_exists(session_item_id: str) -> bool:
     return row is not None
 
 
-def _ensure_observation_node(observation_id: str, content: str) -> str:
-    existing = _existing_node_id("observation", "observations", observation_id)
+def _ensure_observation_node(observation_id: str, content: str, workspace_id: str) -> str:
+    existing = _existing_node_id("observation", "observations", observation_id, workspace_id)
     if existing is not None:
         return existing
     return create_graph_node(
@@ -1427,6 +1507,7 @@ def _ensure_observation_node(observation_id: str, content: str) -> str:
         label=_label(content) or observation_id,
         source_table="observations",
         source_id=observation_id,
+        workspace_id=workspace_id,
     )
 
 
@@ -1437,15 +1518,21 @@ def _ensure_entity_node(entity_id: str, observation_id: str) -> str:
     return link_entity_mention(entity_id, observation_id)
 
 
-def _existing_node_id(node_type: str, source_table: str, source_id: str) -> str | None:
+def _existing_node_id(
+    node_type: str,
+    source_table: str,
+    source_id: str,
+    workspace_id: str | None = None,
+) -> str | None:
     with repository_connection() as connection:
         row = connection.execute(
             """
             SELECT id FROM graph_nodes
             WHERE node_type = ? AND source_table = ? AND source_id = ?
+              AND (? IS NULL OR workspace_id = ?)
             ORDER BY created_at ASC LIMIT 1
             """,
-            (node_type, source_table, source_id),
+            (node_type, source_table, source_id, workspace_id, workspace_id),
         ).fetchone()
     return None if row is None else str(row["id"])
 
@@ -1597,29 +1684,31 @@ def _foresight_exists(observation_id: str, content: str) -> bool:
     return row is not None
 
 
-def _active_reflection_exists(content: str) -> bool:
+def _active_reflection_exists(content: str, workspace_id: str) -> bool:
     with repository_connection() as connection:
         row = connection.execute(
             """
             SELECT 1 FROM reflections
-            WHERE status = 'active' AND lower(content) = lower(?)
+            WHERE workspace_id = ? AND status = 'active' AND lower(content) = lower(?)
             LIMIT 1
             """,
-            (content,),
+            (workspace_id, content),
         ).fetchone()
     return row is not None
 
 
-def _community_summary_exists(community_id: str) -> bool:
+def _community_summary_exists(community_id: str, workspace_id: str) -> bool:
     with repository_connection() as connection:
         row = connection.execute(
-            "SELECT 1 FROM community_summaries WHERE community_id = ? LIMIT 1",
-            (community_id,),
+            "SELECT 1 FROM community_summaries WHERE workspace_id = ? AND community_id = ? LIMIT 1",
+            (workspace_id, community_id),
         ).fetchone()
     return row is not None
 
 
-def _recent_unreflected_observation_ids(config: SlowPathSemanticConfig) -> list[str]:
+def _recent_unreflected_observation_ids(
+    config: SlowPathSemanticConfig, workspace_id: str
+) -> list[str]:
     """Return recent observations not yet reflected on, accumulated across batches.
 
     Reflection is cross-session consolidation over a flat set of recent observations
@@ -1632,8 +1721,9 @@ def _recent_unreflected_observation_ids(config: SlowPathSemanticConfig) -> list[
     window = limit * 3
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT id FROM observations ORDER BY created_at DESC, id DESC LIMIT ?",
-            (window,),
+            "SELECT id FROM observations WHERE workspace_id = ? "
+            "ORDER BY created_at DESC, id DESC LIMIT ?",
+            (workspace_id, window),
         ).fetchall()
     newest_first = [str(row["id"]) for row in rows]
     unreflected_newest_first = [

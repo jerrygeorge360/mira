@@ -173,7 +173,7 @@ def _run_examples_sequential(
             ledger["examples_skipped"] = int(ledger["examples_skipped"]) + 1
             _progress(args, f"example {index}/{total_examples} {question_id}: skipped budget")
             continue
-        outcome = _process_example((example, args, str(iso_base), index))
+        outcome = _process_example((example, args, str(iso_base), index, total_examples))
         _merge_ledger_delta(ledger, cast("dict[str, Any]", outcome["ledger_delta"]))
         results.append(cast("dict[str, object]", outcome["result"]))
         ledger["examples_completed"] = int(ledger["examples_completed"]) + 1
@@ -211,7 +211,10 @@ def _run_examples_parallel(
                 break
             wave = todo[start : start + args.parallel]
             futures = {
-                pool.submit(_process_example, (example, args, str(iso_base), index)): (
+                pool.submit(
+                    _process_example,
+                    (example, args, str(iso_base), index, total_examples),
+                ): (
                     index,
                     example,
                 )
@@ -234,7 +237,7 @@ def _run_examples_parallel(
 
 
 def _process_example(
-    payload: tuple[dict[str, object], argparse.Namespace, str, int],
+    payload: tuple[dict[str, object], argparse.Namespace, str, int, int],
 ) -> dict[str, object]:
     """Run one example end-to-end in an isolated database + vector store.
 
@@ -244,17 +247,20 @@ def _process_example(
     """
     from evaluation.benchmarks.longmemeval import import_conversations
 
-    example, args, iso_base, index = payload
-    _isolate_example(Path(iso_base), index)
+    example, args, iso_base, index, total_examples = payload
+    workspace_id = _isolate_example(Path(iso_base), index)
     cache = _Cache(Path(args.out) / "cache", enabled=bool(args.cache or args.resume))
     local = _new_ledger(args, {"estimated_cost_usd": 0.0, "by_stage": {}})
 
-    import_conversations(example)
-    _run_slow_path(local, args)
+    import_conversations(example, workspace_id=workspace_id)
+    question_id = str(example.get("question_id", "unknown"))
+    _progress(args, f"example {index}/{total_examples} {question_id}: running slow path")
+    _run_slow_path(local, args, workspace_id)
     question = str(example.get("question", ""))
-    captured = _answer_with_cache(cache, example, question, local, args)
+    captured = _answer_with_cache(cache, example, question, local, args, workspace_id)
     verdict = _judge_with_cache(cache, example, captured, local, args)
     result = _example_result(example, captured, verdict, args)
+    result["workspace_id"] = workspace_id
     return {
         "result": result,
         "ledger_delta": {
@@ -265,9 +271,10 @@ def _process_example(
     }
 
 
-def _isolate_example(iso_base: Path, index: int) -> None:
+def _isolate_example(iso_base: Path, index: int) -> str:
     from core.db.chroma import reset_vector_store
     from core.db.repositories import configure_database
+    from evaluation.runtime.case_runner import create_evaluation_workspace
 
     os.environ["CHROMA_DB_PATH"] = str(iso_base / f"chroma-{index}")
     reset_vector_store()
@@ -275,6 +282,7 @@ def _isolate_example(iso_base: Path, index: int) -> None:
     database_path.parent.mkdir(parents=True, exist_ok=True)
     configure_database(str(database_path))
     reset_vector_store()
+    return create_evaluation_workspace(f"benchmark-{index}")
 
 
 def _merge_ledger_delta(ledger: Ledger, delta: dict[str, Any]) -> None:
@@ -309,6 +317,7 @@ def _answer_with_cache(
     question: str,
     ledger: Ledger,
     args: argparse.Namespace,
+    workspace_id: str,
 ) -> dict[str, object]:
     from evaluation.benchmarks.longmemeval import run_question
 
@@ -316,7 +325,7 @@ def _answer_with_cache(
     cached = cache.get("answer", key)
     if cached is not None:
         return cached
-    captured = run_question(question)
+    captured = run_question(question, workspace_id=workspace_id)
     _charge(ledger, "agent_answer", question, str(captured.get("answer", "")), args)
     cache.put("answer", key, captured)
     return captured
@@ -371,11 +380,11 @@ def _judge_with_cache(
     return verdict
 
 
-def _run_slow_path(ledger: Ledger, args: argparse.Namespace) -> None:
+def _run_slow_path(ledger: Ledger, args: argparse.Namespace, workspace_id: str) -> None:
     from core.db.repositories import claim_pending_batch, mark_done, mark_failed
     from core.memory.slow_path import run_slow_path_for_observation
 
-    queue_records = claim_pending_batch(10_000)
+    queue_records = claim_pending_batch(10_000, workspace_id=workspace_id)
     total = len(queue_records)
     if total == 0:
         _progress(args, "slow path: no pending observations")
@@ -652,7 +661,7 @@ def _install_llm_mode(args: argparse.Namespace) -> Restore:
     swaps: tuple[tuple[object, str, object], ...] = (
         (agent, "call_qwen_json", _stub_answer_llm),
         (slow_path, "extract_atomic_facts", lambda oid, content: []),
-        (slow_path, "extract_entities", lambda text: []),
+        (slow_path, "extract_entities", lambda text, **kwargs: []),
     )
     originals = [(module, name, _get_attr(module, name)) for module, name, _ in swaps]
     for module, name, stub in swaps:

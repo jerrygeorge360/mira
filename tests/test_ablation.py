@@ -178,9 +178,10 @@ def test_ablation_study_can_drain_slow_path(
     calls = {"count": 0}
     messages: list[str] = []
 
-    def _fake_batch(batch_size: int) -> list[dict[str, object]]:
+    def _fake_batch(batch_size: int, *, workspace_id: str | None = None) -> list[dict[str, object]]:
         calls["count"] += 1
         assert batch_size == 3
+        assert workspace_id is not None
         if calls["count"] % 2 == 1:
             return [{"observation_id": f"obs-{calls['count']}", "succeeded": True}]
         return []
@@ -197,7 +198,9 @@ def test_ablation_study_can_drain_slow_path(
 
     assert study["run_slow_path"] is True
     assert calls["count"] >= 2
-    assert any("slow path batch processed=1 failed=0" in message for message in messages)
+    assert any("slow path batch processed=1 failed=0" in message for message in messages), (
+        "\n".join(messages)
+    )
 
 
 def test_render_ablation_table_has_header() -> None:

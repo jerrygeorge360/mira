@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import re
 
-from core.db.repositories import repository_connection
+from core.db.repositories import repository_connection, workspace_id_for_session
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
 from core.retrieval.vector import vector_search
 
@@ -48,18 +49,28 @@ FORESIGHT_QUERY_MARKERS = frozenset(
 )
 
 
-def retrieve_quick(query: str, session_id: str | None, limit: int) -> list[Evidence]:
+def retrieve_quick(
+    query: str,
+    session_id: str | None,
+    limit: int,
+    *,
+    workspace_id: str | None = None,
+) -> list[Evidence]:
     """Retrieve prompt-ready direct evidence for specific factual questions."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
     if not query.strip():
         return []
 
+    session_workspace = workspace_id_for_session(session_id) if session_id is not None else None
+    if workspace_id is not None and session_workspace not in {None, workspace_id}:
+        raise ValueError("session does not belong to the requested workspace")
+    workspace_id = workspace_id or session_workspace or LEGACY_WORKSPACE_ID
     candidates = [
-        *_semantic_candidates(query, limit),
-        *_keyword_observation_candidates(query, session_id, limit),
-        *_atomic_fact_candidates(query, session_id, limit),
-        *_foresight_candidates(query, session_id),
+        *_semantic_candidates(query, limit, workspace_id),
+        *_keyword_observation_candidates(query, workspace_id, limit),
+        *_atomic_fact_candidates(query, workspace_id, limit),
+        *_foresight_candidates(query, session_id, workspace_id),
         *_recent_observation_candidates(query, session_id, limit),
     ]
     deduplicated = _merge_duplicates(candidates)
@@ -72,11 +83,18 @@ def quick_retrieve(query: str, limit: int = 8) -> list[Evidence]:
     return retrieve_quick(query, session_id=None, limit=limit)
 
 
-def _semantic_candidates(query: str, limit: int) -> list[Evidence]:
+def _semantic_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
     candidates: list[Evidence] = []
-    pointers = vector_search(query, limit=limit, collections=("observations", "reflections"))
+    pointers = vector_search(
+        query,
+        limit=limit,
+        collections=("observations", "reflections"),
+        workspace_id=workspace_id,
+    )
     for pointer in pointers:
-        record = _fetch_record(str(pointer["sqlite_table"]), str(pointer["sqlite_id"]))
+        record = _fetch_record(
+            str(pointer["sqlite_table"]), str(pointer["sqlite_id"]), workspace_id
+        )
         if record is None:
             continue
         if not _semantic_record_is_active(str(pointer["sqlite_table"]), record):
@@ -99,10 +117,10 @@ def _semantic_candidates(query: str, limit: int) -> list[Evidence]:
 
 def _keyword_observation_candidates(
     query: str,
-    session_id: str | None,
+    workspace_id: str,
     limit: int,
 ) -> list[Evidence]:
-    results = keyword_search_observations(query, limit)
+    results = keyword_search_observations(query, limit, workspace_id=workspace_id)
     return [
         _evidence(
             source="observations",
@@ -116,12 +134,12 @@ def _keyword_observation_candidates(
             record=record,
         )
         for record in results
-        if _session_matches(record, session_id)
+        if record.get("workspace_id") == workspace_id
     ]
 
 
-def _atomic_fact_candidates(query: str, session_id: str | None, limit: int) -> list[Evidence]:
-    results = keyword_search_atomic_facts(query, limit)
+def _atomic_fact_candidates(query: str, workspace_id: str, limit: int) -> list[Evidence]:
+    results = keyword_search_atomic_facts(query, limit, workspace_id=workspace_id)
     return [
         _evidence(
             source="atomic_facts",
@@ -135,16 +153,16 @@ def _atomic_fact_candidates(query: str, session_id: str | None, limit: int) -> l
             record=record,
         )
         for record in results
-        if _fact_session_matches(record, session_id)
+        if record.get("workspace_id") == workspace_id
     ]
 
 
-def _foresight_candidates(query: str, session_id: str | None) -> list[Evidence]:
+def _foresight_candidates(query: str, session_id: str | None, workspace_id: str) -> list[Evidence]:
     tokens = _tokens(query)
     if not tokens:
         return []
     is_foresight_query = _is_foresight_query(query)
-    rows = _fetch_foresight_rows(session_id)
+    rows = _fetch_foresight_rows(session_id, workspace_id)
     candidates: list[Evidence] = []
     for record in rows:
         content = str(record["content"])
@@ -319,13 +337,13 @@ def _recall_gate(ranked: list[Evidence]) -> list[Evidence]:
     return [candidate for candidate in ranked if _float(candidate["score"]) >= floor]
 
 
-def _fetch_record(table: str, record_id: str) -> dict[str, object] | None:
+def _fetch_record(table: str, record_id: str, workspace_id: str) -> dict[str, object] | None:
     if table not in {"observations", "reflections"}:
         return None
     with repository_connection() as connection:
         row = connection.execute(
-            f"SELECT * FROM {table} WHERE id = ?",  # nosec B608
-            (record_id,),
+            f"SELECT * FROM {table} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (record_id, workspace_id),
         ).fetchone()
     return None if row is None else dict(row)
 
@@ -342,12 +360,16 @@ def _semantic_record_is_active(table: str, record: dict[str, object]) -> bool:
     return str(record.get("status", "active")) == "active"
 
 
-def _fetch_foresight_rows(session_id: str | None) -> list[dict[str, object]]:
+def _fetch_foresight_rows(session_id: str | None, workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         if session_id is None:
             rows = connection.execute(
-                "SELECT * FROM foresight_records WHERE status IN (?, ?) ORDER BY created_at DESC",
-                ("active", "pending"),
+                """
+                SELECT * FROM foresight_records
+                WHERE workspace_id = ? AND status IN (?, ?)
+                ORDER BY created_at DESC
+                """,
+                (workspace_id, "active", "pending"),
             ).fetchall()
         else:
             rows = connection.execute(
@@ -355,10 +377,11 @@ def _fetch_foresight_rows(session_id: str | None) -> list[dict[str, object]]:
                 SELECT foresight_records.*
                 FROM foresight_records
                 JOIN observations ON observations.id = foresight_records.source_observation_id
-                WHERE foresight_records.status IN (?, ?) AND observations.session_id = ?
+                WHERE foresight_records.workspace_id = ?
+                  AND foresight_records.status IN (?, ?) AND observations.session_id = ?
                 ORDER BY foresight_records.created_at DESC
                 """,
-                ("active", "pending", session_id),
+                (workspace_id, "active", "pending", session_id),
             ).fetchall()
     return [dict(row) for row in rows]
 

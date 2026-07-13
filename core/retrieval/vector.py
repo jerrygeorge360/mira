@@ -8,6 +8,7 @@ Architecture area: retrieval.
 from __future__ import annotations
 
 from core.db import chroma
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
 
 DEFAULT_COLLECTIONS = ("observations", "reflections", "community_summaries")
@@ -17,6 +18,8 @@ def vector_search(
     query: str,
     limit: int = 8,
     collections: tuple[str, ...] = DEFAULT_COLLECTIONS,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[dict[str, object]]:
     """Search configured Chroma collections and return SQLite pointer candidates."""
     if limit < 1:
@@ -27,7 +30,9 @@ def vector_search(
     results: list[dict[str, object]] = []
     for collection in collections:
         try:
-            pointers = chroma.query_embeddings(collection, embedding, top_k=limit)
+            pointers = chroma.query_embeddings(
+                collection, embedding, top_k=limit, workspace_id=workspace_id
+            )
         except ValueError:
             continue
         for pointer in pointers:

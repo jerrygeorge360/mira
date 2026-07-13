@@ -6,10 +6,13 @@ from typing import Any
 
 import pytest
 from pydantic import ValidationError
+from starlette.requests import Request
 
+from api.auth import AuthenticatedWorkspace
 from api.routes.chat import chat
 from api.schemas.chat import ChatRequest
-from core.db.repositories import configure_database
+from core.db.repositories import WorkspaceContext, configure_database
+from core.db.schema import LEGACY_WORKSPACE_ID
 
 
 class _FakeAgent:
@@ -32,6 +35,12 @@ class _FakeAgent:
         }
 
 
+def _request_and_auth() -> tuple[Request, AuthenticatedWorkspace]:
+    request = Request({"type": "http", "method": "POST", "path": "/chat", "headers": []})
+    auth = AuthenticatedWorkspace(WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="development"))
+    return request, auth
+
+
 def test_chat_endpoint_calls_agent_path(monkeypatch: Any, tmp_path: Any) -> None:
     db_path = tmp_path / "api-chat.sqlite3"
     monkeypatch.setenv("MIRA_DB_PATH", str(db_path))
@@ -39,7 +48,12 @@ def test_chat_endpoint_calls_agent_path(monkeypatch: Any, tmp_path: Any) -> None
     _FakeAgent.calls = []
     monkeypatch.setattr("api.routes.chat.Agent", _FakeAgent)
 
-    response = chat(ChatRequest(user_id="jerry", message="Use 2026.", retrieval_mode="auto"))
+    request, auth = _request_and_auth()
+    response = chat(
+        request,
+        ChatRequest(message="Use 2026.", retrieval_mode="auto"),
+        auth,
+    )
 
     assert response.answer == "Real agent path called."
     assert response.retrieval_mode == "quick"
@@ -58,12 +72,14 @@ def test_chat_endpoint_passes_accurate_routing_strategy(monkeypatch: Any, tmp_pa
     _FakeAgent.calls = []
     monkeypatch.setattr("api.routes.chat.Agent", _FakeAgent)
 
+    request, auth = _request_and_auth()
     chat(
+        request,
         ChatRequest(
-            user_id="jerry",
             message="What is an apple?",
             routing_strategy="accurate",
-        )
+        ),
+        auth,
     )
 
     assert _FakeAgent.calls and _FakeAgent.calls[0][2] == "accurate"
@@ -71,14 +87,19 @@ def test_chat_endpoint_passes_accurate_routing_strategy(monkeypatch: Any, tmp_pa
 
 def test_chat_endpoint_validates_payload() -> None:
     with pytest.raises(ValidationError):
-        ChatRequest(user_id="jerry", message="")
+        ChatRequest(message="")
 
 
 def test_chat_request_only_accepts_agent_auto_retrieval_mode() -> None:
     with pytest.raises(ValidationError):
-        ChatRequest(user_id="jerry", message="Hello", retrieval_mode="quick")
+        ChatRequest(message="Hello", retrieval_mode="quick")
 
 
 def test_chat_request_validates_routing_strategy() -> None:
     with pytest.raises(ValidationError):
-        ChatRequest(user_id="jerry", message="Hello", routing_strategy="slow")
+        ChatRequest(message="Hello", routing_strategy="slow")
+
+
+def test_chat_request_rejects_client_supplied_identity() -> None:
+    with pytest.raises(ValidationError):
+        ChatRequest(user_id="guessed-user", message="Hello")

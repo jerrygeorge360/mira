@@ -13,7 +13,9 @@ from core.memory.graph import inspect_memory_graph
 def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     args = _parse_args(argv)
-    snapshot = inspect_memory_graph(entity=args.entity, limit=args.limit)
+    snapshot = inspect_memory_graph(
+        entity=args.entity, limit=args.limit, workspace_id=args.workspace_id
+    )
     print(json.dumps(snapshot, indent=2, sort_keys=True))
     return 0
 
@@ -21,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--entity", help="Filter graph nodes by label substring.")
+    parser.add_argument("--workspace-id", required=True, help="Workspace to inspect.")
     parser.add_argument("--limit", type=int, default=50, help="Maximum nodes and edges to return.")
     return parser.parse_args(argv)
 

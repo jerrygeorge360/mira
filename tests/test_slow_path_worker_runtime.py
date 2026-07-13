@@ -55,7 +55,7 @@ def stub_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
 
     monkeypatch.setattr(sp, "extract_atomic_facts", _facts)
-    monkeypatch.setattr(sp, "extract_entities", lambda text: [])
+    monkeypatch.setattr(sp, "extract_entities", lambda text, **kwargs: [])
 
 
 def _enqueue(session_id: str, content: str) -> str:
@@ -129,7 +129,7 @@ def test_failed_observation_is_marked_failed(
         raise RuntimeError("extraction boom")
 
     monkeypatch.setattr(sp, "extract_atomic_facts", _boom)
-    monkeypatch.setattr(sp, "extract_entities", lambda text: [])
+    monkeypatch.setattr(sp, "extract_entities", lambda text, **kwargs: [])
 
     summary = run_worker_once()
 
@@ -151,7 +151,7 @@ def test_one_bad_item_does_not_stop_batch(
         return []
 
     monkeypatch.setattr(sp, "extract_atomic_facts", _facts)
-    monkeypatch.setattr(sp, "extract_entities", lambda text: [])
+    monkeypatch.setattr(sp, "extract_entities", lambda text, **kwargs: [])
 
     summary = run_worker_once()
 
@@ -228,7 +228,14 @@ def test_queue_status_helper_reports_counts(database_path: Path, stub_extraction
     status = get_slow_path_queue_status()
     assert status["done"] == 2
     assert status["pending"] == 0
-    assert set(status) == {"pending", "processing", "done", "failed", "dead_letter"}
+    assert set(status) == {
+        "pending",
+        "processing",
+        "done",
+        "failed",
+        "dead_letter",
+        "quarantined",
+    }
 
 
 def test_makefile_worker_target_points_to_runner() -> None:

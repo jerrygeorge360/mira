@@ -17,14 +17,23 @@ pytest.importorskip("slack_bolt")
 
 import slack_bolt  # noqa: F401 — ensure module exists for monkeypatch
 
-from core.db.repositories import configure_database, repository_connection
+from core.db.repositories import (
+    WorkspaceContext,
+    configure_database,
+    create_workspace,
+    repository_connection,
+)
+from core.db.schema import LEGACY_WORKSPACE_ID
 from slack.bot import (
     _ensure_session,
     build_answer_blocks,
     build_error_blocks,
     build_session_id,
+    configured_slack_team_bindings,
     handle_message,
 )
+
+SLACK_CONTEXT = WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="configured")
 
 
 @pytest.fixture
@@ -62,7 +71,7 @@ class TestBuildSessionId:
 
 class TestEnsureSession:
     def test_creates_new_session(self, database_path: Path) -> None:
-        session_id = _ensure_session("test-sid", "test-user")
+        session_id = _ensure_session("test-sid", "test-user", SLACK_CONTEXT)
         with repository_connection() as conn:
             row = conn.execute(
                 "SELECT id, user_id, status FROM sessions WHERE id = ?", (session_id,)
@@ -73,14 +82,30 @@ class TestEnsureSession:
         assert row["status"] == "active"
 
     def test_idempotent_when_session_exists(self, database_path: Path) -> None:
-        _ensure_session("test-sid", "test-user")
-        _ensure_session("test-sid", "other-user")
+        _ensure_session("test-sid", "test-user", SLACK_CONTEXT)
+        _ensure_session("test-sid", "other-user", SLACK_CONTEXT)
         with repository_connection() as conn:
             rows = conn.execute(
                 "SELECT id, user_id FROM sessions WHERE id = ?", ("test-sid",)
             ).fetchall()
         assert len(rows) == 1
         assert rows[0]["user_id"] == "test-user"
+
+
+def test_slack_team_bindings_are_explicit_and_independent(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_a = create_workspace("Slack A", "slack-a", "development")
+    workspace_b = create_workspace("Slack B", "slack-b", "development")
+    monkeypatch.setenv(
+        "MIRA_SLACK_TEAM_WORKSPACES",
+        f'{{"T-A":"{workspace_a}","T-B":"{workspace_b}"}}',
+    )
+
+    bindings = configured_slack_team_bindings()
+
+    assert bindings["T-A"].workspace_id == workspace_a
+    assert bindings["T-B"].workspace_id == workspace_b
 
 
 # --- build_answer_blocks / build_error_blocks ---
@@ -136,7 +161,7 @@ def _mock_handle_user_message(
 class TestHandleMessage:
     def test_basic_message(self, database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_handle_user_message(monkeypatch)
-        result = handle_message("C123", "U456", "hello", None)
+        result = handle_message("C123", "U456", "hello", None, context=SLACK_CONTEXT)
         assert result["answer"] == "Hello from MIRA"
         assert result["retrieval_mode"] == "quick"
         assert result["trace_id"] == "trace001"
@@ -144,12 +169,12 @@ class TestHandleMessage:
 
     def test_thread_message(self, database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_handle_user_message(monkeypatch)
-        result = handle_message("C123", "U456", "reply", "1712345678.000001")
+        result = handle_message("C123", "U456", "reply", "1712345678.000001", context=SLACK_CONTEXT)
         assert result["session_id"] == "slack:C123:user:U456"
 
     def test_creates_session(self, database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_handle_user_message(monkeypatch)
-        handle_message("C999", "U777", "first message", None)
+        handle_message("C999", "U777", "first message", None, context=SLACK_CONTEXT)
         session_id = "slack:C999:user:U777"
         with repository_connection() as conn:
             row = conn.execute("SELECT id FROM sessions WHERE id = ?", (session_id,)).fetchone()
@@ -157,13 +182,13 @@ class TestHandleMessage:
 
     def test_handles_long_text(self, database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_handle_user_message(monkeypatch, answer="A" * 5000)
-        result = handle_message("C1", "U1", "tell me a story", None)
+        result = handle_message("C1", "U1", "tell me a story", None, context=SLACK_CONTEXT)
         assert len(str(result["answer"])) == 5000
 
     def test_empty_text_raises(self, database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         _mock_handle_user_message(monkeypatch)
         with pytest.raises(ValueError):
-            handle_message("C1", "U1", "   ", None)
+            handle_message("C1", "U1", "   ", None, context=SLACK_CONTEXT)
 
     def test_integration_with_agent(
         self, database_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -185,7 +210,7 @@ class TestHandleMessage:
         monkeypatch.setattr(agent_module, "call_qwen_json", fake_qwen_call)
         monkeypatch.setattr(agent_module, "handle_user_message", capturing)
 
-        result = handle_message("C1", "U1", "hi", None)
+        result = handle_message("C1", "U1", "hi", None, context=SLACK_CONTEXT)
         assert result["answer"] == "ok"
         assert result["session_id"] == "slack:C1:user:U1"
 
@@ -198,6 +223,10 @@ class TestRunBot:
         """Prevent run_bot from actually loading .env or touching the database."""
         monkeypatch.setattr("dotenv.load_dotenv", lambda: True)
         monkeypatch.setattr("slack.bot.configure_database", lambda _path: None)
+        monkeypatch.setattr(
+            "slack.bot.configured_slack_team_bindings",
+            lambda: {"T001": SLACK_CONTEXT},
+        )
 
     def test_missing_bot_token_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         self._stub_dotenv_and_db(monkeypatch)
@@ -260,6 +289,7 @@ class TestRunBot:
         handler = captured_handler[0]
 
         fake_message: dict[str, object] = {
+            "team": "T001",
             "channel": "C001",
             "user": "U001",
             "text": "test message",
