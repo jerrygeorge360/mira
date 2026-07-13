@@ -17,14 +17,15 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     if args.rebuild:
         for collection in args.collections:
-            chroma.rebuild_collection(collection)
+            chroma.rebuild_collection(collection, workspace_id=args.workspace_id)
     embedding = embed_text(args.query)
     results = {
         "query": args.query,
         "embedding_dimensions": len(embedding),
-        "vector_store": chroma.vector_store_status(),
+        "workspace_id": args.workspace_id,
+        "vector_store": chroma.vector_store_status(args.workspace_id),
         "results": {
-            collection: _search_collection(collection, embedding, args.limit)
+            collection: _search_collection(collection, embedding, args.limit, args.workspace_id)
             for collection in args.collections
         },
     }
@@ -36,12 +37,15 @@ def _search_collection(
     collection: str,
     embedding: list[float],
     limit: int,
+    workspace_id: str,
 ) -> list[dict[str, object]]:
     output: list[dict[str, object]] = []
-    for pointer in chroma.query_embeddings(collection, embedding, top_k=limit):
+    for pointer in chroma.query_embeddings(
+        collection, embedding, top_k=limit, workspace_id=workspace_id
+    ):
         table = str(pointer["sqlite_table"])
         sqlite_id = str(pointer["sqlite_id"])
-        record = _fetch_record(table, sqlite_id)
+        record = _fetch_record(table, sqlite_id, workspace_id)
         output.append(
             {
                 "sqlite_table": table,
@@ -55,13 +59,13 @@ def _search_collection(
     return output
 
 
-def _fetch_record(table: str, sqlite_id: str) -> dict[str, object] | None:
+def _fetch_record(table: str, sqlite_id: str, workspace_id: str) -> dict[str, object] | None:
     if table not in chroma.SUPPORTED_COLLECTIONS:
         return None
     with repository_connection() as connection:
         row = connection.execute(
-            f"SELECT * FROM {table} WHERE id = ?",  # nosec B608
-            (sqlite_id,),
+            f"SELECT * FROM {table} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (sqlite_id, workspace_id),
         ).fetchone()
     return None if row is None else dict(row)
 
@@ -77,6 +81,11 @@ def _record_content(table: str, record: dict[str, object]) -> str:
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("query", help="Text to embed and search for.")
+    parser.add_argument(
+        "--workspace-id",
+        required=True,
+        help="Workspace whose vectors and canonical SQLite records may be inspected.",
+    )
     parser.add_argument("--limit", type=int, default=5)
     parser.add_argument(
         "--collections",

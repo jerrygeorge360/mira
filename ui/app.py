@@ -16,6 +16,7 @@ The real entry point is ``streamlit run ui/app.py`` (or ``run_app()``).
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -39,6 +40,7 @@ from ui.retrieval_trace import render_retrieval_trace  # noqa: E402
 from ui.session_view import render_session_working_set  # noqa: E402
 
 APP_TITLE = "MIRA — Memory Command Center"
+STREAMLIT_SESSION_KEY = "mira_workspace_session_id"
 
 
 @dataclass(frozen=True)
@@ -116,15 +118,25 @@ _DEMO_NOTE = "Deterministic demo data keeps this page usable without a populated
 
 
 def _render_chat(st: Any) -> None:
-    render_chat(DEFAULT_SESSION_ID, st, MockChatAgent())
+    # Off by default (deterministic demo, no backend needed); flip on to drive the real
+    # MIRA agent and durable memory. Mirrors the React UI's "real backend" toggle.
+    use_real = st.sidebar.checkbox(
+        "Use real agent (live backend)",
+        value=False,
+        help="Off = deterministic demo. On = the real MIRA agent + memory (needs a provider).",
+    )
+    if use_real:
+        render_chat(_workspace_session_id(st), st, use_mock=False)
+    else:
+        render_chat(DEFAULT_SESSION_ID, st, MockChatAgent())
 
 
 def _render_session_working_set(st: Any) -> None:
-    render_session_working_set(DEFAULT_SESSION_ID, st)
+    render_session_working_set(_workspace_session_id(st), st)
 
 
 def _render_memory_inspector(st: Any) -> None:
-    render_memory_inspector(DEFAULT_SESSION_ID, st)
+    render_memory_inspector(_workspace_session_id(st), st)
 
 
 def _render_graph_viewer(st: Any) -> None:
@@ -210,6 +222,12 @@ def main(st: Any | None = None) -> None:
         initial_sidebar_state="expanded",
     )
     if st is None:
+        try:
+            _initialize_workspace_binding(streamlit)
+        except ValueError as error:
+            streamlit.error(str(error))
+            streamlit.stop()
+            return
         if streamlit.session_state.get("mira_entered"):
             render_command_center(streamlit)
         else:
@@ -224,6 +242,38 @@ def main(st: Any | None = None) -> None:
 def run_app() -> None:
     """Entry point used by ``streamlit run ui/app.py``."""
     main()
+
+
+def _initialize_workspace_binding(st: Any) -> str:
+    """Bind the real Streamlit process to one configured active workspace."""
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+    except ImportError:
+        pass
+    from core.db.repositories import (
+        configure_database,
+        configured_workspace_context,
+        ensure_workspace_session,
+    )
+
+    configure_database(os.environ.get("MIRA_DB_PATH", "./mira.db"))
+    context = configured_workspace_context(
+        "MIRA_STREAMLIT_WORKSPACE_ID", allow_development_fallback=False
+    )
+    session_id = f"streamlit:{context.workspace_id}"
+    ensure_workspace_session(context, session_id, "streamlit", source="streamlit")
+    st.session_state[STREAMLIT_SESSION_KEY] = session_id
+    st.session_state["mira_workspace_id"] = context.workspace_id
+    return session_id
+
+
+def _workspace_session_id(st: Any) -> str:
+    session_id = st.session_state.get(STREAMLIT_SESSION_KEY)
+    if not isinstance(session_id, str) or not session_id:
+        raise ValueError("Streamlit is not bound to a workspace session")
+    return session_id
 
 
 def _load_streamlit() -> Any:

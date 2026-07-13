@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
+from api.auth import WorkspaceAuth
 from api.schemas.worker import WorkerStatusResponse
 from core.memory.slow_path import get_slow_path_queue_status
 
@@ -13,9 +14,11 @@ router = APIRouter(prefix="/worker", tags=["worker"])
 
 
 @router.get("/status", response_model=WorkerStatusResponse)
-def get_worker_status() -> WorkerStatusResponse:
+def get_worker_status(
+    auth: WorkspaceAuth,
+) -> WorkerStatusResponse:
     """Return slow-path queue counts and basic runtime metadata."""
-    queue = get_slow_path_queue_status()
+    queue = get_slow_path_queue_status(auth.context.workspace_id)
     return WorkerStatusResponse(
         queue=queue,
         worker={

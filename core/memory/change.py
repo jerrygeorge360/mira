@@ -143,7 +143,7 @@ def _contradicting_fact_ids(fact_id: str) -> list[str]:
             return []
         placeholders = ", ".join("?" for _ in other_node_ids)
         rows = connection.execute(
-            "SELECT source_id FROM graph_nodes "  # noqa: S608
+            "SELECT source_id FROM graph_nodes "  # nosec B608
             f"WHERE id IN ({placeholders}) AND node_type = 'atomic_fact'",
             tuple(other_node_ids),
         ).fetchall()

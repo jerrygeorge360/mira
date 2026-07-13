@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from core.db.repositories import configure_database
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.db.sqlite import connect_sqlite
 from core.memory import observation
 
@@ -29,11 +30,14 @@ def _create_session(database_path: Path) -> str:
     with connect_sqlite(database_path) as connection:
         connection.execute(
             """
-            INSERT INTO sessions (id, user_id, title, status, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO sessions (
+                id, workspace_id, user_id, title, status, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "session-1",
+                LEGACY_WORKSPACE_ID,
                 "user-1",
                 "Fast Path Session",
                 "active",

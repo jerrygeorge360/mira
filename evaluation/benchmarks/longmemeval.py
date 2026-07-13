@@ -28,6 +28,7 @@ from pathlib import Path
 
 from core.agent import handle_user_message
 from core.db.repositories import create_session
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.memory.observation import persist_turn_fast_path
 
 BenchmarkExample = dict[str, object]
@@ -107,7 +108,9 @@ def load_sessions(example: BenchmarkExample) -> list[BenchmarkSession]:
 # --- Multi-session conversation importer ------------------------------------
 
 
-def import_conversations(example: BenchmarkExample) -> ImportResult:
+def import_conversations(
+    example: BenchmarkExample, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> ImportResult:
     """Replay a benchmark example's sessions into MIRA as raw observations.
 
     Each turn is persisted on the fast path (and queued for the slow path), so
@@ -117,7 +120,7 @@ def import_conversations(example: BenchmarkExample) -> ImportResult:
     """
     result = ImportResult()
     for session in load_sessions(example):
-        mira_session_id = create_session("benchmark")
+        mira_session_id = create_session("benchmark", workspace_id=workspace_id)
         result.session_id_map[session.session_ref] = mira_session_id
         for turn in session.turns:
             if turn.role not in VALID_ROLES or not turn.content.strip():
@@ -135,11 +138,16 @@ def import_conversations(example: BenchmarkExample) -> ImportResult:
 # --- Question runner + answer capture ---------------------------------------
 
 
-def run_question(question: str, session_id: str | None = None) -> dict[str, object]:
+def run_question(
+    question: str,
+    session_id: str | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+) -> dict[str, object]:
     """Ask a benchmark question through the agent and capture the answer."""
     if not question.strip():
         raise ValueError("question must not be empty")
-    target_session_id = session_id or create_session("benchmark")
+    target_session_id = session_id or create_session("benchmark", workspace_id=workspace_id)
     response = handle_user_message(target_session_id, question)
     return {
         "session_id": target_session_id,
@@ -193,11 +201,14 @@ def run_longmemeval(
         examples = examples[:limit]
 
     results: list[dict[str, object]] = []
-    for example in examples:
-        import_conversations(example)
+    from evaluation.runtime.case_runner import create_evaluation_workspace
+
+    for index, example in enumerate(examples, start=1):
+        workspace_id = create_evaluation_workspace(f"longmemeval-{index}")
+        import_conversations(example, workspace_id=workspace_id)
         question = str(example.get("question", ""))
         try:
-            captured = run_question(question)
+            captured = run_question(question, workspace_id=workspace_id)
             score = score_answer(str(example.get("answer", "")), str(captured["answer"]), scorer)
         except (ValueError, KeyError) as failure:
             captured = {"answer": "", "retrieval_mode": None}

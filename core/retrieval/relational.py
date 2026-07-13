@@ -18,6 +18,7 @@ import json
 from datetime import datetime, timezone
 
 from core.db.repositories import enum_values, repository_connection
+from core.db.schema import LEGACY_WORKSPACE_ID
 
 RelationEvidence = dict[str, object]
 
@@ -32,6 +33,8 @@ def relational_retrieve(
     entity_ids: list[str],
     relation_types: set[str],
     limit: int = 20,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[RelationEvidence]:
     """Traverse contradiction, supersession, causality, and evidence relations.
 
@@ -48,12 +51,12 @@ def relational_retrieve(
 
     allowed_relations = _resolve_relation_types(relation_types)
     node_cache: dict[str, dict[str, object] | None] = {}
-    origin_node_ids = _resolve_origin_nodes(entity_ids, node_cache)
+    origin_node_ids = _resolve_origin_nodes(entity_ids, node_cache, workspace_id)
 
     evidence: list[RelationEvidence] = []
     seen_edges: set[str] = set()
     for origin_node_id in origin_node_ids:
-        for edge in _incident_edges(origin_node_id, allowed_relations):
+        for edge in _incident_edges(origin_node_id, allowed_relations, workspace_id):
             edge_id = str(edge["id"])
             if edge_id in seen_edges:
                 continue
@@ -80,11 +83,12 @@ def _resolve_relation_types(relation_types: set[str]) -> frozenset[str]:
 def _resolve_origin_nodes(
     entity_ids: list[str],
     node_cache: dict[str, dict[str, object] | None],
+    workspace_id: str,
 ) -> list[str]:
     origin_ids: list[str] = []
     seen: set[str] = set()
     for entity_id in entity_ids:
-        for node_id in _node_ids_for_anchor(entity_id, node_cache):
+        for node_id in _node_ids_for_anchor(entity_id, node_cache, workspace_id):
             if node_id not in seen:
                 seen.add(node_id)
                 origin_ids.append(node_id)
@@ -94,14 +98,16 @@ def _resolve_origin_nodes(
 def _node_ids_for_anchor(
     anchor_id: str,
     node_cache: dict[str, dict[str, object] | None],
+    workspace_id: str,
 ) -> list[str]:
-    direct_node = _fetch_node(anchor_id, node_cache)
+    direct_node = _fetch_node(anchor_id, node_cache, workspace_id)
     if direct_node is not None:
         return [anchor_id]
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM graph_nodes WHERE source_id = ? ORDER BY created_at ASC",
-            (anchor_id,),
+            "SELECT * FROM graph_nodes WHERE source_id = ? AND workspace_id = ? "
+            "ORDER BY created_at ASC",
+            (anchor_id, workspace_id),
         ).fetchall()
     node_ids: list[str] = []
     for row in rows:
@@ -112,15 +118,18 @@ def _node_ids_for_anchor(
     return node_ids
 
 
-def _incident_edges(node_id: str, allowed_relations: frozenset[str]) -> list[dict[str, object]]:
+def _incident_edges(
+    node_id: str, allowed_relations: frozenset[str], workspace_id: str
+) -> list[dict[str, object]]:
     relation_placeholders = ", ".join("?" for _ in allowed_relations)
-    parameters = (node_id, node_id, *sorted(allowed_relations))
+    parameters = (workspace_id, node_id, node_id, *sorted(allowed_relations))
     with repository_connection() as connection:
         rows = connection.execute(
             f"""
             SELECT *
             FROM graph_edges
-            WHERE (source_node_id = ? OR target_node_id = ?)
+            WHERE workspace_id = ?
+              AND (source_node_id = ? OR target_node_id = ?)
               AND invalidated_at IS NULL
               AND edge_type IN ({relation_placeholders})
             ORDER BY created_at ASC
@@ -135,8 +144,9 @@ def _relation_evidence(
     edge: dict[str, object],
     node_cache: dict[str, dict[str, object] | None],
 ) -> RelationEvidence | None:
-    source_node = _fetch_node(str(edge["source_node_id"]), node_cache)
-    target_node = _fetch_node(str(edge["target_node_id"]), node_cache)
+    workspace_id = str(edge["workspace_id"])
+    source_node = _fetch_node(str(edge["source_node_id"]), node_cache, workspace_id)
+    target_node = _fetch_node(str(edge["target_node_id"]), node_cache, workspace_id)
     if source_node is None or target_node is None:
         return None
 
@@ -172,13 +182,14 @@ def _relation_evidence(
 def _fetch_node(
     node_id: str,
     node_cache: dict[str, dict[str, object] | None],
+    workspace_id: str,
 ) -> dict[str, object] | None:
     if node_id in node_cache:
         return node_cache[node_id]
     with repository_connection() as connection:
         row = connection.execute(
-            "SELECT * FROM graph_nodes WHERE id = ?",
-            (node_id,),
+            "SELECT * FROM graph_nodes WHERE id = ? AND workspace_id = ?",
+            (node_id, workspace_id),
         ).fetchone()
     record = None if row is None else dict(row)
     node_cache[node_id] = record

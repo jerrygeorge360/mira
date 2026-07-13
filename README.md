@@ -201,22 +201,54 @@ Gemini can use schema mode through the configured adapter.
 
 ## Running locally
 
-Seed demo data and start the Streamlit UI:
+Seed demo data and start the legacy Streamlit UI:
 
 ```bash
-python -m scripts.seed_demo --reset
+python -m scripts.seed_demo --workspace-id workspace_legacy_default --reset
 make run
 ```
 
-The UI opens at `http://localhost:8501`. Choose **Launch MIRA**, then open the **Results**
+The Streamlit UI opens at `http://localhost:8501`. Choose **Launch MIRA**, then open the **Results**
 view in the left rail for the live memory-verification result and the mechanism evidence
 behind it. (`make run` launches `streamlit run ui/app.py`; running that command directly also
 works from the repo root.)
 
-Run the FastAPI backend:
+Run the current product backend:
 
 ```bash
 make api
+```
+
+Run the React frontend in another terminal:
+
+```bash
+make frontend-dev
+```
+
+The product UI opens at `http://localhost:5173` and talks to the FastAPI backend at
+`http://localhost:8000`.
+
+Local API development uses the workspace selected by `MIRA_AUTH_MODE=development` in `.env`.
+For GitHub sign-in, create a GitHub OAuth app and switch to:
+
+```bash
+MIRA_AUTH_MODE=github
+GITHUB_CLIENT_ID=your_client_id
+GITHUB_CLIENT_SECRET=your_client_secret
+GITHUB_CALLBACK_URL=http://localhost:8000/auth/github/callback
+APP_BASE_URL=http://localhost:5173
+COOKIE_SECURE=false  # true when served over HTTPS
+```
+
+GitHub mode stores only hashed opaque session and CSRF tokens. The server derives the user and
+workspace from that session; request payloads cannot select another user's workspace.
+
+`POST /auth/demo` creates a separately seeded, short-lived workspace and server session for each
+visitor. Demo workspaces do not share interactive memory. Issuance and active-workspace limits
+are configured with the `MIRA_DEMO_*` variables in `.env`; expired demos can be removed with:
+
+```bash
+make demo-cleanup
 ```
 
 Run the slow-path worker:
@@ -241,9 +273,9 @@ make local-eval
 Inspect runtime state:
 
 ```bash
-make slow-path-status
-make graph-inspect
-QUERY="what database do I use now?" make memory-search
+WORKSPACE_ID=workspace_legacy_default make slow-path-status
+WORKSPACE_ID=workspace_legacy_default make graph-inspect
+WORKSPACE_ID=workspace_legacy_default QUERY="what database do I use now?" make memory-search
 ```
 
 The UI opens the Memory Command Center with chat, graph, Session Working Set, retrieval trace,
@@ -258,7 +290,7 @@ The judge/user walkthrough is in [docs/demo-script.md](docs/demo-script.md).
 The quickest demo path is:
 
 ```bash
-python -m scripts.seed_demo --reset
+python -m scripts.seed_demo --workspace-id workspace_legacy_default --reset
 make run
 ```
 
@@ -292,6 +324,11 @@ make api
 Endpoints:
 
 - `GET /health`
+- `GET /auth/github/start`
+- `GET /auth/github/callback`
+- `GET /auth/me`
+- `POST /auth/logout`
+- `POST /auth/demo`
 - `POST /sessions`
 - `GET /sessions/{session_id}`
 - `POST /chat`
@@ -303,11 +340,28 @@ Endpoints:
 - `GET /community-summaries`
 - `GET /worker/status`
 
+Except for health, OAuth entry/callback, and evaluation artifacts, product endpoints require an
+authenticated workspace. Cookie-authenticated mutations also require the readable `mira_csrf`
+cookie value in the `X-CSRF-Token` header. Development mode bypasses OAuth and CSRF only for the
+explicitly configured local workspace.
+
 Slack:
 
 ```bash
 make slack
 ```
+
+Non-browser surfaces fail closed unless explicitly bound. Configure Streamlit and local MCP with
+one workspace each, and map every Slack installation by immutable `team_id`:
+
+```bash
+MIRA_STREAMLIT_WORKSPACE_ID=workspace_legacy_default
+MIRA_MCP_WORKSPACE_ID=workspace_legacy_default
+MIRA_SLACK_TEAM_WORKSPACES={"T01234567":"workspace_legacy_default"}
+```
+
+Slack user IDs remain Slack identities; they are used only inside the workspace selected by the
+verified team mapping. MCP tools do not accept workspace-switching arguments.
 
 The API and Slack layers are intentionally thin. Memory behavior remains in `core/` so other
 agent surfaces can reuse the same infrastructure.
@@ -317,20 +371,20 @@ agent surfaces can reuse the same infrastructure.
 Inspect the typed memory graph:
 
 ```bash
-make graph-inspect
-ENTITY=PostgreSQL make graph-inspect
+WORKSPACE_ID=workspace_legacy_default make graph-inspect
+WORKSPACE_ID=workspace_legacy_default ENTITY=PostgreSQL make graph-inspect
 ```
 
 Inspect slow-path health:
 
 ```bash
-make slow-path-status
+WORKSPACE_ID=workspace_legacy_default make slow-path-status
 ```
 
 Search vector memory and verify Chroma pointers against SQLite:
 
 ```bash
-QUERY="what did I say about oranges?" make memory-search
+WORKSPACE_ID=workspace_legacy_default QUERY="what did I say about oranges?" make memory-search
 ```
 
 If `memory-search` returns `"record_found": false`, Chroma contains a stale pointer to a SQLite
@@ -367,9 +421,11 @@ but it performs additional extraction/distillation model calls. `--debug-trace` 
 `evaluation/local/memory_cases.debug.md` with routing, retrieved records, session items, prompt
 sections, and slow-path step output.
 
-Every case runs against its own isolated SQLite database and vector store by default, so one
-case's durable memory cannot leak into the next; pass `--shared-db` only for intentional
-multi-case continuity scenarios.
+Every case runs in an explicit evaluation workspace backed by its own isolated SQLite database
+and cleared vector store by default. Database isolation prevents state carry-over, while the
+workspace boundary exercises the same ownership checks used by the API, retrieval, and worker
+paths. With `--shared-db`, local eval creates one shared evaluation workspace so intentional
+multi-case continuity remains scoped rather than falling back to a global workspace.
 
 ### Reproducing the live memory result
 
@@ -429,8 +485,10 @@ python -m scripts.run_ablation \
   --out evaluation/ablation/results
 ```
 
-By default ablation uses a fresh SQLite database and cleared vector store per
-config/case pair. Pass `--shared-db` only for intentional continuity experiments.
+By default ablation uses a fresh SQLite database, cleared vector store, and explicit evaluation
+workspace per config/case pair. With `--shared-db`, each configuration receives one workspace
+shared by its cases; configurations remain isolated from each other. This gives every ablation
+the same scoped slow-path and retrieval behavior as the runtime architecture.
 
 Prepare LongMemEval-style data:
 
@@ -461,6 +519,11 @@ Run the configured live benchmark:
 ```bash
 make benchmark
 ```
+
+Each benchmark example receives its own SQLite database, cleared vector store, and evaluation
+workspace. Conversation import, slow-path claiming, retrieval, and answer generation all carry
+that workspace ID, preventing one example from supplying memory to another. Existing benchmark
+commands and dataset formats are unchanged.
 
 You can select another provider/model through environment variables:
 
@@ -497,21 +560,34 @@ Docker is optional, but it gives the team a repeatable clean-clone environment.
 ```bash
 cp .env.example .env
 docker compose build
-docker compose run --rm app python -m scripts.seed_demo --reset
-docker compose up app
+docker compose run --rm devtools python -m scripts.seed_demo \
+  --workspace-id workspace_legacy_default --reset
+docker compose up api worker frontend
 ```
 
-Then open <http://localhost:8501>.
+Then open <http://localhost:5173>. The API is available at <http://localhost:8000>.
 
-The Compose app service mounts durable local data into `.docker-data/`:
+If those ports are already in use, override them without editing Compose:
+
+```bash
+API_PORT=18000 FRONTEND_PORT=15173 docker compose up api worker frontend
+```
+
+Then open <http://localhost:15173>. For GitHub OAuth on custom ports, update the OAuth callback
+URL in your GitHub OAuth app to match `http://localhost:18000/auth/github/callback`.
+
+The Compose API and worker services mount durable local data into `.docker-data/`:
 
 - SQLite: `.docker-data/sqlite/mira.db` mounted as `MIRA_DB_PATH=/data/sqlite/mira.db`
 - Chroma: `.docker-data/chroma` mounted as `CHROMA_DB_PATH=/data/chroma`
 
+The worker is intentionally a separate container. The API queues memory work quickly; the worker
+drains the slow path and builds durable memory artifacts.
+
 Run checks inside the container:
 
 ```bash
-docker compose run --rm app make check
+docker compose run --rm devtools make check
 ```
 
 ## Makefile commands

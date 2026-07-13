@@ -40,6 +40,20 @@ by the fast path, so a long conversation is handled by retrieval-gated prompt re
 Engineering rule: nothing except `core/db/` writes SQL directly. Other modules call
 repository functions or the per-subsystem helpers below.
 
+## Workspace ownership boundary
+
+`users`, `workspaces`, `workspace_members`, and server-side `auth_sessions` establish the
+ownership boundary. Durable records carry `workspace_id`; child records derive ownership from
+their parent session or observation rather than accepting it from an untrusted caller. SQLite
+triggers reject mismatched queue records, graph endpoints, and reflection evidence.
+
+The active workspace is resolved once at the HTTP boundary and passed through scoped repository
+facades. Hydration, keyword/vector/deep/relational retrieval, graph projections, communities,
+reflections, foresight, and slow-path semantic passes filter before ranking or traversal. Chroma
+stores `workspace_id` as first-class metadata and applies a `where` prefilter, so candidate
+vectors from another workspace never reach reranking. SQLite remains the canonical authority if
+the disposable index is rebuilt.
+
 ## Fast path
 
 Module: [`core/memory/observation.py`](../core/memory/observation.py).
@@ -133,10 +147,16 @@ Work is claimed from the queue via `claim_pending_batch`, then completed with `m
 `mark_failed` ([`core/db/repositories.py`](../core/db/repositories.py)). One failed
 observation does not stop the rest of the batch.
 
+Before processing, the worker cross-checks the queue, observation, and session workspace and
+requires an active workspace. Ownership failures move the job to `quarantined`; they are never
+automatically retried or repaired. `slow_path_step_journal` records each existing pipeline step
+by workspace and observation. A retry skips completed steps and resumes from the failed step,
+which preserves the observation-level queue architecture without introducing a scheduler.
+
 Runtime inspection:
 
 ```bash
-make slow-path-status PYTHON=.venv/bin/python
+WORKSPACE_ID=workspace_legacy_default make slow-path-status PYTHON=.venv/bin/python
 ```
 
 This calls `get_slow_path_health()` and reports queue counts, unprocessed observations,
@@ -170,8 +190,8 @@ staleness pass ([`reflection.py`](../core/memory/reflection.py)
 Runtime inspection:
 
 ```bash
-make graph-inspect PYTHON=.venv/bin/python
-ENTITY=SQLite make graph-inspect PYTHON=.venv/bin/python
+WORKSPACE_ID=workspace_legacy_default make graph-inspect PYTHON=.venv/bin/python
+WORKSPACE_ID=workspace_legacy_default ENTITY=SQLite make graph-inspect PYTHON=.venv/bin/python
 ```
 
 This calls `inspect_memory_graph()` and returns graph counts, visible nodes/edges,
@@ -312,12 +332,19 @@ switches `MIRA_DB_PATH`, resets SQLite, or reuses an old `CHROMA_DB_PATH`. The i
 command makes that drift explicit:
 
 ```bash
+WORKSPACE_ID=workspace_legacy_default \
+WORKSPACE_ID=workspace_legacy_default \
 QUERY="what did I say about oranges?" make memory-search PYTHON=.venv/bin/python
 ```
 
 Output includes `embedding_dimensions`, vector-store backend/path/counts, Chroma distances,
 SQLite pointer ids, metadata, and `record_found`. If `record_found=false`, Chroma has a
 stale pointer and should be rebuilt or cleared for the active SQLite database.
+
+Runtime Chroma operations require a workspace for indexing, querying, deletion, and rebuild.
+Workspace deletion uses `delete_workspace_vectors`; `reset_vector_store` and
+`delete_collection_admin` are explicitly global administrative/test operations. Entries without
+workspace metadata are excluded by both Chroma and the in-process fallback.
 
 ## UI and demo surfaces
 
@@ -350,6 +377,24 @@ opens a detail inspector with type/status, summary, evidence IDs, and connected 
 matches the architecture goal that graph edges are read paths for Relational Mode, not just a
 decorative visualization.
 
+## Bound local and integration surfaces
+
+Streamlit resolves `MIRA_STREAMLIT_WORKSPACE_ID` at real application startup, validates that the
+workspace is active, and creates one deterministic session inside it. The real-agent toggle,
+memory inspector, graph, foresight, and trace views all use that binding. Missing configuration
+stops the application instead of falling back to the legacy workspace.
+
+Slack parses `MIRA_SLACK_TEAM_WORKSPACES` as a JSON mapping from immutable Slack `team_id` values
+to MIRA workspace IDs. Unknown teams are rejected, and Slack user identity remains separate from
+GitHub identity. Local MCP is constructed with one `WorkspaceContext` (or
+`MIRA_MCP_WORKSPACE_ID`); tool arguments can select records and sessions but cannot change the
+server's workspace. Remote MCP authentication remains out of scope because no remote transport
+is implemented.
+
+Operational inspection and seed scripts require `--workspace-id` or `WORKSPACE_ID`. The worker,
+demo cleanup, migrations, and isolated evaluation runners are explicitly administrative/system
+surfaces and may operate across or create workspaces by design.
+
 ## FastAPI product backend
 
 Modules: [`api/main.py`](../api/main.py), [`api/routes/`](../api/routes), and
@@ -363,9 +408,22 @@ HTTP request -> FastAPI route -> core.agent / repositories / memory read model
 ```
 
 Routes must not own memory semantics. They validate/serialize request and response payloads,
-call existing core functions, and return clean API errors. The current server exposes health,
-chat, sessions, Session Working Set, memory graph, retrieval traces, foresight, reflections,
-community summaries, and worker status.
+call existing core functions, and return clean API errors. The current server exposes GitHub
+OAuth with opaque server sessions, health, chat, sessions, Session Working Set, memory graph,
+retrieval traces, foresight, reflections, community summaries, and worker status.
+
+In `github` mode, `/auth/github/callback` provisions one personal workspace per immutable GitHub
+user id. Product routes resolve that workspace from a hashed session cookie and ignore legacy
+client-supplied user identifiers. Mutating routes use a double-submit CSRF token. In explicit
+`development` mode, the server binds requests to `MIRA_DEVELOPMENT_WORKSPACE_ID` (the migrated
+legacy workspace by default) without OAuth; this mode is for local development only.
+
+`POST /auth/demo` issues an opaque session for a newly created demo workspace. The canonical demo
+seed is non-interactive; visitor data is seeded with fresh IDs into an isolated workspace. SQLite
+limits active demos and issuance frequency. Demo sessions and workspaces share an expiry, and
+`make demo-cleanup` quarantines pending work, removes workspace vectors, deletes canonical rows
+in dependency order, and finally removes the disposable identity. General personal-workspace
+deletion is intentionally not implemented by this workflow.
 
 The server runs locally with:
 
@@ -394,9 +452,10 @@ MIRA keeps **official benchmark results** separate from **ablation studies**:
   foresight records, and reflections/community summaries.
 - Ablation uses the shared case-execution runtime from local eval, but keeps its own
   comparison table and result files. By default it isolates each config/case pair with a
-  fresh SQLite database and cleared vector store; pass `--shared-db` only for intentional
-  continuity experiments. Add `--run-slow-path` when comparing durable-memory components so
-  every configuration gets the same slow-path ingestion opportunity before scoring.
+  fresh SQLite database, cleared vector store, and explicit evaluation workspace. With
+  `--shared-db`, one workspace is shared by the cases in a configuration, while configurations
+  remain isolated. Add `--run-slow-path` when comparing durable-memory components so every
+  configuration gets the same workspace-scoped ingestion opportunity before scoring.
 - Local regressions run a small isolated suite against a temporary SQLite database and
   deterministic answer stub by default:
 
@@ -412,6 +471,12 @@ MIRA keeps **official benchmark results** separate from **ablation studies**:
   to resemble a long-running system with background distillation enabled. Add `--debug-trace` to
   write a Markdown forensic report with routing, prompt sections, session items, and slow-path
   step outputs for each interaction.
+
+- Official benchmark examples use the same boundary: each example gets an isolated database,
+  cleared vector store, and explicit evaluation workspace. Import, queue claiming, slow-path
+  processing, retrieval, and answering carry that workspace ID end to end. This prevents
+  cross-example memory leakage while exercising production ownership constraints instead of a
+  privileged global fallback.
 
 This separation matters because a benchmark score answers "how well does MIRA work as a
 whole?", while an ablation answers "which architectural component caused the improvement?".

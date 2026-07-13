@@ -14,16 +14,19 @@ component configurations.
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import time
 from pathlib import Path
 from typing import Protocol
+from uuid import uuid4
 
 from core.agent import handle_user_message
 from core.db.chroma import reset_vector_store
 from core.db.repositories import (
     configure_database,
     create_session,
+    create_workspace,
     get_answer_trace,
     repository_connection,
 )
@@ -44,6 +47,7 @@ def run_case_interactions(
     *,
     case_id: str,
     session_user: str,
+    workspace_id: str,
     progress: ProgressReporter | None = None,
     delay_s: float = 0.0,
     interaction_counter: dict[str, int] | None = None,
@@ -63,14 +67,14 @@ def run_case_interactions(
 
     counter = interaction_counter if interaction_counter is not None else {"count": 0}
     case_records = case_debug_records if case_debug_records is not None else []
-    session_id = create_session(session_user)
+    session_id = create_session(session_user, workspace_id=workspace_id)
     last_response: dict[str, object] = {}
     total_interactions = len(interactions)
     for interaction_index, interaction in enumerate(interactions, start=1):
         if not isinstance(interaction, dict):
             continue
         if interaction.get("reset_session"):
-            session_id = create_session(session_user)
+            session_id = create_session(session_user, workspace_id=workspace_id)
             _progress(progress, f"case {case_id}: reset session")
         message = str(interaction.get("message", "")).strip()
         if not message:
@@ -90,7 +94,7 @@ def run_case_interactions(
         )
         slow_path_debug: list[DebugRecord] = []
         if run_slow_path:
-            slow_path_debug = drain_slow_path(progress, case_id, slow_path_batch_size)
+            slow_path_debug = drain_slow_path(progress, case_id, slow_path_batch_size, workspace_id)
         debug_record = _interaction_debug_record(
             case_id=case_id,
             session_id=session_id,
@@ -132,10 +136,22 @@ def isolate_case_state(
     return case_path
 
 
+def create_evaluation_workspace(label: str | int) -> str:
+    """Create one trusted active workspace for an evaluation isolation unit."""
+    normalized = re.sub(r"[^a-z0-9]+", "-", str(label).casefold()).strip("-") or "case"
+    suffix = uuid4().hex[:10]
+    return create_workspace(
+        f"Evaluation {label}",
+        f"evaluation-{normalized[:32]}-{suffix}",
+        "development",
+    )
+
+
 def drain_slow_path(
     progress: ProgressReporter | None,
     case_id: str,
     batch_size: int,
+    workspace_id: str,
 ) -> list[DebugRecord]:
     """Drain queued slow-path work and return compact debug records."""
     from core.memory.slow_path import run_slow_path_batch
@@ -145,7 +161,7 @@ def drain_slow_path(
     debug_batches: list[DebugRecord] = []
     while True:
         _progress(progress, f"case {case_id}: slow path claiming up to {batch_size}")
-        results = run_slow_path_batch(batch_size)
+        results = run_slow_path_batch(batch_size, workspace_id=workspace_id)
         if not results:
             _progress(
                 progress,
@@ -160,7 +176,9 @@ def drain_slow_path(
             {
                 "processed": processed,
                 "failed": failed,
-                "observations": [_slow_path_result_debug(result) for result in results],
+                "observations": [
+                    _slow_path_result_debug(result, workspace_id) for result in results
+                ],
             }
         )
         _progress(
@@ -200,7 +218,7 @@ def _interaction_debug_record(
     }
 
 
-def _slow_path_result_debug(result: dict[str, object]) -> DebugRecord:
+def _slow_path_result_debug(result: dict[str, object], workspace_id: str) -> DebugRecord:
     raw_steps = result.get("steps", [])
     steps = raw_steps if isinstance(raw_steps, list) else []
     created = result.get("created_record_ids", {})
@@ -211,7 +229,7 @@ def _slow_path_result_debug(result: dict[str, object]) -> DebugRecord:
         "succeeded": result.get("succeeded"),
         "error_message": result.get("error_message"),
         "created_record_ids": created_ids,
-        "created_graph_edges": _graph_edge_details(graph_edge_ids),
+        "created_graph_edges": _graph_edge_details(graph_edge_ids, workspace_id),
         "steps": [
             {
                 "step": step.get("step_name"),
@@ -230,8 +248,8 @@ def _compact_session_items(items: list[dict[str, object]]) -> list[DebugRecord]:
     return [{key: item.get(key) for key in keys if item.get(key) is not None} for item in items]
 
 
-def _graph_edge_details(edge_ids: list[str]) -> list[DebugRecord]:
-    if not edge_ids:
+def _graph_edge_details(edge_ids: list[str], workspace_id: str | None) -> list[DebugRecord]:
+    if not edge_ids or workspace_id is None:
         return []
     placeholders = ", ".join("?" for _ in edge_ids)
     with repository_connection() as connection:
@@ -245,10 +263,10 @@ def _graph_edge_details(edge_ids: list[str]) -> list[DebugRecord]:
             FROM graph_edges
             JOIN graph_nodes AS source ON source.id = graph_edges.source_node_id
             JOIN graph_nodes AS target ON target.id = graph_edges.target_node_id
-            WHERE graph_edges.id IN ({placeholders})
+            WHERE graph_edges.workspace_id = ? AND graph_edges.id IN ({placeholders})
             ORDER BY graph_edges.created_at ASC
             """,  # nosec B608
-            tuple(edge_ids),
+            (workspace_id, *edge_ids),
         ).fetchall()
     return [dict(row) for row in rows]
 

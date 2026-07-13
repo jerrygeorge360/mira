@@ -11,10 +11,15 @@ import json
 import os
 import sqlite3
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-from core.db.schema import initialize_database
+from core.db.schema import (
+    LEGACY_WORKSPACE_ID,
+    initialize_database,
+    seed_workspace_canonical_registries,
+)
 from core.db.sqlite import connect_sqlite
 
 RepositoryRecord = dict[str, object]
@@ -23,11 +28,27 @@ DATABASE_PATH_ENV = "MIRA_DB_PATH"
 _DATABASE_PATH: Path | None = None
 _INITIALIZED_DATABASE_PATHS: set[Path] = set()
 
+
+@dataclass(frozen=True)
+class WorkspaceContext:
+    """Trusted workspace identity passed to workspace-bound repositories."""
+
+    workspace_id: str
+    user_id: str | None = None
+    membership_role: str | None = None
+    auth_mode: str = "internal"
+
+
 ENUM_VALUES: dict[str, frozenset[str]] = {
+    "workspace_type": frozenset({"personal", "demo", "legacy", "development"}),
+    "workspace_status": frozenset({"active", "suspended", "expired", "deleting", "deleted"}),
+    "workspace_role": frozenset({"owner", "admin", "member"}),
     "session_record_status": frozenset({"active", "ended", "archived"}),
     "observation_role": frozenset({"user", "assistant", "system", "tool"}),
     "observation_source": frozenset({"chat", "slack", "mcp", "seed", "import"}),
-    "slow_path_queue_status": frozenset({"pending", "processing", "done", "failed", "dead_letter"}),
+    "slow_path_queue_status": frozenset(
+        {"pending", "processing", "done", "failed", "dead_letter", "quarantined"}
+    ),
     "session_item_type": frozenset(
         {
             "current_goal",
@@ -318,6 +339,61 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
     ),
 }
 
+_WORKSPACE_OWNED_TABLES = frozenset(
+    {
+        "sessions",
+        "observations",
+        "slow_path_queue",
+        "canonical_subjects",
+        "canonical_predicates",
+        "atomic_facts",
+        "entities",
+        "graph_nodes",
+        "graph_edges",
+        "reflections",
+        "foresight_records",
+        "community_summaries",
+        "working_memory",
+        "retrieval_logs",
+        "prompt_logs",
+        "answer_traces",
+    }
+)
+for _workspace_table in _WORKSPACE_OWNED_TABLES:
+    TABLE_COLUMNS[_workspace_table] = frozenset({*TABLE_COLUMNS[_workspace_table], "workspace_id"})
+
+TABLE_COLUMNS.update(
+    {
+        "users": frozenset(
+            {
+                "id",
+                "github_id",
+                "github_login",
+                "display_name",
+                "avatar_url",
+                "email",
+                "created_at",
+                "updated_at",
+                "last_login_at",
+            }
+        ),
+        "workspaces": frozenset(
+            {
+                "id",
+                "name",
+                "slug",
+                "owner_user_id",
+                "workspace_type",
+                "status",
+                "expires_at",
+                "created_at",
+                "updated_at",
+            }
+        ),
+        "workspace_members": frozenset({"workspace_id", "user_id", "role", "created_at"}),
+    }
+)
+
 
 def configure_database(database_path: str | Path) -> None:
     """Set the SQLite database path used by repository functions."""
@@ -350,14 +426,285 @@ def enum_values(enum_name: str) -> frozenset[str]:
     return allowed_values
 
 
-def create_session(user_id: str, title: str | None = None) -> str:
+def create_user(
+    *,
+    github_id: str | None = None,
+    github_login: str | None = None,
+    display_name: str | None = None,
+    avatar_url: str | None = None,
+    email: str | None = None,
+    user_id: str | None = None,
+) -> str:
+    """Create an internal user record; OAuth upsert behavior is added in slice 5."""
+    identifier = user_id or _new_id()
+    now = _now()
+    _execute_insert(
+        "users",
+        {
+            "id": identifier,
+            "github_id": github_id,
+            "github_login": github_login,
+            "display_name": display_name,
+            "avatar_url": avatar_url,
+            "email": email,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    return identifier
+
+
+def add_workspace_member(workspace_id: str, user_id: str, role: str) -> None:
+    """Add one user to a workspace with a validated role."""
+    require_active_workspace(workspace_id)
+    validate_enum_value("workspace_role", role)
+    _execute_insert(
+        "workspace_members",
+        {
+            "workspace_id": workspace_id,
+            "user_id": user_id,
+            "role": role,
+            "created_at": _now(),
+        },
+    )
+
+
+def create_workspace(
+    name: str,
+    slug: str,
+    workspace_type: str,
+    *,
+    owner_user_id: str | None = None,
+    status: str = "active",
+    expires_at: str | None = None,
+    workspace_id: str | None = None,
+) -> str:
+    """Create a workspace and seed its isolated canonical vocabulary."""
+    if not name.strip() or not slug.strip():
+        raise ValueError("workspace name and slug must not be empty")
+    validate_enum_value("workspace_type", workspace_type)
+    validate_enum_value("workspace_status", status)
+    identifier = workspace_id or _new_id()
+    now = _now()
+    with _connect() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO workspaces (
+                    id, name, slug, owner_user_id, workspace_type, status,
+                    expires_at, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    identifier,
+                    name.strip(),
+                    slug.strip(),
+                    owner_user_id,
+                    workspace_type,
+                    status,
+                    expires_at,
+                    now,
+                    now,
+                ),
+            )
+            if owner_user_id is not None:
+                connection.execute(
+                    """
+                    INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
+                    VALUES (?, ?, 'owner', ?)
+                    """,
+                    (identifier, owner_user_id, now),
+                )
+            seed_workspace_canonical_registries(connection, identifier)
+        except sqlite3.IntegrityError as error:
+            raise ValueError(f"Could not create workspace: {error}") from error
+    return identifier
+
+
+def get_workspace(workspace_id: str) -> RepositoryRecord | None:
+    """Fetch one workspace by immutable identifier."""
+    rows = _fetch_all("SELECT * FROM workspaces WHERE id = ?", (workspace_id,))
+    return rows[0] if rows else None
+
+
+def require_active_workspace(workspace_id: str) -> RepositoryRecord:
+    """Return an active workspace or fail closed."""
+    workspace = get_workspace(workspace_id)
+    if workspace is None:
+        raise ValueError(f"Workspace not found: {workspace_id}")
+    if workspace.get("status") != "active":
+        raise ValueError(f"Workspace is not active: {workspace_id}")
+    expires_at = workspace.get("expires_at")
+    if isinstance(expires_at, str) and expires_at <= _now():
+        with _connect() as connection:
+            connection.execute(
+                "UPDATE workspaces SET status = 'expired', updated_at = ? WHERE id = ?",
+                (_now(), workspace_id),
+            )
+        raise ValueError(f"Workspace is not active: {workspace_id}")
+    return workspace
+
+
+def workspace_id_for_session(session_id: str) -> str:
+    """Resolve and validate the active workspace that owns a session."""
+    workspace_id = _workspace_id_for("sessions", session_id)
+    require_active_workspace(workspace_id)
+    return workspace_id
+
+
+def workspace_id_for_observation(observation_id: str) -> str:
+    """Resolve and validate the active workspace that owns an observation."""
+    workspace_id = _workspace_id_for("observations", observation_id)
+    require_active_workspace(workspace_id)
+    return workspace_id
+
+
+def bind_workspace(context: WorkspaceContext) -> WorkspaceRepository:
+    """Validate a trusted context and return a repository bound to it."""
+    require_active_workspace(context.workspace_id)
+    if context.user_id is not None:
+        with _connect() as connection:
+            membership = connection.execute(
+                """
+                SELECT role FROM workspace_members
+                WHERE workspace_id = ? AND user_id = ?
+                """,
+                (context.workspace_id, context.user_id),
+            ).fetchone()
+        if membership is None:
+            raise ValueError("User is not a member of the workspace")
+    return WorkspaceRepository(context)
+
+
+def configured_workspace_context(
+    env_name: str = "MIRA_WORKSPACE_ID", *, allow_development_fallback: bool = True
+) -> WorkspaceContext:
+    """Resolve an explicitly configured integration workspace or fail closed."""
+    workspace_id = os.environ.get(env_name, "").strip()
+    if (
+        not workspace_id
+        and allow_development_fallback
+        and os.environ.get("MIRA_AUTH_MODE", "").casefold() == "development"
+    ):
+        workspace_id = os.environ.get("MIRA_DEVELOPMENT_WORKSPACE_ID", LEGACY_WORKSPACE_ID).strip()
+    if not workspace_id:
+        raise ValueError(f"{env_name} must bind this integration to one workspace")
+    require_active_workspace(workspace_id)
+    return WorkspaceContext(workspace_id, auth_mode="configured")
+
+
+def ensure_workspace_session(
+    context: WorkspaceContext, session_id: str, user_id: str, *, source: str
+) -> str:
+    """Create a deterministic integration session inside one verified workspace."""
+    repository = bind_workspace(context)
+    if repository.get_session(session_id) is not None:
+        return session_id
+    if source not in {"slack", "mcp", "streamlit"}:
+        raise ValueError("source must identify a configured integration")
+    now = _now()
+    _execute_insert(
+        "sessions",
+        {
+            "id": session_id,
+            "workspace_id": context.workspace_id,
+            "user_id": user_id,
+            "status": "active",
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+    return session_id
+
+
+class WorkspaceRepository:
+    """Small fail-closed repository facade for ownership-sensitive access."""
+
+    def __init__(self, context: WorkspaceContext) -> None:
+        self.context = context
+
+    @property
+    def workspace_id(self) -> str:
+        return self.context.workspace_id
+
+    def create_session(self, user_id: str, title: str | None = None) -> str:
+        return create_session(user_id, title, workspace_id=self.workspace_id)
+
+    def get_session(self, session_id: str) -> RepositoryRecord | None:
+        rows = _fetch_all(
+            "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+            (session_id, self.workspace_id),
+        )
+        return rows[0] if rows else None
+
+    def list_sessions(self, limit: int = 50) -> list[RepositoryRecord]:
+        if limit < 1:
+            raise ValueError("limit must be a positive integer")
+        return _fetch_all(
+            """
+            SELECT * FROM sessions
+            WHERE workspace_id = ?
+            ORDER BY updated_at DESC LIMIT ?
+            """,
+            (self.workspace_id, limit),
+        )
+
+    def save_observation(
+        self,
+        session_id: str,
+        role: str,
+        content: str,
+        source: str = "chat",
+        metadata: dict[str, object] | None = None,
+    ) -> str:
+        if self.get_session(session_id) is None:
+            raise ValueError(f"Session not found in workspace: {session_id}")
+        return save_observation(session_id, role, content, source, metadata)
+
+    def list_observations(
+        self, session_id: str, limit: int | None = None
+    ) -> list[RepositoryRecord]:
+        if self.get_session(session_id) is None:
+            raise ValueError(f"Session not found in workspace: {session_id}")
+        return list_observations(session_id, limit)
+
+    def get_atomic_fact(self, fact_id: str) -> RepositoryRecord | None:
+        rows = _fetch_all(
+            "SELECT * FROM atomic_facts WHERE id = ? AND workspace_id = ?",
+            (fact_id, self.workspace_id),
+        )
+        return rows[0] if rows else None
+
+    def get_graph_node(self, node_id: str) -> RepositoryRecord | None:
+        rows = _fetch_all(
+            "SELECT * FROM graph_nodes WHERE id = ? AND workspace_id = ?",
+            (node_id, self.workspace_id),
+        )
+        return rows[0] if rows else None
+
+    def get_answer_trace(self, trace_id: str) -> RepositoryRecord | None:
+        rows = _fetch_all(
+            "SELECT * FROM answer_traces WHERE id = ? AND workspace_id = ?",
+            (trace_id, self.workspace_id),
+        )
+        return rows[0] if rows else None
+
+
+def create_session(
+    user_id: str,
+    title: str | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+) -> str:
     """Create an active session record and return its identifier."""
+    require_active_workspace(workspace_id)
     session_id = _new_id()
     now = _now()
     _execute_insert(
         "sessions",
         {
             "id": session_id,
+            "workspace_id": workspace_id,
             "user_id": user_id,
             "title": title,
             "status": "active",
@@ -392,11 +739,13 @@ def save_observation(
     """Persist a raw observation and return its identifier."""
     validate_enum_value("observation_role", role)
     validate_enum_value("observation_source", source)
+    workspace_id = _workspace_id_for("sessions", session_id)
     observation_id = _new_id()
     _execute_insert(
         "observations",
         {
             "id": observation_id,
+            "workspace_id": workspace_id,
             "session_id": session_id,
             "role": role,
             "content": content,
@@ -406,6 +755,28 @@ def save_observation(
         },
     )
     return observation_id
+
+
+def list_sessions(user_id: str | None = None, limit: int = 50) -> list[RepositoryRecord]:
+    """List sessions, most recently updated first (optionally filtered by user)."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    if user_id:
+        return _fetch_all(
+            "SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (user_id, limit),
+        )
+    return _fetch_all("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,))
+
+
+def message_counts_by_session() -> dict[str, int]:
+    """Return {session_id: number of user/assistant turns} in one query (for the sidebar)."""
+    with repository_connection() as connection:
+        rows = connection.execute(
+            "SELECT session_id, COUNT(*) AS n FROM observations "
+            "WHERE role IN ('user', 'assistant') GROUP BY session_id"
+        ).fetchall()
+    return {str(row["session_id"]): int(row["n"]) for row in rows}
 
 
 def list_observations(session_id: str, limit: int | None = None) -> list[RepositoryRecord]:
@@ -423,11 +794,13 @@ def list_observations(session_id: str, limit: int | None = None) -> list[Reposit
 def enqueue_observation(observation_id: str) -> str:
     """Add an observation to the slow-path queue and return the queue identifier."""
     queue_id = _new_id()
+    workspace_id = _workspace_id_for("observations", observation_id)
     now = _now()
     _execute_insert(
         "slow_path_queue",
         {
             "id": queue_id,
+            "workspace_id": workspace_id,
             "observation_id": observation_id,
             "status": "pending",
             "attempt_count": 0,
@@ -443,22 +816,32 @@ def claim_slow_path_batch(limit: int) -> list[str]:
     return [str(record["id"]) for record in claim_pending_batch(limit)]
 
 
-def claim_pending_batch(limit: int) -> list[RepositoryRecord]:
+def claim_pending_batch(limit: int, *, workspace_id: str | None = None) -> list[RepositoryRecord]:
     """Claim pending or failed slow-path jobs for durable asynchronous processing."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
+    if workspace_id is not None:
+        require_active_workspace(workspace_id)
     now = _now()
     with _connect() as connection:
-        rows = connection.execute(
-            """
-            SELECT *
-            FROM slow_path_queue
-            WHERE status IN (?, ?)
-            ORDER BY created_at ASC
-            LIMIT ?
-            """,
-            ("pending", "failed", limit),
-        ).fetchall()
+        if workspace_id is None:
+            rows = connection.execute(
+                """
+                SELECT * FROM slow_path_queue
+                WHERE status IN (?, ?)
+                ORDER BY created_at ASC LIMIT ?
+                """,
+                ("pending", "failed", limit),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT * FROM slow_path_queue
+                WHERE workspace_id = ? AND status IN (?, ?)
+                ORDER BY created_at ASC LIMIT ?
+                """,
+                (workspace_id, "pending", "failed", limit),
+            ).fetchall()
         queue_ids = [str(row["id"]) for row in rows]
         if not queue_ids:
             return []
@@ -468,6 +851,7 @@ def claim_pending_batch(limit: int) -> list[RepositoryRecord]:
             SET status = ?,
                 attempt_count = attempt_count + 1,
                 last_error = NULL,
+                quarantine_reason = NULL,
                 updated_at = ?
             WHERE id = ?
             """,
@@ -531,6 +915,84 @@ def mark_failed(queue_id: str, error: str) -> None:
         from_statuses={"processing"},
         to_status="failed",
         error=error,
+    )
+
+
+def quarantine_queue_job(queue_id: str, reason: str) -> None:
+    """Stop an ownership-invalid job without allowing automatic retries."""
+    if not reason:
+        raise ValueError("reason must not be empty")
+    now = _now()
+    _execute_write(
+        """
+        UPDATE slow_path_queue
+        SET status = 'quarantined', last_error = ?, quarantine_reason = ?, updated_at = ?
+        WHERE id = ? AND status = 'processing'
+        """,
+        (reason, reason, now, queue_id),
+        missing_message=f"Queue item not found or not processing: {queue_id}",
+    )
+
+
+def slow_path_step_completed(workspace_id: str, observation_id: str, step_name: str) -> bool:
+    """Return whether one observation step was durably completed."""
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT 1 FROM slow_path_step_journal
+            WHERE workspace_id = ? AND observation_id = ? AND step_name = ?
+              AND status = 'completed'
+            """,
+            (workspace_id, observation_id, step_name),
+        ).fetchone()
+    return row is not None
+
+
+def mark_slow_path_step_started(workspace_id: str, observation_id: str, step_name: str) -> None:
+    """Create or reset the journal row immediately before running a step."""
+    require_active_workspace(workspace_id)
+    now = _now()
+    with _connect() as connection:
+        connection.execute(
+            """
+            INSERT INTO slow_path_step_journal (
+                id, workspace_id, observation_id, step_name, status,
+                last_error, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'running', NULL, ?, ?)
+            ON CONFLICT(workspace_id, observation_id, step_name) DO UPDATE SET
+                status = 'running', last_error = NULL, updated_at = excluded.updated_at
+            """,
+            (_new_id(), workspace_id, observation_id, step_name, now, now),
+        )
+
+
+def mark_slow_path_step_completed(workspace_id: str, observation_id: str, step_name: str) -> None:
+    """Mark a journaled step complete only after its writes return successfully."""
+    _update_slow_path_step(workspace_id, observation_id, step_name, "completed", None)
+
+
+def mark_slow_path_step_failed(
+    workspace_id: str, observation_id: str, step_name: str, error: str
+) -> None:
+    """Record a retryable step failure without losing the completed-step history."""
+    _update_slow_path_step(workspace_id, observation_id, step_name, "failed", error)
+
+
+def _update_slow_path_step(
+    workspace_id: str,
+    observation_id: str,
+    step_name: str,
+    status: str,
+    error: str | None,
+) -> None:
+    _execute_write(
+        """
+        UPDATE slow_path_step_journal
+        SET status = ?, last_error = ?, updated_at = ?
+        WHERE workspace_id = ? AND observation_id = ? AND step_name = ?
+        """,
+        (status, error, _now(), workspace_id, observation_id, step_name),
+        missing_message=f"Slow-path step was not started: {observation_id}/{step_name}",
     )
 
 
@@ -649,19 +1111,34 @@ def create_atomic_fact(fact: RepositoryRecord) -> str:
         record,
         {"subject", "predicate", "object", "confidence", "status", "source_observation_id"},
     )
+    workspace_id = str(
+        record.setdefault(
+            "workspace_id",
+            _workspace_id_for("observations", str(record["source_observation_id"])),
+        )
+    )
     _validate_record_enums(record, {"status": "fact_status"})
     record.setdefault(
         "canonical_subject_id",
-        resolve_canonical_form("canonical_subjects", str(record["subject"])),
+        resolve_canonical_form(
+            "canonical_subjects", str(record["subject"]), workspace_id=workspace_id
+        ),
     )
     record.setdefault(
         "canonical_predicate_id",
-        resolve_canonical_form("canonical_predicates", str(record["predicate"])),
+        resolve_canonical_form(
+            "canonical_predicates", str(record["predicate"]), workspace_id=workspace_id
+        ),
     )
     return _insert_with_generated_id("atomic_facts", record)
 
 
-def resolve_canonical_form(table: str, raw_value: str) -> str | None:
+def resolve_canonical_form(
+    table: str,
+    raw_value: str,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+) -> str | None:
     """Resolve a raw subject/predicate to a canonical registry id.
 
     Matches the normalized raw value against each registry row's canonical form and its
@@ -676,7 +1153,9 @@ def resolve_canonical_form(table: str, raw_value: str) -> str | None:
         return None
     with _connect() as connection:
         rows = connection.execute(
-            f"SELECT id, canonical_form, aliases_json FROM {table}"  # noqa: S608  # nosec B608
+            f"SELECT id, canonical_form, aliases_json FROM {table} "  # noqa: S608  # nosec B608
+            "WHERE workspace_id = ?",
+            (workspace_id,),
         ).fetchall()
     for row in rows:
         if normalized == row["canonical_form"]:
@@ -686,7 +1165,12 @@ def resolve_canonical_form(table: str, raw_value: str) -> str | None:
             return str(row["id"])
     return _insert_with_generated_id(
         table,
-        {"canonical_form": normalized, "aliases_json": [], "confidence": CANONICAL_LOW_CONFIDENCE},
+        {
+            "workspace_id": workspace_id,
+            "canonical_form": normalized,
+            "aliases_json": [],
+            "confidence": CANONICAL_LOW_CONFIDENCE,
+        },
     )
 
 
@@ -726,6 +1210,7 @@ def _normalize_canonical(value: str) -> str:
 def create_entity(entity: RepositoryRecord) -> str:
     """Create an entity and return its identifier."""
     record = _prepare_record(entity)
+    record.setdefault("workspace_id", LEGACY_WORKSPACE_ID)
     _require_fields("entities", record, {"name", "entity_type"})
     return _insert_with_generated_id("entities", record)
 
@@ -733,6 +1218,7 @@ def create_entity(entity: RepositoryRecord) -> str:
 def create_graph_node(node: RepositoryRecord) -> str:
     """Create a graph node and return its identifier."""
     record = _prepare_record(node)
+    record.setdefault("workspace_id", LEGACY_WORKSPACE_ID)
     _require_fields("graph_nodes", record, {"node_type", "label"})
     _validate_record_enums(record, {"node_type": "graph_node_type"})
     return _insert_with_generated_id("graph_nodes", record)
@@ -746,6 +1232,9 @@ def create_graph_edge(edge: RepositoryRecord) -> str:
         record,
         {"source_node_id", "target_node_id", "edge_type", "confidence", "source_observations_json"},
     )
+    record.setdefault(
+        "workspace_id", _workspace_id_for("graph_nodes", str(record["source_node_id"]))
+    )
     _validate_record_enums(record, {"edge_type": "graph_edge_type"})
     return _insert_with_generated_id("graph_edges", record)
 
@@ -753,6 +1242,7 @@ def create_graph_edge(edge: RepositoryRecord) -> str:
 def create_reflection(reflection: RepositoryRecord) -> str:
     """Create a reflection and return its identifier."""
     record = _prepare_record(reflection)
+    record.setdefault("workspace_id", LEGACY_WORKSPACE_ID)
     _require_fields("reflections", record, {"reflection_type", "content", "confidence", "status"})
     _validate_record_enums(
         record, {"reflection_type": "reflection_type", "status": "reflection_status"}
@@ -776,32 +1266,41 @@ def create_foresight_record(record: RepositoryRecord) -> str:
         prepared_record,
         {"content", "status", "source_observation_id"},
     )
+    prepared_record.setdefault(
+        "workspace_id",
+        _workspace_id_for("observations", str(prepared_record["source_observation_id"])),
+    )
     _validate_record_enums(prepared_record, {"status": "foresight_status"})
     return _insert_with_generated_id("foresight_records", prepared_record)
 
 
-def list_active_foresight(session_id: str | None = None) -> list[RepositoryRecord]:
+def list_active_foresight(
+    session_id: str | None = None, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[RepositoryRecord]:
     """List active foresight records, optionally scoped by source observation session."""
     if session_id is None:
         return _fetch_all(
-            "SELECT * FROM foresight_records WHERE status = ? ORDER BY created_at ASC",
-            ("active",),
+            "SELECT * FROM foresight_records "
+            "WHERE workspace_id = ? AND status = ? ORDER BY created_at ASC",
+            (workspace_id, "active"),
         )
     return _fetch_all(
         """
         SELECT foresight_records.*
         FROM foresight_records
         JOIN observations ON observations.id = foresight_records.source_observation_id
-        WHERE foresight_records.status = ? AND observations.session_id = ?
+        WHERE foresight_records.workspace_id = ? AND foresight_records.status = ?
+          AND observations.session_id = ?
         ORDER BY foresight_records.created_at ASC
         """,
-        ("active", session_id),
+        (workspace_id, "active", session_id),
     )
 
 
 def create_working_memory_item(item: RepositoryRecord) -> str:
     """Create a durable working-memory item and return its identifier."""
     record = _prepare_record(item)
+    record.setdefault("workspace_id", LEGACY_WORKSPACE_ID)
     _require_fields(
         "working_memory",
         record,
@@ -816,6 +1315,7 @@ def create_working_memory_item(item: RepositoryRecord) -> str:
 def create_community_summary(summary: RepositoryRecord) -> str:
     """Create a graph-derived community summary and return its identifier."""
     record = _prepare_record(summary)
+    record.setdefault("workspace_id", LEGACY_WORKSPACE_ID)
     _require_fields(
         "community_summaries",
         record,
@@ -832,6 +1332,7 @@ def create_retrieval_log(log: RepositoryRecord) -> str:
         record,
         {"session_id", "query", "retrieval_mode", "retrieved_records_json"},
     )
+    record.setdefault("workspace_id", _workspace_id_for("sessions", str(record["session_id"])))
     _validate_record_enums(record, {"retrieval_mode": "retrieval_mode"})
     return _insert_with_generated_id("retrieval_logs", record)
 
@@ -840,6 +1341,7 @@ def create_prompt_log(log: RepositoryRecord) -> str:
     """Create a prompt-construction log and return its identifier."""
     record = _prepare_record(log)
     _require_fields("prompt_logs", record, {"session_id", "user_observation_id"})
+    record.setdefault("workspace_id", _workspace_id_for("sessions", str(record["session_id"])))
     return _insert_with_generated_id("prompt_logs", record)
 
 
@@ -856,6 +1358,7 @@ def create_answer_trace(trace: RepositoryRecord) -> str:
             "retrieval_mode",
         },
     )
+    record.setdefault("workspace_id", _workspace_id_for("sessions", str(record["session_id"])))
     return _insert_with_generated_id("answer_traces", record)
 
 
@@ -981,6 +1484,20 @@ def _fetch_all(statement: str, parameters: tuple[object, ...]) -> list[Repositor
     with _connect() as connection:
         rows = connection.execute(statement, parameters).fetchall()
     return [_row_to_record(row) for row in rows]
+
+
+def _workspace_id_for(table: str, record_id: str) -> str:
+    """Resolve ownership from a canonical parent record and fail closed if absent."""
+    if table not in _WORKSPACE_OWNED_TABLES:
+        raise ValueError(f"Table is not workspace-owned: {table}")
+    with _connect() as connection:
+        row = connection.execute(
+            f"SELECT workspace_id FROM {table} WHERE id = ?",  # noqa: S608  # nosec B608
+            (record_id,),
+        ).fetchone()
+    if row is None or not row["workspace_id"]:
+        raise ValueError(f"Workspace-owned {table} record not found: {record_id}")
+    return str(row["workspace_id"])
 
 
 def _transition_queue_status(

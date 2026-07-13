@@ -79,7 +79,8 @@ def test_readme_keeps_docker_instructions() -> None:
     for fragment in (
         "Docker local development",
         "docker compose build",
-        "docker compose up app",
+        "docker compose up api worker frontend",
+        "API_PORT=18000 FRONTEND_PORT=15173",
         ".docker-data/sqlite/mira.db",
         ".docker-data/chroma",
     ):

@@ -17,6 +17,12 @@ from core.db.schema import initialize_database, schema_statements
 from core.db.sqlite import connect_sqlite
 
 REQUIRED_TABLES = {
+    "schema_migrations",
+    "users",
+    "workspaces",
+    "workspace_members",
+    "auth_sessions",
+    "oauth_states",
     "sessions",
     "observations",
     "slow_path_queue",
@@ -35,6 +41,10 @@ REQUIRED_TABLES = {
 }
 
 REQUIRED_INDEXES = {
+    "idx_personal_workspace_owner",
+    "idx_sessions_workspace_updated",
+    "idx_observations_workspace_created",
+    "idx_queue_workspace_status",
     "idx_observations_session_id",
     "idx_observations_created_at",
     "idx_observations_processed_at",
@@ -47,6 +57,7 @@ REQUIRED_INDEXES = {
 REQUIRED_COLUMNS = {
     "sessions": {
         "id",
+        "workspace_id",
         "user_id",
         "title",
         "status",
@@ -56,6 +67,7 @@ REQUIRED_COLUMNS = {
     },
     "observations": {
         "id",
+        "workspace_id",
         "session_id",
         "role",
         "content",
@@ -83,6 +95,7 @@ REQUIRED_COLUMNS = {
     },
     "slow_path_queue": {
         "id",
+        "workspace_id",
         "observation_id",
         "status",
         "attempt_count",
@@ -92,6 +105,7 @@ REQUIRED_COLUMNS = {
     },
     "atomic_facts": {
         "id",
+        "workspace_id",
         "subject",
         "predicate",
         "object",
@@ -104,6 +118,7 @@ REQUIRED_COLUMNS = {
     },
     "entities": {
         "id",
+        "workspace_id",
         "name",
         "entity_type",
         "aliases_json",
@@ -112,6 +127,7 @@ REQUIRED_COLUMNS = {
     },
     "graph_nodes": {
         "id",
+        "workspace_id",
         "node_type",
         "source_table",
         "source_id",
@@ -121,6 +137,7 @@ REQUIRED_COLUMNS = {
     },
     "graph_edges": {
         "id",
+        "workspace_id",
         "source_node_id",
         "target_node_id",
         "edge_type",
@@ -134,6 +151,7 @@ REQUIRED_COLUMNS = {
     },
     "reflections": {
         "id",
+        "workspace_id",
         "reflection_type",
         "content",
         "confidence",
@@ -150,6 +168,7 @@ REQUIRED_COLUMNS = {
     },
     "foresight_records": {
         "id",
+        "workspace_id",
         "content",
         "reason",
         "status",
@@ -163,6 +182,7 @@ REQUIRED_COLUMNS = {
     },
     "community_summaries": {
         "id",
+        "workspace_id",
         "community_id",
         "title",
         "summary",
@@ -172,6 +192,7 @@ REQUIRED_COLUMNS = {
     },
     "working_memory": {
         "id",
+        "workspace_id",
         "content",
         "memory_type",
         "scope",
@@ -184,6 +205,7 @@ REQUIRED_COLUMNS = {
     },
     "retrieval_logs": {
         "id",
+        "workspace_id",
         "session_id",
         "query",
         "retrieval_mode",
@@ -193,6 +215,7 @@ REQUIRED_COLUMNS = {
     },
     "prompt_logs": {
         "id",
+        "workspace_id",
         "session_id",
         "user_observation_id",
         "included_session_items_json",

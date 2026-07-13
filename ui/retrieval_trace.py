@@ -143,9 +143,14 @@ def _retrieved_records(trace: Trace) -> list[dict[str, str]]:
 
 def load_trace(trace_id: str) -> Trace | None:
     """Load and normalize one answer trace from the repository (read-only)."""
-    from core.db.repositories import get_answer_trace
+    from core.db.repositories import bind_workspace, configured_workspace_context
 
-    record = get_answer_trace(trace_id)
+    repository = bind_workspace(
+        configured_workspace_context(
+            "MIRA_STREAMLIT_WORKSPACE_ID", allow_development_fallback=False
+        )
+    )
+    record = repository.get_answer_trace(trace_id)
     if record is None:
         return None
     return _normalize(record)

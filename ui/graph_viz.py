@@ -277,14 +277,23 @@ def _edge_row(edge: Edge) -> dict[str, object]:
     }
 
 
-def load_graph() -> Graph:
+def load_graph(workspace_id: str | None = None) -> Graph:
     """Load the typed graph from durable storage (read-only)."""
-    from core.db.repositories import repository_connection
+    from core.db.repositories import configured_workspace_context, repository_connection
 
+    active_workspace = (
+        workspace_id
+        or configured_workspace_context(
+            "MIRA_STREAMLIT_WORKSPACE_ID", allow_development_fallback=False
+        ).workspace_id
+    )
     with repository_connection() as connection:
-        node_rows = connection.execute("SELECT * FROM graph_nodes").fetchall()
+        node_rows = connection.execute(
+            "SELECT * FROM graph_nodes WHERE workspace_id = ?", (active_workspace,)
+        ).fetchall()
         edge_rows = connection.execute(
-            "SELECT * FROM graph_edges WHERE invalidated_at IS NULL"
+            "SELECT * FROM graph_edges WHERE workspace_id = ? AND invalidated_at IS NULL",
+            (active_workspace,),
         ).fetchall()
     nodes = [
         {

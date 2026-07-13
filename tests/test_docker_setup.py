@@ -12,27 +12,28 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_dockerfile_exists_and_starts_streamlit() -> None:
-    """The Docker image has a Streamlit app entry point."""
+def test_dockerfile_exists_and_starts_api() -> None:
+    """The Docker image has a FastAPI entry point."""
     dockerfile = PROJECT_ROOT / "Dockerfile"
     text = dockerfile.read_text(encoding="utf-8")
 
     assert dockerfile.is_file()
     assert "FROM python:3.11-slim" in text
-    assert "streamlit" in text
-    assert "ui/app.py" in text
-    assert "EXPOSE 8501" in text
+    assert "uvicorn" in text
+    assert "api.main:app" in text
+    assert "EXPOSE 8000" in text
 
 
-def test_compose_app_service_exposes_streamlit() -> None:
-    """Docker Compose defines the optional Streamlit app service."""
+def test_compose_services_expose_api_worker_and_frontend() -> None:
+    """Docker Compose defines the product API, worker, and frontend services."""
     compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
-    assert "app:" in compose
-    assert "8501:8501" in compose
-    assert "streamlit" in compose
-    assert "ui/app.py" in compose
-    assert "http://localhost:8501/_stcore/health" in compose
+    assert "api:" in compose
+    assert "worker:" in compose
+    assert "frontend:" in compose
+    assert "${API_PORT:-8000}:8000" in compose
+    assert "${FRONTEND_PORT:-5173}:5173" in compose
+    assert "http://localhost:8000/health" in compose
 
 
 def test_compose_mounts_sqlite_and_chroma_paths() -> None:
@@ -61,7 +62,7 @@ def test_readme_includes_docker_instructions() -> None:
 
     assert "Docker local development" in readme
     assert "docker compose build" in readme
-    assert "docker compose up app" in readme
+    assert "docker compose up api worker frontend" in readme
     assert ".docker-data/sqlite/mira.db" in readme
     assert ".docker-data/chroma" in readme
 

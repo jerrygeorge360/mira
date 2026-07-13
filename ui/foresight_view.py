@@ -164,13 +164,20 @@ def _window(record: ForesightRecord) -> str:
     return f"{start} → {end}"
 
 
-def load_foresight() -> list[ForesightRecord]:
+def load_foresight(workspace_id: str | None = None) -> list[ForesightRecord]:
     """Load all foresight records from durable storage (read-only)."""
-    from core.db.repositories import repository_connection
+    from core.db.repositories import configured_workspace_context, repository_connection
 
+    active_workspace = (
+        workspace_id
+        or configured_workspace_context(
+            "MIRA_STREAMLIT_WORKSPACE_ID", allow_development_fallback=False
+        ).workspace_id
+    )
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM foresight_records ORDER BY created_at DESC"
+            "SELECT * FROM foresight_records WHERE workspace_id = ? ORDER BY created_at DESC",
+            (active_workspace,),
         ).fetchall()
     return [dict(row) for row in rows]
 

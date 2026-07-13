@@ -4,24 +4,28 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from api.auth import WorkspaceAuth
 from api.dependencies import fetch_one
 from api.schemas.retrieval import RetrievalTraceResponse
-from core.db.repositories import get_answer_trace
+from core.db.repositories import bind_workspace
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
 
 @router.get("/traces/{trace_id}", response_model=RetrievalTraceResponse)
-def get_retrieval_trace(trace_id: str) -> RetrievalTraceResponse:
+def get_retrieval_trace(
+    trace_id: str,
+    auth: WorkspaceAuth,
+) -> RetrievalTraceResponse:
     """Return one answer trace and its retrieval evidence."""
-    trace = get_answer_trace(trace_id)
+    trace = bind_workspace(auth.context).get_answer_trace(trace_id)
     if trace is None:
         raise HTTPException(status_code=404, detail="trace_id not found")
     retrieval_log = None
     if trace.get("retrieval_log_id"):
         retrieval_log = fetch_one(
-            "SELECT * FROM retrieval_logs WHERE id = ?",
-            (str(trace["retrieval_log_id"]),),
+            "SELECT * FROM retrieval_logs WHERE id = ? AND workspace_id = ?",
+            (str(trace["retrieval_log_id"]), auth.context.workspace_id),
         )
     return RetrievalTraceResponse(
         trace_id=trace_id,

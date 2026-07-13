@@ -41,16 +41,19 @@ def add_embedding(
     sqlite_id: str,
     embedding: list[float],
     metadata: dict[str, object] | None = None,
+    *,
+    workspace_id: str,
 ) -> None:
     """Add an embedding to the vector index using a SQLite pointer as its identity."""
     _validate_collection(collection)
     _validate_sqlite_table(sqlite_table)
     _validate_embedding(embedding)
-    _ensure_sqlite_record_exists(sqlite_table, sqlite_id)
+    _ensure_sqlite_record_exists(sqlite_table, sqlite_id, workspace_id)
 
     pointer_metadata = {
         "sqlite_table": sqlite_table,
         "sqlite_id": sqlite_id,
+        "workspace_id": workspace_id,
         "metadata_json": json.dumps(dict(metadata or {}), sort_keys=True),
     }
     client = _load_chroma_client()
@@ -60,6 +63,7 @@ def add_embedding(
             "sqlite_table": sqlite_table,
             "sqlite_id": sqlite_id,
             "metadata": dict(metadata or {}),
+            "workspace_id": workspace_id,
         }
         return
 
@@ -74,6 +78,8 @@ def query_embeddings(
     collection: str,
     embedding: list[float],
     top_k: int,
+    *,
+    workspace_id: str,
 ) -> list[dict[str, object]]:
     """Query the vector index and return SQLite pointers plus retrieval metadata."""
     _validate_collection(collection)
@@ -83,7 +89,11 @@ def query_embeddings(
 
     client = _load_chroma_client()
     if client is None:
-        rows = list(_fallback_collection(collection).values())
+        rows = [
+            row
+            for row in _fallback_collection(collection).values()
+            if row.get("workspace_id") == workspace_id
+        ]
         ranked = sorted(
             rows,
             key=lambda row: _cosine_distance(embedding, _as_float_list(row["embedding"])),
@@ -101,6 +111,7 @@ def query_embeddings(
     result = client.get_or_create_collection(name=collection).query(
         query_embeddings=[list(embedding)],
         n_results=top_k,
+        where={"workspace_id": workspace_id},
         include=["distances", "metadatas"],
     )
     ids = _query_result_rows(result, "ids")
@@ -129,19 +140,45 @@ def collection_count(collection: str) -> int:
     return int(client.get_or_create_collection(name=collection).count())
 
 
-def vector_store_status() -> dict[str, object]:
+def vector_store_status(workspace_id: str | None = None) -> dict[str, object]:
     """Return collection counts and backend metadata for diagnostics."""
     return {
         "backend": "chroma" if _load_chroma_client() is not None else "fallback",
         "path": os.environ.get(CHROMA_DB_PATH_ENV),
         "collections": {
-            collection: collection_count(collection) for collection in sorted(SUPPORTED_COLLECTIONS)
+            collection: (
+                collection_count(collection)
+                if workspace_id is None
+                else _workspace_collection_count(collection, workspace_id)
+            )
+            for collection in sorted(SUPPORTED_COLLECTIONS)
         },
     }
 
 
-def delete_collection(collection: str) -> None:
-    """Delete a vector collection without touching canonical SQLite records."""
+def _workspace_collection_count(collection: str, workspace_id: str) -> int:
+    client = _load_chroma_client()
+    if client is None:
+        return sum(
+            1
+            for row in _fallback_collection(collection).values()
+            if row.get("workspace_id") == workspace_id
+        )
+    result = client.get_or_create_collection(name=collection).get(
+        where={"workspace_id": workspace_id}, include=[]
+    )
+    ids = result.get("ids", [])
+    return len(ids) if isinstance(ids, list) else 0
+
+
+def delete_workspace_vectors(collection: str, *, workspace_id: str) -> None:
+    """Delete only one workspace's pointers from a collection."""
+    _validate_collection(collection)
+    _delete_workspace_vectors(collection, workspace_id)
+
+
+def delete_collection_admin(collection: str) -> None:
+    """Administratively delete an entire collection without touching SQLite."""
     _validate_collection(collection)
     client = _load_chroma_client()
     if client is None:
@@ -154,12 +191,12 @@ def delete_collection(collection: str) -> None:
             raise
 
 
-def rebuild_collection(collection: str) -> None:
+def rebuild_collection(collection: str, *, workspace_id: str) -> None:
     """Rebuild one vector collection from SQLite records."""
     _validate_collection(collection)
     embedder = _require_embedder()
-    delete_collection(collection)
-    for row in _fetch_rebuild_rows(collection):
+    _delete_workspace_vectors(collection, workspace_id)
+    for row in _fetch_rebuild_rows(collection, workspace_id):
         sqlite_id = str(row["id"])
         add_embedding(
             collection,
@@ -167,6 +204,7 @@ def rebuild_collection(collection: str) -> None:
             sqlite_id,
             embedder(_canonical_index_text(collection, row)),
             metadata=_rebuild_metadata(collection, row),
+            workspace_id=workspace_id,
         )
 
 
@@ -176,7 +214,9 @@ def configure_embedder(embedder: EmbeddingProvider | None) -> None:
     _EMBEDDING_PROVIDER = embedder
 
 
-def index_memory(memory_id: str, text: str, metadata: dict[str, object]) -> None:
+def index_memory(
+    memory_id: str, text: str, metadata: dict[str, object], *, workspace_id: str
+) -> None:
     """Compatibility adapter for indexing observation text into Chroma."""
     if not memory_id:
         raise ValueError("memory_id must not be empty")
@@ -190,17 +230,22 @@ def index_memory(memory_id: str, text: str, metadata: dict[str, object]) -> None
         memory_id,
         embed_text(text),
         metadata=metadata,
+        workspace_id=workspace_id,
     )
 
 
-def remove_from_index(memory_id: str) -> None:
+def remove_from_index(memory_id: str, *, workspace_id: str) -> None:
     """Remove a SQLite record pointer from all supported collections."""
     client = _load_chroma_client()
     for collection in SUPPORTED_COLLECTIONS:
         if client is None:
-            _fallback_collection(collection).pop(memory_id, None)
+            row = _fallback_collection(collection).get(memory_id)
+            if row is not None and row.get("workspace_id") == workspace_id:
+                _fallback_collection(collection).pop(memory_id, None)
             continue
-        client.get_or_create_collection(name=collection).delete(ids=[memory_id])
+        client.get_or_create_collection(name=collection).delete(
+            ids=[memory_id], where={"workspace_id": workspace_id}
+        )
 
 
 def reset_vector_store() -> None:
@@ -214,7 +259,7 @@ def reset_vector_store() -> None:
     """
     global _CHROMA_CLIENT, _CHROMA_CLIENT_INITIALIZED, _CHROMA_CLIENT_PATH
     for collection in SUPPORTED_COLLECTIONS:
-        delete_collection(collection)
+        delete_collection_admin(collection)
     _CHROMA_CLIENT = None
     _CHROMA_CLIENT_INITIALIZED = False
     _CHROMA_CLIENT_PATH = None
@@ -240,11 +285,11 @@ def _validate_embedding(embedding: Sequence[float]) -> None:
             raise ValueError("embedding values must be numeric")
 
 
-def _ensure_sqlite_record_exists(sqlite_table: str, sqlite_id: str) -> None:
+def _ensure_sqlite_record_exists(sqlite_table: str, sqlite_id: str, workspace_id: str) -> None:
     with repository_connection() as connection:
         row = connection.execute(
-            f"SELECT id FROM {sqlite_table} WHERE id = ?",  # nosec B608
-            (sqlite_id,),
+            f"SELECT id FROM {sqlite_table} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (sqlite_id, workspace_id),
         ).fetchone()
     if row is None:
         raise ValueError(f"SQLite record not found in {sqlite_table}: {sqlite_id}")
@@ -282,12 +327,25 @@ def _require_embedder() -> EmbeddingProvider:
     return _EMBEDDING_PROVIDER
 
 
-def _fetch_rebuild_rows(collection: str) -> list[dict[str, object]]:
+def _fetch_rebuild_rows(collection: str, workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         rows = connection.execute(
-            f"SELECT * FROM {collection} ORDER BY created_at ASC",  # nosec B608
+            f"SELECT * FROM {collection} WHERE workspace_id = ? ORDER BY created_at ASC",  # nosec B608
+            (workspace_id,),
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def _delete_workspace_vectors(collection: str, workspace_id: str) -> None:
+    client = _load_chroma_client()
+    if client is None:
+        store = _fallback_collection(collection)
+        for record_id in [
+            key for key, row in store.items() if row.get("workspace_id") == workspace_id
+        ]:
+            store.pop(record_id, None)
+        return
+    client.get_or_create_collection(name=collection).delete(where={"workspace_id": workspace_id})
 
 
 def _canonical_index_text(collection: str, row: dict[str, object]) -> str:

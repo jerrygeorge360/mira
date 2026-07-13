@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from api.auth import AuthenticatedWorkspace
 from api.routes.retrieval import get_retrieval_trace
 from core.db.repositories import (
+    WorkspaceContext,
     configure_database,
     create_answer_trace,
     create_retrieval_log,
     create_session,
     save_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 
 
 def test_retrieval_trace_endpoint_returns_trace_shape(tmp_path: Any, monkeypatch: Any) -> None:
@@ -48,7 +51,10 @@ def test_retrieval_trace_endpoint_returns_trace_shape(tmp_path: Any, monkeypatch
         }
     )
 
-    response = get_retrieval_trace(trace_id)
+    response = get_retrieval_trace(
+        trace_id,
+        AuthenticatedWorkspace(WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="development")),
+    )
 
     assert response.trace_id == trace_id
     assert response.session_id == session_id

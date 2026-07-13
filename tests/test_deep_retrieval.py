@@ -20,6 +20,7 @@ from core.db.repositories import (
     create_session,
     save_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
 from core.retrieval.deep import retrieve_deep
 
@@ -53,7 +54,13 @@ def _reflection(reflection_type: str, content: str, confidence: float) -> str:
             "status": "active",
         }
     )
-    chroma.add_embedding("reflections", "reflections", reflection_id, embed_text(content))
+    chroma.add_embedding(
+        "reflections",
+        "reflections",
+        reflection_id,
+        embed_text(content),
+        workspace_id=LEGACY_WORKSPACE_ID,
+    )
     return reflection_id
 
 

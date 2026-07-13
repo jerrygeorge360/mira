@@ -1,36 +1,34 @@
 services:
-  app:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
+      target: base
     command:
-      - python
-      - -m
-      - streamlit
-      - run
-      - ui/app.py
-      - --server.address=0.0.0.0
-      - --server.port=8501
+      - uvicorn
+      - api.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
     ports:
-      - "8501:8501"
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
     environment:
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_CHAT_ENDPOINT: ${LLM_CHAT_ENDPOINT:-}
-      LLM_MODEL: ${LLM_MODEL:-qwen-plus}
-      LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      DASHSCOPE_CHAT_ENDPOINT: ${DASHSCOPE_CHAT_ENDPOINT:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions}
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      MIRA_API_CORS_ORIGINS: ${MIRA_API_CORS_ORIGINS:-http://localhost:${FRONTEND_PORT:-5173}}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:${API_PORT:-8000}/auth/github/callback}
+      APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${FRONTEND_PORT:-5173}}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
       MIRA_SESSION_TTL_MINUTES: ${MIRA_SESSION_TTL_MINUTES:-120}
       MIRA_PROMPT_TOKEN_BUDGET: ${MIRA_PROMPT_TOKEN_BUDGET:-32000}
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -39,6 +37,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: base
     command:
       - python
       - -m
@@ -47,13 +46,46 @@ services:
       - "20"
       - --poll-interval
       - "2"
+    env_file:
+      - .env
     environment:
-      LLM_API_KEY: ${LLM_API_KEY:-}
-      LLM_CHAT_ENDPOINT: ${LLM_CHAT_ENDPOINT:-}
-      LLM_MODEL: ${LLM_MODEL:-qwen-plus}
-      LLM_PROVIDER: ${LLM_PROVIDER:-dashscope}
-      DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY:-}
-      DASHSCOPE_CHAT_ENDPOINT: ${DASHSCOPE_CHAT_ENDPOINT:-https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions}
+      MIRA_DB_PATH: /data/sqlite/mira.db
+      CHROMA_DB_PATH: /data/chroma
+    volumes:
+      - ./.docker-data/sqlite:/data/sqlite
+      - ./.docker-data/chroma:/data/chroma
+    depends_on:
+      api:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:${API_PORT:-8000}}
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:5173"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  devtools:
+    profiles:
+      - tools
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: dev
+    env_file:
+      - .env
+    environment:
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
     volumes:

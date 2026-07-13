@@ -28,6 +28,7 @@ from core.db.repositories import (
     repository_connection,
     validate_enum_value,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.prompts import render_prompt
 from core.llm.qwen import call_qwen_json
 
@@ -150,12 +151,14 @@ def cancel_foresight(record_id: str) -> None:
     LOGGER.info("Foresight %s cancelled", record_id)
 
 
-def list_relevant_foresight(query: str, now: str) -> list[ForesightRecord]:
+def list_relevant_foresight(
+    query: str, now: str, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[ForesightRecord]:
     """List active foresight that is temporally valid and relevant at ``now``."""
     now_dt = _parse(now)
     query_tokens = _tokens(query)
     relevant: list[ForesightRecord] = []
-    for row in _fetch_by_status("active"):
+    for row in _fetch_by_status("active", workspace_id=workspace_id):
         if not _temporally_valid(row, now_dt):
             continue
         always_inject = bool(row["always_inject"])
@@ -222,11 +225,14 @@ def _write_status(record_id: str, status: str, resolved_by: str | None = None) -
             raise ValueError(f"Foresight record not found: {record_id}")
 
 
-def _fetch_by_status(status: str) -> list[ForesightRecord]:
+def _fetch_by_status(
+    status: str, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[ForesightRecord]:
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM foresight_records WHERE status = ? ORDER BY created_at DESC",
-            (status,),
+            "SELECT * FROM foresight_records WHERE workspace_id = ? AND status = ? "
+            "ORDER BY created_at DESC",
+            (workspace_id, status),
         ).fetchall()
     return [dict(row) for row in rows]
 

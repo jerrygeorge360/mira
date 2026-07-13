@@ -24,6 +24,7 @@ def dashscope_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv(LLM_PROFILE_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_MODEL_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_RESPONSE_FORMAT_ENV, raising=False)
+    monkeypatch.delenv(qwen.LLM_CACHE_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_API_KEY_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_ENDPOINT_ENV, raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)

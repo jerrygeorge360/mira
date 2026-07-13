@@ -20,7 +20,7 @@ import logging
 import re
 from datetime import datetime, timezone
 
-from core.db.repositories import repository_connection
+from core.db.repositories import repository_connection, workspace_id_for_session
 from core.memory.foresight import list_relevant_foresight
 from core.memory.tiers import list_hot_memory_for_context
 from core.retrieval.auto import route_retrieval
@@ -60,15 +60,16 @@ def hydrate_session_from_memory(
     """Seed a new Session Working Set from relevant durable cross-session memory."""
     if max_items < 1:
         raise ValueError("max_items must be a positive integer")
+    workspace_id = workspace_id_for_session(session_id)
 
     candidates = [
         *_hot_memory_candidates(session_id, user_message, max_items),
-        *_foresight_candidates(user_message, max_items),
-        *_reflection_candidates(user_message, max_items),
-        *_community_candidates(user_message, max_items),
-        *_project_fact_candidates(user_message, max_items),
-        *_unresolved_prior_session_candidates(session_id, user_message, max_items),
-        *_graph_candidates(session_id, user_message, max_items),
+        *_foresight_candidates(user_message, max_items, workspace_id),
+        *_reflection_candidates(user_message, max_items, workspace_id),
+        *_community_candidates(user_message, max_items, workspace_id),
+        *_project_fact_candidates(user_message, max_items, workspace_id),
+        *_unresolved_prior_session_candidates(session_id, user_message, max_items, workspace_id),
+        *_graph_candidates(session_id, user_message, max_items, workspace_id),
     ]
     if not candidates:
         return []
@@ -138,9 +139,9 @@ def _hot_memory_candidates(session_id: str, query: str, limit: int) -> list[Hydr
     return candidates
 
 
-def _foresight_candidates(query: str, limit: int) -> list[HydrationCandidate]:
+def _foresight_candidates(query: str, limit: int, workspace_id: str) -> list[HydrationCandidate]:
     candidates: list[HydrationCandidate] = []
-    for record in list_relevant_foresight(query, _now())[:limit]:
+    for record in list_relevant_foresight(query, _now(), workspace_id=workspace_id)[:limit]:
         candidates.append(
             _candidate(
                 content=str(record["content"]),
@@ -154,11 +155,12 @@ def _foresight_candidates(query: str, limit: int) -> list[HydrationCandidate]:
     return candidates
 
 
-def _reflection_candidates(query: str, limit: int) -> list[HydrationCandidate]:
+def _reflection_candidates(query: str, limit: int, workspace_id: str) -> list[HydrationCandidate]:
     query_tokens = _tokens(query)
     candidates: list[HydrationCandidate] = []
     for row in _fetch_rows(
-        "SELECT * FROM reflections WHERE status = ? ORDER BY created_at ASC", ("active",)
+        "SELECT * FROM reflections WHERE workspace_id = ? AND status = ? ORDER BY created_at ASC",
+        (workspace_id, "active"),
     ):
         if _overlap(query_tokens, _tokens(str(row["content"]))) <= 0.0:
             continue
@@ -174,10 +176,13 @@ def _reflection_candidates(query: str, limit: int) -> list[HydrationCandidate]:
     return candidates[:limit]
 
 
-def _community_candidates(query: str, limit: int) -> list[HydrationCandidate]:
+def _community_candidates(query: str, limit: int, workspace_id: str) -> list[HydrationCandidate]:
     query_tokens = _tokens(query)
     candidates: list[HydrationCandidate] = []
-    for row in _fetch_rows("SELECT * FROM community_summaries ORDER BY created_at ASC", ()):
+    for row in _fetch_rows(
+        "SELECT * FROM community_summaries WHERE workspace_id = ? ORDER BY created_at ASC",
+        (workspace_id,),
+    ):
         text = f"{row['title']} {row['summary']}"
         if _overlap(query_tokens, _tokens(text)) <= 0.0:
             continue
@@ -193,12 +198,13 @@ def _community_candidates(query: str, limit: int) -> list[HydrationCandidate]:
     return candidates[:limit]
 
 
-def _project_fact_candidates(query: str, limit: int) -> list[HydrationCandidate]:
+def _project_fact_candidates(query: str, limit: int, workspace_id: str) -> list[HydrationCandidate]:
     query_tokens = _tokens(query)
     candidates: list[HydrationCandidate] = []
     for row in _fetch_rows(
-        "SELECT * FROM atomic_facts WHERE status = ? ORDER BY created_at DESC LIMIT ?",
-        ("active", limit * 5),
+        "SELECT * FROM atomic_facts WHERE workspace_id = ? AND status = ? "
+        "ORDER BY created_at DESC LIMIT ?",
+        (workspace_id, "active", limit * 5),
     ):
         content = f"{row['subject']} {row['predicate']} {row['object']}"
         if _overlap(query_tokens, _tokens(content)) <= 0.0:
@@ -220,19 +226,21 @@ def _unresolved_prior_session_candidates(
     session_id: str,
     query: str,
     limit: int,
+    workspace_id: str,
 ) -> list[HydrationCandidate]:
     query_tokens = _tokens(query)
     candidates: list[HydrationCandidate] = []
     rows = _fetch_rows(
         """
-        SELECT * FROM session_working_set
-        WHERE session_id != ?
-          AND type IN ('decision', 'open_question')
-          AND scope IN ('project', 'cross_session')
-          AND status IN ('provisional', 'hydrated', 'confirmed')
-        ORDER BY updated_at DESC
+        SELECT session_working_set.* FROM session_working_set
+        JOIN sessions ON sessions.id = session_working_set.session_id
+        WHERE sessions.workspace_id = ? AND session_working_set.session_id != ?
+          AND session_working_set.type IN ('decision', 'open_question')
+          AND session_working_set.scope IN ('project', 'cross_session')
+          AND session_working_set.status IN ('provisional', 'hydrated', 'confirmed')
+        ORDER BY session_working_set.updated_at DESC
         """,
-        (session_id,),
+        (workspace_id, session_id),
     )
     for row in rows:
         if _overlap(query_tokens, _tokens(str(row["content"]))) <= 0.0:
@@ -249,14 +257,16 @@ def _unresolved_prior_session_candidates(
     return candidates[:limit]
 
 
-def _graph_candidates(session_id: str, query: str, limit: int) -> list[HydrationCandidate]:
+def _graph_candidates(
+    session_id: str, query: str, limit: int, workspace_id: str
+) -> list[HydrationCandidate]:
     if route_retrieval(query, session_id)["mode"] != "relational":
         return []
-    node_ids = _matching_graph_node_ids(query, limit)
+    node_ids = _matching_graph_node_ids(query, limit, workspace_id)
     if not node_ids:
         return []
     candidates: list[HydrationCandidate] = []
-    for relation in relational_retrieve(node_ids, set(), limit):
+    for relation in relational_retrieve(node_ids, set(), limit, workspace_id=workspace_id):
         candidates.append(
             _candidate(
                 content=str(relation["content"]),
@@ -270,12 +280,14 @@ def _graph_candidates(session_id: str, query: str, limit: int) -> list[Hydration
     return candidates
 
 
-def _matching_graph_node_ids(query: str, limit: int) -> list[str]:
+def _matching_graph_node_ids(query: str, limit: int, workspace_id: str) -> list[str]:
     query_tokens = _tokens(query)
     if not query_tokens:
         return []
     node_ids: list[str] = []
-    for row in _fetch_rows("SELECT id, label FROM graph_nodes", ()):
+    for row in _fetch_rows(
+        "SELECT id, label FROM graph_nodes WHERE workspace_id = ?", (workspace_id,)
+    ):
         if _overlap(query_tokens, _tokens(str(row["label"]))) > 0.0:
             node_ids.append(str(row["id"]))
         if len(node_ids) >= limit:

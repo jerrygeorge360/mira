@@ -20,6 +20,7 @@ from core.db.repositories import (
 from core.db.repositories import (
     create_graph_node as create_graph_node_record,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.prompts import PROMPT_TEMPLATES
 from core.llm.qwen import call_qwen_json
 
@@ -29,7 +30,7 @@ NetworkXGraph = Any
 DEFAULT_ENTITY_TYPE = "unknown"
 
 
-def extract_entities(text: str) -> list[Entity]:
+def extract_entities(text: str, *, workspace_id: str = LEGACY_WORKSPACE_ID) -> list[Entity]:
     """Extract and canonicalize stable named entities from text."""
     if not text.strip():
         return []
@@ -51,7 +52,7 @@ def extract_entities(text: str) -> list[Entity]:
         if not name:
             continue
         aliases = _string_list(raw_entity.get("aliases"))
-        entity_id = canonicalize_entity(name, aliases)
+        entity_id = canonicalize_entity(name, aliases, workspace_id=workspace_id)
         entities.append(
             {
                 "id": entity_id,
@@ -63,31 +64,36 @@ def extract_entities(text: str) -> list[Entity]:
     return entities
 
 
-def canonicalize_entity(name: str, aliases: list[str] | None = None) -> str:
+def canonicalize_entity(
+    name: str, aliases: list[str] | None = None, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> str:
     """Return a stable entity ID using exact matches, aliases, then conservative creation."""
     canonical_name = _canonical_name(name)
     if not canonical_name:
         raise ValueError("name must not be empty")
     alias_values = [_canonical_name(alias) for alias in aliases or [] if _canonical_name(alias)]
 
-    existing_id = _find_entity_by_name(canonical_name)
+    existing_id = _find_entity_by_name(canonical_name, workspace_id)
     if existing_id is not None:
         _merge_aliases(existing_id, alias_values)
         return existing_id
 
-    existing_id = _find_entity_by_alias(canonical_name)
+    existing_id = _find_entity_by_alias(canonical_name, workspace_id)
     if existing_id is not None:
         _merge_aliases(existing_id, [canonical_name, *alias_values])
         return existing_id
 
     for alias in alias_values:
-        existing_id = _find_entity_by_name(alias) or _find_entity_by_alias(alias)
+        existing_id = _find_entity_by_name(alias, workspace_id) or _find_entity_by_alias(
+            alias, workspace_id
+        )
         if existing_id is not None:
             _merge_aliases(existing_id, [canonical_name, *alias_values])
             return existing_id
 
     return create_entity(
         {
+            "workspace_id": workspace_id,
             "name": canonical_name,
             "entity_type": _infer_entity_type(canonical_name),
             "aliases_json": alias_values,
@@ -108,6 +114,7 @@ def link_entity_mention(entity_id: str, observation_id: str) -> str:
         source_table="entities",
         source_id=entity_id,
         label=str(entity["name"]),
+        workspace_id=str(entity["workspace_id"]),
     )
 
 
@@ -116,12 +123,15 @@ def create_graph_node(
     label: str,
     source_table: str | None = None,
     source_id: str | None = None,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> str:
     """Create a typed graph node over a canonical source record."""
     if not label.strip():
         raise ValueError("label must not be empty")
     return create_graph_node_record(
         {
+            "workspace_id": workspace_id,
             "node_type": node_type,
             "source_table": source_table,
             "source_id": source_id,
@@ -136,18 +146,22 @@ def create_graph_edge(
     edge_type: str,
     confidence: float,
     source_observations: list[str],
+    *,
+    workspace_id: str | None = None,
 ) -> str:
     """Create a typed graph edge with confidence and source observation evidence."""
     if not 0.0 <= confidence <= 1.0:
         raise ValueError("confidence must be in [0, 1]")
     if not source_observations:
         raise ValueError("source_observations must not be empty")
-    _ensure_graph_node_exists(source_node_id)
-    _ensure_graph_node_exists(target_node_id)
+    resolved_workspace_id = workspace_id or _graph_node_workspace(source_node_id)
+    _ensure_graph_node_exists(source_node_id, resolved_workspace_id)
+    _ensure_graph_node_exists(target_node_id, resolved_workspace_id)
     for observation_id in source_observations:
         _ensure_observation_exists(observation_id)
     return create_graph_edge_record(
         {
+            "workspace_id": resolved_workspace_id,
             "source_node_id": source_node_id,
             "target_node_id": target_node_id,
             "edge_type": edge_type,
@@ -162,11 +176,13 @@ def get_neighbors(
     node_id: str,
     edge_types: list[str] | None = None,
     depth: int = 1,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[dict[str, object]]:
     """Traverse outgoing typed graph edges from a node up to the requested depth."""
     if depth < 1:
         raise ValueError("depth must be a positive integer")
-    _ensure_graph_node_exists(node_id)
+    _ensure_graph_node_exists(node_id, workspace_id)
     allowed_edge_types = set(edge_types or [])
     visited_nodes = {node_id}
     frontier = [(node_id, 0)]
@@ -176,8 +192,8 @@ def get_neighbors(
         current_node_id, current_depth = frontier.pop(0)
         if current_depth >= depth:
             continue
-        for edge in _outgoing_edges(current_node_id, allowed_edge_types):
-            target_node = _fetch_graph_node(str(edge["target_node_id"]))
+        for edge in _outgoing_edges(current_node_id, allowed_edge_types, workspace_id):
+            target_node = _fetch_graph_node(str(edge["target_node_id"]), workspace_id)
             if target_node is None:
                 continue
             result = {
@@ -193,17 +209,19 @@ def get_neighbors(
     return neighbors
 
 
-def find_edges_by_type(edge_type: str) -> list[dict[str, object]]:
+def find_edges_by_type(
+    edge_type: str, *, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> list[dict[str, object]]:
     """List active graph edges of one type."""
     with repository_connection() as connection:
         rows = connection.execute(
             """
             SELECT *
             FROM graph_edges
-            WHERE edge_type = ? AND invalidated_at IS NULL
+            WHERE workspace_id = ? AND edge_type = ? AND invalidated_at IS NULL
             ORDER BY created_at ASC
             """,
-            (edge_type,),
+            (workspace_id, edge_type),
         ).fetchall()
     return [_public_edge(dict(row)) for row in rows]
 
@@ -212,14 +230,15 @@ def inspect_memory_graph(
     *,
     entity: str | None = None,
     limit: int = 50,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> dict[str, object]:
     """Return a read-only graph snapshot with provenance-focused edge details."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
-    node_filter = ""
-    parameters: list[object] = []
+    node_filter = "WHERE workspace_id = ?"
+    parameters: list[object] = [workspace_id]
     if entity:
-        node_filter = "WHERE label LIKE ?"
+        node_filter += " AND label LIKE ?"
         parameters.append(f"%{entity}%")
     with repository_connection() as connection:
         node_rows = connection.execute(
@@ -232,13 +251,17 @@ def inspect_memory_graph(
             """,  # nosec B608
             (*parameters, limit),
         ).fetchall()
-        total_nodes = connection.execute("SELECT COUNT(*) AS count FROM graph_nodes").fetchone()
+        total_nodes = connection.execute(
+            "SELECT COUNT(*) AS count FROM graph_nodes WHERE workspace_id = ?", (workspace_id,)
+        ).fetchone()
         total_edges = connection.execute(
-            "SELECT COUNT(*) AS count FROM graph_edges WHERE invalidated_at IS NULL"
+            "SELECT COUNT(*) AS count FROM graph_edges "
+            "WHERE workspace_id = ? AND invalidated_at IS NULL",
+            (workspace_id,),
         ).fetchone()
     nodes = [_public_node(dict(row)) for row in node_rows]
     node_ids = {str(node["id"]) for node in nodes}
-    edges = _edges_for_nodes(node_ids, limit) if node_ids else []
+    edges = _edges_for_nodes(node_ids, limit, workspace_id) if node_ids else []
     return {
         "counts": {
             "nodes": 0 if total_nodes is None else int(total_nodes["count"]),
@@ -254,6 +277,7 @@ def inspect_memory_graph(
 def build_networkx_memory_graph(
     *,
     include_invalidated: bool = False,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> NetworkXGraph:
     """Build a read-only NetworkX MultiDiGraph projection from SQLite graph tables."""
     try:
@@ -262,10 +286,12 @@ def build_networkx_memory_graph(
         raise RuntimeError("Install networkx to build the in-memory graph view") from error
 
     graph = nx.MultiDiGraph()
-    for node in _all_graph_nodes():
+    for node in _all_graph_nodes(workspace_id):
         node_id = str(node.pop("id"))
         graph.add_node(node_id, **node)
-    for edge in _all_graph_edges(include_invalidated=include_invalidated):
+    for edge in _all_graph_edges(
+        include_invalidated=include_invalidated, workspace_id=workspace_id
+    ):
         edge_id = str(edge.pop("id"))
         source_node_id = str(edge.pop("source_node_id"))
         target_node_id = str(edge.pop("target_node_id"))
@@ -273,14 +299,14 @@ def build_networkx_memory_graph(
     return graph
 
 
-def graph_algorithm_summary() -> dict[str, object]:
+def graph_algorithm_summary(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> dict[str, object]:
     """Return small NetworkX-derived diagnostics while keeping SQLite as source of truth."""
     try:
         import networkx as nx
     except ModuleNotFoundError as error:  # pragma: no cover - dependency installed in normal envs
         raise RuntimeError("Install networkx to run graph algorithm diagnostics") from error
 
-    graph = build_networkx_memory_graph()
+    graph = build_networkx_memory_graph(workspace_id=workspace_id)
     if graph.number_of_nodes() == 0:
         return {
             "nodes": 0,
@@ -309,18 +335,21 @@ def traverse_graph(entity_id: str, relation_types: set[str]) -> list[dict[str, o
     return get_neighbors(entity_id, sorted(relation_types), depth=1)
 
 
-def _find_entity_by_name(name: str) -> str | None:
+def _find_entity_by_name(name: str, workspace_id: str) -> str | None:
     with repository_connection() as connection:
         row = connection.execute(
-            "SELECT id FROM entities WHERE lower(name) = lower(?) ORDER BY created_at ASC LIMIT 1",
-            (name,),
+            "SELECT id FROM entities WHERE workspace_id = ? AND lower(name) = lower(?) "
+            "ORDER BY created_at ASC LIMIT 1",
+            (workspace_id, name),
         ).fetchone()
     return None if row is None else str(row["id"])
 
 
-def _find_entity_by_alias(alias: str) -> str | None:
+def _find_entity_by_alias(alias: str, workspace_id: str) -> str | None:
     with repository_connection() as connection:
-        rows = connection.execute("SELECT id, aliases_json FROM entities").fetchall()
+        rows = connection.execute(
+            "SELECT id, aliases_json FROM entities WHERE workspace_id = ?", (workspace_id,)
+        ).fetchall()
     normalized_alias = _normalize(alias)
     for row in rows:
         if normalized_alias in {_normalize(value) for value in _json_list(row["aliases_json"])}:
@@ -370,14 +399,29 @@ def _ensure_observation_exists(observation_id: str) -> None:
         raise ValueError(f"Observation not found: {observation_id}")
 
 
-def _ensure_graph_node_exists(node_id: str) -> None:
-    if _fetch_graph_node(node_id) is None:
+def _ensure_graph_node_exists(node_id: str, workspace_id: str = LEGACY_WORKSPACE_ID) -> None:
+    if _fetch_graph_node(node_id, workspace_id) is None:
         raise ValueError(f"Graph node not found: {node_id}")
 
 
-def _fetch_graph_node(node_id: str) -> dict[str, object] | None:
+def _graph_node_workspace(node_id: str) -> str:
     with repository_connection() as connection:
-        row = connection.execute("SELECT * FROM graph_nodes WHERE id = ?", (node_id,)).fetchone()
+        row = connection.execute(
+            "SELECT workspace_id FROM graph_nodes WHERE id = ?", (node_id,)
+        ).fetchone()
+    if row is None or not row["workspace_id"]:
+        raise ValueError(f"Graph node not found: {node_id}")
+    return str(row["workspace_id"])
+
+
+def _fetch_graph_node(
+    node_id: str, workspace_id: str = LEGACY_WORKSPACE_ID
+) -> dict[str, object] | None:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT * FROM graph_nodes WHERE id = ? AND workspace_id = ?",
+            (node_id, workspace_id),
+        ).fetchone()
     if row is None:
         return None
     record = dict(row)
@@ -386,8 +430,10 @@ def _fetch_graph_node(node_id: str) -> dict[str, object] | None:
     return record
 
 
-def _outgoing_edges(node_id: str, edge_types: set[str]) -> list[dict[str, object]]:
-    parameters: list[object] = [node_id]
+def _outgoing_edges(
+    node_id: str, edge_types: set[str], workspace_id: str
+) -> list[dict[str, object]]:
+    parameters: list[object] = [workspace_id, node_id]
     edge_type_filter = ""
     if edge_types:
         edge_type_filter = f"AND edge_type IN ({', '.join('?' for _ in edge_types)})"
@@ -397,7 +443,7 @@ def _outgoing_edges(node_id: str, edge_types: set[str]) -> list[dict[str, object
             f"""
             SELECT *
             FROM graph_edges
-            WHERE source_node_id = ?
+            WHERE workspace_id = ? AND source_node_id = ?
               AND invalidated_at IS NULL
               {edge_type_filter}
             ORDER BY created_at ASC
@@ -422,7 +468,7 @@ def _public_node(row: dict[str, object]) -> dict[str, object]:
     return node
 
 
-def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
+def _edges_for_nodes(node_ids: set[str], limit: int, workspace_id: str) -> list[dict[str, object]]:
     placeholders = ", ".join("?" for _ in node_ids)
     sorted_ids = sorted(node_ids)
     with repository_connection() as connection:
@@ -434,7 +480,7 @@ def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
             FROM graph_edges AS edge
             JOIN graph_nodes AS source ON source.id = edge.source_node_id
             JOIN graph_nodes AS target ON target.id = edge.target_node_id
-            WHERE edge.invalidated_at IS NULL
+            WHERE edge.workspace_id = ? AND edge.invalidated_at IS NULL
               AND (
                 edge.source_node_id IN ({placeholders})
                 OR edge.target_node_id IN ({placeholders})
@@ -442,7 +488,7 @@ def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
             ORDER BY edge.created_at DESC
             LIMIT ?
             """,  # nosec B608
-            (*sorted_ids, *sorted_ids, limit),
+            (workspace_id, *sorted_ids, *sorted_ids, limit),
         ).fetchall()
     edges: list[dict[str, object]] = []
     for row in rows:
@@ -456,17 +502,23 @@ def _edges_for_nodes(node_ids: set[str], limit: int) -> list[dict[str, object]]:
     return edges
 
 
-def _all_graph_nodes() -> list[dict[str, object]]:
+def _all_graph_nodes(workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
-        rows = connection.execute("SELECT * FROM graph_nodes ORDER BY created_at ASC").fetchall()
+        rows = connection.execute(
+            "SELECT * FROM graph_nodes WHERE workspace_id = ? ORDER BY created_at ASC",
+            (workspace_id,),
+        ).fetchall()
     return [_public_node(dict(row)) for row in rows]
 
 
-def _all_graph_edges(*, include_invalidated: bool) -> list[dict[str, object]]:
-    where = "" if include_invalidated else "WHERE invalidated_at IS NULL"
+def _all_graph_edges(*, include_invalidated: bool, workspace_id: str) -> list[dict[str, object]]:
+    where = "workspace_id = ?"
+    if not include_invalidated:
+        where += " AND invalidated_at IS NULL"
     with repository_connection() as connection:
         rows = connection.execute(
-            f"SELECT * FROM graph_edges {where} ORDER BY created_at ASC"  # nosec B608
+            f"SELECT * FROM graph_edges WHERE {where} ORDER BY created_at ASC",  # nosec B608
+            (workspace_id,),
         ).fetchall()
     return [_public_edge(dict(row)) for row in rows]
 

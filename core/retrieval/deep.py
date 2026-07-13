@@ -19,7 +19,8 @@ import json
 import logging
 import re
 
-from core.db.repositories import repository_connection
+from core.db.repositories import repository_connection, workspace_id_for_session
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.retrieval.quick import retrieve_quick
 from core.retrieval.vector import vector_search
 
@@ -62,21 +63,31 @@ STOPWORDS = frozenset(
 )
 
 
-def retrieve_deep(query: str, session_id: str | None, limit: int) -> list[Evidence]:
+def retrieve_deep(
+    query: str,
+    session_id: str | None,
+    limit: int,
+    *,
+    workspace_id: str | None = None,
+) -> list[Evidence]:
     """Retrieve synthesis-ready context from community summaries and reflections."""
     if limit < 1:
         raise ValueError("limit must be a positive integer")
     if not query.strip():
         return []
 
-    summaries = _community_candidates(query, limit)
+    session_workspace = workspace_id_for_session(session_id) if session_id is not None else None
+    if workspace_id is not None and session_workspace not in {None, workspace_id}:
+        raise ValueError("session does not belong to the requested workspace")
+    workspace_id = workspace_id or session_workspace or LEGACY_WORKSPACE_ID
+    summaries = _community_candidates(query, limit, workspace_id)
     if not summaries:
         LOGGER.info("Deep Mode found no community summaries; falling back to Quick Mode")
-        return _quick_fallback(query, session_id, limit)
+        return _quick_fallback(query, session_id, limit, workspace_id)
 
     candidates = [
         *summaries,
-        *_reflection_candidates(query, limit),
+        *_reflection_candidates(query, limit, workspace_id),
         *_supporting_observation_candidates(query, session_id),
     ]
     candidates.sort(key=_ranking_key)
@@ -88,16 +99,18 @@ def deep_retrieve(query: str, limit: int = 8) -> list[Evidence]:
     return retrieve_deep(query, session_id=None, limit=limit)
 
 
-def _quick_fallback(query: str, session_id: str | None, limit: int) -> list[Evidence]:
-    results = retrieve_quick(query, session_id, limit)
+def _quick_fallback(
+    query: str, session_id: str | None, limit: int, workspace_id: str
+) -> list[Evidence]:
+    results = retrieve_quick(query, session_id, limit, workspace_id=workspace_id)
     for result in results:
         result["retrieval_mode"] = "deep"
         result["deep_mode_fallback"] = "no_communities"
     return results
 
 
-def _community_candidates(query: str, limit: int) -> list[Evidence]:
-    rows = _fetch_community_summaries()
+def _community_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
+    rows = _fetch_community_summaries(workspace_id)
     if not rows:
         return []
     query_tokens = _tokens(query)
@@ -122,16 +135,18 @@ def _community_candidates(query: str, limit: int) -> list[Evidence]:
     return candidates
 
 
-def _reflection_candidates(query: str, limit: int) -> list[Evidence]:
+def _reflection_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
     # Match reflections by meaning (embedding similarity), not literal token overlap: a
     # synthesized reflection rarely shares words with the question it answers ("what kind of
     # engineer am I?" vs "follows test-driven development"), so lexical matching dropped them.
-    active_by_id = {str(row["id"]): row for row in _fetch_active_reflections()}
+    active_by_id = {str(row["id"]): row for row in _fetch_active_reflections(workspace_id)}
     if not active_by_id:
         return []
     candidates: list[Evidence] = []
     seen: set[str] = set()
-    for pointer in vector_search(query, limit=limit, collections=("reflections",)):
+    for pointer in vector_search(
+        query, limit=limit, collections=("reflections",), workspace_id=workspace_id
+    ):
         reflection_id = str(pointer.get("sqlite_id"))
         row = active_by_id.get(reflection_id)
         if row is None or reflection_id in seen:
@@ -151,6 +166,27 @@ def _reflection_candidates(query: str, limit: int) -> list[Evidence]:
                 "record": dict(row),
             }
         )
+    if not candidates:
+        query_tokens = _tokens(query)
+        for row in active_by_id.values():
+            relevance = _token_overlap(query_tokens, str(row["content"]))
+            if relevance <= 0.0:
+                continue
+            reflection_id = str(row["id"])
+            candidates.append(
+                {
+                    "source": "reflection",
+                    "source_id": reflection_id,
+                    "id": reflection_id,
+                    "content": str(row["content"]),
+                    "reflection_type": str(row["reflection_type"]),
+                    "relevance": relevance,
+                    "confidence": _float(row.get("confidence"), 1.0),
+                    "score": _score("reflection", relevance),
+                    "record": dict(row),
+                }
+            )
+    candidates.sort(key=_ranking_key)
     return candidates[:limit]
 
 
@@ -199,19 +235,26 @@ def _community_evidence(row: dict[str, object], relevance: float, relation: str)
     }
 
 
-def _fetch_community_summaries() -> list[dict[str, object]]:
+def _fetch_community_summaries(workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM community_summaries ORDER BY created_at ASC"
+            """
+            SELECT * FROM community_summaries
+            WHERE workspace_id = ? ORDER BY created_at ASC
+            """,
+            (workspace_id,),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def _fetch_active_reflections() -> list[dict[str, object]]:
+def _fetch_active_reflections(workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT * FROM reflections WHERE status = ? ORDER BY created_at ASC",
-            ("active",),
+            """
+            SELECT * FROM reflections
+            WHERE workspace_id = ? AND status = ? ORDER BY created_at ASC
+            """,
+            (workspace_id, "active"),
         ).fetchall()
     return [dict(row) for row in rows]
 

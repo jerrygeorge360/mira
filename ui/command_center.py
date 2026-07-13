@@ -20,7 +20,7 @@ from html import escape
 from textwrap import dedent
 from typing import Any
 
-from ui.chat import DEFAULT_SESSION_ID, MockChatAgent
+from ui.chat import MockChatAgent
 from ui.command_center_data import (
     BRIEF_DETAILS,
     CHAT_MESSAGES,
@@ -437,13 +437,16 @@ def _send_chat_message(st: Any, use_real_agent: bool) -> None:
 
     messages = _chat_messages(st)
     messages.append({"role": "user", "content": message})
-    response = _respond_to_chat(message, use_real_agent)
+    session_id = str(st.session_state.get("mira_workspace_session_id", ""))
+    response = _respond_to_chat(message, use_real_agent, session_id)
     messages.append({"role": "assistant", "content": str(response["answer"])})
     st.session_state[_CC_AGENT_STATUS_KEY] = str(response["status"])
     st.session_state["mira_last_action"] = "Message sent"
 
 
-def _respond_to_chat(user_message: str, use_real_agent: bool) -> dict[str, object]:
+def _respond_to_chat(
+    user_message: str, use_real_agent: bool, session_id: str = ""
+) -> dict[str, object]:
     if not use_real_agent:
         response = MockChatAgent().respond(user_message)
         return {
@@ -452,8 +455,10 @@ def _respond_to_chat(user_message: str, use_real_agent: bool) -> dict[str, objec
         }
 
     try:
+        if not session_id:
+            raise ValueError("Streamlit is not bound to a workspace session")
         agent_module = importlib.import_module("core.agent")
-        agent = agent_module.Agent(DEFAULT_SESSION_ID)
+        agent = agent_module.Agent(session_id)
         response = agent.respond(user_message)
     except Exception as error:  # pragma: no cover - depends on local runtime config
         return {

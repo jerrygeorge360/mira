@@ -1,4 +1,4 @@
-.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
+.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search demo-cleanup local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api
@@ -17,6 +17,7 @@ help:
 		'  graph-inspect   Print a JSON snapshot of the memory graph' \
 		'  slow-path-status Print slow-path queue and artifact health' \
 		'  memory-search   Embed a query and search vector memory' \
+		'  demo-cleanup    Delete expired disposable demo workspaces' \
 		'  local-eval      Run the small local memory regression suite' \
 		'  test       Run the test suite' \
 		'  test-slack Run only the Slack bot tests' \
@@ -97,13 +98,16 @@ provider-check:
 	$(PYTHON) -m scripts.check_provider --require-live-embeddings
 
 graph-inspect:
-	$(PYTHON) -m scripts.inspect_graph --limit $${LIMIT:-50} $${ENTITY:+--entity "$$ENTITY"}
+	$(PYTHON) -m scripts.inspect_graph --workspace-id "$${WORKSPACE_ID:?set WORKSPACE_ID}" --limit $${LIMIT:-50} $${ENTITY:+--entity "$$ENTITY"}
 
 slow-path-status:
-	$(PYTHON) -m scripts.slow_path_status --limit $${LIMIT:-10}
+	$(PYTHON) -m scripts.slow_path_status --workspace-id "$${WORKSPACE_ID:?set WORKSPACE_ID}" --limit $${LIMIT:-10}
 
 memory-search:
-	$(PYTHON) -m scripts.search_memory "$${QUERY:?set QUERY='your search text'}" --limit $${LIMIT:-5} $${REBUILD:+--rebuild}
+	$(PYTHON) -m scripts.search_memory "$${QUERY:?set QUERY='your search text'}" --workspace-id "$${WORKSPACE_ID:?set WORKSPACE_ID}" --limit $${LIMIT:-5} $${REBUILD:+--rebuild}
+
+demo-cleanup:
+	$(PYTHON) -m scripts.cleanup_demos
 
 local-eval:
 	$(PYTHON) -m scripts.run_local_eval --cases $${CASES:-evaluation/local/memory_cases.json}

@@ -14,11 +14,15 @@ import pytest
 
 from core.db import chroma
 from core.db.repositories import (
+    WorkspaceContext,
+    bind_workspace,
     configure_database,
     create_reflection,
     create_session,
+    create_workspace,
     save_observation,
 )
+from core.db.schema import LEGACY_WORKSPACE_ID
 from core.db.sqlite import connect_sqlite
 
 
@@ -30,11 +34,11 @@ def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
     configure_database(path)
     chroma.configure_embedder(None)
     for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
-        chroma.delete_collection(collection)
+        chroma.delete_collection_admin(collection)
     yield path
     chroma.configure_embedder(None)
     for collection in sorted(chroma.SUPPORTED_COLLECTIONS):
-        chroma.delete_collection(collection)
+        chroma.delete_collection_admin(collection)
 
 
 def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) -> None:
@@ -47,6 +51,7 @@ def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) 
         observation_id,
         [1.0, 0.0, 0.0],
         metadata={"source": "test", "kind": "observation"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
     chroma.add_embedding(
         "observations",
@@ -54,9 +59,12 @@ def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) 
         save_observation(session_id, "user", "A different vector."),
         [0.0, 1.0, 0.0],
         metadata={"source": "test", "kind": "observation"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
 
-    results = chroma.query_embeddings("observations", [1.0, 0.0, 0.0], top_k=1)
+    results = chroma.query_embeddings(
+        "observations", [1.0, 0.0, 0.0], top_k=1, workspace_id=LEGACY_WORKSPACE_ID
+    )
 
     assert len(results) == 1
     assert results[0]["sqlite_table"] == "observations"
@@ -64,6 +72,62 @@ def test_add_query_round_trip_returns_sqlite_pointers_only(database_path: Path) 
     assert "distance" in results[0]
     assert results[0]["metadata"] == {"source": "test", "kind": "observation"}
     assert "content" not in results[0]
+
+
+def test_query_prefilters_vectors_by_workspace(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identical vectors cannot return a pointer owned by another workspace."""
+    monkeypatch.setattr(chroma, "_load_chroma_client", lambda: None)
+    chroma._fallback_collection("observations").clear()
+    workspace_a = create_workspace("A", "vector-a", "development")
+    workspace_b = create_workspace("B", "vector-b", "development")
+    repo_a = bind_workspace(WorkspaceContext(workspace_a))
+    repo_b = bind_workspace(WorkspaceContext(workspace_b))
+    observation_a = repo_a.save_observation(repo_a.create_session("a"), "user", "A only")
+    observation_b = repo_b.save_observation(repo_b.create_session("b"), "user", "B only")
+    chroma.add_embedding(
+        "observations",
+        "observations",
+        observation_a,
+        [1.0, 0.0],
+        workspace_id=workspace_a,
+    )
+    chroma.add_embedding(
+        "observations",
+        "observations",
+        observation_b,
+        [1.0, 0.0],
+        workspace_id=workspace_b,
+    )
+
+    results = chroma.query_embeddings("observations", [1.0, 0.0], 5, workspace_id=workspace_a)
+
+    assert [row["sqlite_id"] for row in results] == [observation_a]
+
+
+def test_fallback_ignores_legacy_pointer_without_workspace_metadata(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(chroma, "_load_chroma_client", lambda: None)
+    collection = chroma._fallback_collection("observations")
+    collection.clear()
+    collection["legacy-pointer"] = {
+        "embedding": [1.0, 0.0],
+        "sqlite_table": "observations",
+        "sqlite_id": "legacy-pointer",
+        "metadata": {},
+    }
+
+    assert (
+        chroma.query_embeddings(
+            "observations",
+            [1.0, 0.0],
+            5,
+            workspace_id=LEGACY_WORKSPACE_ID,
+        )
+        == []
+    )
 
 
 def test_reset_vector_store_clears_all_collections(database_path: Path) -> None:
@@ -76,6 +140,7 @@ def test_reset_vector_store_clears_all_collections(database_path: Path) -> None:
         observation_id,
         [1.0, 0.0, 0.0],
         metadata={"source": "test"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
     assert chroma.collection_count("observations") == 1
 
@@ -94,6 +159,7 @@ def test_vector_store_status_reports_collection_counts(database_path: Path) -> N
         observation_id,
         [1.0, 0.0],
         metadata={"source": "test"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
 
     status = chroma.vector_store_status()
@@ -112,11 +178,20 @@ def test_delete_collection_removes_index_but_not_sqlite_record(database_path: Pa
         observation_id,
         [0.0, 0.0, 1.0],
         metadata={"source": "test"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
 
-    chroma.delete_collection("observations")
+    chroma.delete_workspace_vectors("observations", workspace_id=LEGACY_WORKSPACE_ID)
 
-    assert chroma.query_embeddings("observations", [0.0, 0.0, 1.0], top_k=5) == []
+    assert (
+        chroma.query_embeddings(
+            "observations",
+            [0.0, 0.0, 1.0],
+            top_k=5,
+            workspace_id=LEGACY_WORKSPACE_ID,
+        )
+        == []
+    )
     with connect_sqlite(database_path) as connection:
         row = connection.execute(
             "SELECT id, content FROM observations WHERE id = ?",
@@ -143,12 +218,14 @@ def test_supported_reflection_and_community_summary_collections(database_path: P
         connection.execute(
             """
             INSERT INTO community_summaries (
-                id, community_id, title, summary, member_nodes_json, created_at, updated_at
+                id, workspace_id, community_id, title, summary, member_nodes_json,
+                created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 "community-1",
+                LEGACY_WORKSPACE_ID,
                 "community-demo",
                 "Demo Community",
                 "A disposable vector index can point here.",
@@ -164,6 +241,7 @@ def test_supported_reflection_and_community_summary_collections(database_path: P
         reflection_id,
         [0.0, 1.0],
         metadata={"source_observation_id": observation_id},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
     chroma.add_embedding(
         "community_summaries",
@@ -171,10 +249,15 @@ def test_supported_reflection_and_community_summary_collections(database_path: P
         "community-1",
         [1.0, 1.0],
         metadata={"community_id": "community-demo"},
+        workspace_id=LEGACY_WORKSPACE_ID,
     )
 
-    reflection_results = chroma.query_embeddings("reflections", [0.0, 1.0], top_k=1)
-    community_results = chroma.query_embeddings("community_summaries", [1.0, 1.0], top_k=1)
+    reflection_results = chroma.query_embeddings(
+        "reflections", [0.0, 1.0], top_k=1, workspace_id=LEGACY_WORKSPACE_ID
+    )
+    community_results = chroma.query_embeddings(
+        "community_summaries", [1.0, 1.0], top_k=1, workspace_id=LEGACY_WORKSPACE_ID
+    )
 
     assert reflection_results[0]["sqlite_table"] == "reflections"
     assert reflection_results[0]["sqlite_id"] == reflection_id
@@ -198,10 +281,14 @@ def test_rebuild_collection_recreates_observation_index_from_sqlite(database_pat
         raise AssertionError(f"unexpected rebuild text: {text}")
 
     chroma.configure_embedder(fake_embedder)
-    chroma.rebuild_collection("observations")
+    chroma.rebuild_collection("observations", workspace_id=LEGACY_WORKSPACE_ID)
 
-    first_results = chroma.query_embeddings("observations", [1.0, 0.0], top_k=1)
-    second_results = chroma.query_embeddings("observations", [0.0, 1.0], top_k=1)
+    first_results = chroma.query_embeddings(
+        "observations", [1.0, 0.0], top_k=1, workspace_id=LEGACY_WORKSPACE_ID
+    )
+    second_results = chroma.query_embeddings(
+        "observations", [0.0, 1.0], top_k=1, workspace_id=LEGACY_WORKSPACE_ID
+    )
 
     assert first_results[0]["sqlite_table"] == "observations"
     assert first_results[0]["sqlite_id"] == first_id
@@ -225,4 +312,4 @@ def test_rebuild_collection_requires_configured_embedder(database_path: Path) ->
     save_observation(session_id, "user", "alpha")
 
     with pytest.raises(ValueError, match="No embedding provider configured"):
-        chroma.rebuild_collection("observations")
+        chroma.rebuild_collection("observations", workspace_id=LEGACY_WORKSPACE_ID)
