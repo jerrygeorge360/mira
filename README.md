@@ -1,156 +1,138 @@
-# MIRA — Memory-Integrated Reasoning Architecture
+# MIRA - Memory-Integrated Reasoning Architecture
 
-MIRA is a reusable memory layer for AI agents that turns conversations into structured,
-inspectable, cross-session memory.
+MIRA is a memory layer for AI agents. It turns conversations into structured,
+inspectable memory that can survive across sessions.
 
-It gives an agent more than a longer prompt. MIRA persists every turn, tracks current-session
-corrections immediately, consolidates durable memory in the background, routes retrieval by
-query intent, and returns traces that show which memory influenced an answer. The design is
-described in the [MIRA paper](docs/mira-paper.md) and the engineering details live in the
-[architecture overview](docs/architecture.md).
+It is built around a simple idea: the prompt is not the memory store. MIRA stores
+conversation events first, then builds prompts from session state, durable memory,
+retrieval results, and a token budget.
 
-## Problem
+For deeper design notes, see [docs/mira-paper.md](docs/mira-paper.md) and
+[docs/architecture.md](docs/architecture.md).
 
-Most LLM agents are still fragile around memory. They may answer well inside one prompt, but
-they often fail when useful context spans days, sessions, corrections, and evolving decisions.
-Common approaches also over-rely on stuffing raw history into the context window, which makes
-memory expensive, opaque, and easy to lose when the prompt gets trimmed.
+## The problem
 
-MIRA treats the context window as an execution buffer, not the memory store. The agent writes
-conversation events to durable storage first, then reconstructs each prompt from session state,
-cross-session memory, retrieval results, and ambient context under a token budget.
+Most agents can only remember what fits in the current prompt. That breaks down when:
 
-## What MIRA does
+- useful context spans many sessions;
+- the user corrects old information;
+- the agent needs to explain why it remembered something;
+- raw chat history becomes too large or too noisy to paste into every prompt.
 
-MIRA runs a memory loop around the agent:
-
-```text
-user message
-  -> fast persistence
-  -> session micro-path updates Session Working Set
-  -> slow path builds durable memory
-  -> graph / reflection / foresight updates
-  -> retrieval-gated prompt construction
-  -> structured tool call when an explicit workflow requires it
-  -> LLM answer
-  -> answer trace showing routing and memory used
-```
-
-The fast path stores raw observations immediately. The Session Working Set keeps active
-corrections, constraints, decisions, and open questions available for the next response. The
-slow path consolidates durable memory into atomic facts, graph edges, reflections, foresight
-records, community summaries, and tiered memory candidates. Retrieval then chooses whether a
-question should use Quick, Deep, Relational, or direct LLM answering.
-
-## Core features
-
-- **Session Working Set**: current goals, corrections, constraints, decisions, and unresolved
-  questions are available immediately in the same conversation.
-- **Durable cross-session memory**: observations, atomic facts, reflections, foresight records,
-  community summaries, and tier metadata are persisted in SQLite.
-- **Correction and contradiction handling**: acknowledged changes use `SUPERSEDED_BY`; unresolved
-  conflicts use `CONTRADICTS`. Facts are paired on a **canonical subject/predicate registry** (so
-  `I`/`you`/`speaker` and `prefer`/`prefers_language` resolve to the same relation), with an
-  **embedding-similarity fallback** when extraction wording lands outside the seeded vocabulary.
-- **Explicit transition handling**: sentences like "switched from MongoDB to PostgreSQL" are
-  clause-split into a prior/current fact pair and recorded as a directed `SUPERSEDED_BY` edge.
-- **Structured atomic facts**: slow-path extraction turns raw observations into evidence-backed
-  subject-predicate-object facts.
-- **Graph-backed memory**: a single typed temporal graph stores entities, observations, evidence
-  links, supersession, contradiction, and relationship edges.
-- **Retrieval routing**: Auto routing selects direct LLM, Quick, Deep, or Relational retrieval
-  based on the query.
-- **Traceable answers**: responses include `routing_decision` and `retrieval_trace` objects so
-  you can inspect why memory was or was not used.
-- **Structured workflow tools**: explicit memory-inspection requests invoke a typed internal
-  `inspect_memory` function and attach its result to the prompt and trace.
-- **Local evaluation**: deterministic local cases test routing, memory use, corrections,
-  contradiction, supersession, foresight, and retrieval sufficiency.
-- **Runtime probes**: CLI commands inspect graph state, slow-path health, Chroma pointer health,
-  and local regressions.
-- **Product surfaces**: Streamlit demo UI, FastAPI backend, Slack bot, and MCP server skeleton
-  are included.
-
-## Example demo flow
-
-One useful memory interaction looks like this:
-
-```text
-User: My project database is MongoDB.
-MIRA: stores the observation and can retrieve it later.
-
-User: Correction: we moved from MongoDB to PostgreSQL.
-MIRA: updates the Session Working Set immediately and later records a SUPERSEDED_BY edge.
-
-New session:
-User: What database do I use now?
-MIRA: retrieves the corrected memory, answers PostgreSQL, and returns a trace showing the
-      route, retrieved records, and memory source.
-```
-
-The important behavior is not only that MIRA remembers the latest fact. It also keeps the older
-fact as history, records the change, and can explain which memory path shaped the answer.
+MIRA handles memory as infrastructure. It records turns, extracts durable facts, tracks
+corrections, builds a typed graph, and returns traces that show what memory was used.
 
 ## Session memory vs. cross-session memory
 
-MIRA separates two consolidation timelines that operate on different clocks.
+MIRA keeps short-term session state separate from durable cross-session memory.
 
-| | Session continuity | Cross-session learning |
+| Layer | Job | Timing |
 | --- | --- | --- |
-| **Question it answers** | What matters now in this chat? | What should persist for next time? |
-| **Mechanism** | session micro-path -> Session Working Set | asynchronous slow path |
-| **Stores** | current goal, correction, active constraint, decision, open question | observations, atomic facts, graph edges, reflections, foresight, community summaries |
-| **Latency** | immediate | deferred and batchable |
-| **Status** | provisional until reviewed | confirmed durable memory |
-| **Prompt priority** | high priority for current response | retrieved only when relevant |
+| Session Working Set | current goals, corrections, constraints, decisions, open questions | immediate |
+| Durable memory | observations, atomic facts, graph edges, reflection, foresight, community summaries | background worker |
 
-A correction such as "Use 2026, not 2025" should affect the next answer before a background
-worker finishes. The Session Working Set handles that immediate continuity. The slow path later
-confirms, downgrades, expires, or rejects the provisional item and records durable graph updates
-when needed.
+This matters for corrections. If the user says "Use 2026, not 2025", the next answer should use
+2026 immediately. The slow path can later confirm the change and write durable `SUPERSEDED_BY` or
+`CONTRADICTS` graph edges.
+
+## What MIRA does
+
+The runtime loop is:
+
+```text
+user message
+  -> save observation
+  -> update Session Working Set
+  -> enqueue slow-path memory work
+  -> retrieve relevant durable memory
+  -> build prompt under budget
+  -> call configured model
+  -> save answer and trace
+```
+
+The slow-path worker runs separately:
+
+```text
+queued observation
+  -> embeddings
+  -> atomic facts
+  -> entities and graph edges
+  -> correction / contradiction handling
+  -> reflections
+  -> foresight records
+  -> community summaries
+  -> tier updates
+```
+
+## Core features
+
+- **Session Working Set**: current goals, corrections, constraints, decisions, and open
+  questions are available immediately.
+- **Durable memory**: observations, atomic facts, graph records, reflections, foresight,
+  community summaries, and answer traces are stored in SQLite.
+- **Corrections**: newer facts can supersede older facts without deleting history.
+- **Contradictions**: unresolved conflicts are tracked separately from accepted corrections.
+- **Typed graph**: entities, observations, evidence links, supersession edges, contradiction
+  edges, and relationship edges live in one graph model.
+- **Retrieval routing**: Auto routing can choose direct answering, Quick retrieval, Deep
+  retrieval, or Relational retrieval.
+- **Answer traces**: responses include routing and retrieval details for inspection.
+- **Ambient context**: optional runtime context can be added to the prompt without becoming
+  durable memory.
+- **Provider profiles**: DashScope/Qwen, SiliconFlow, DeepSeek, Gemini, and local FastEmbed
+  embeddings can be configured through `.env`.
+- **Interfaces**: FastAPI backend, web interface, Streamlit inspection UI, Slack bot, and MCP
+  server skeleton.
+- **Evaluation**: local regression cases, ablation runs, and LongMemEval-style benchmark tools.
+
+## Example
+
+```text
+User: My project database is MongoDB.
+MIRA: saves the observation.
+
+User: Correction: we moved from MongoDB to PostgreSQL.
+MIRA: updates the current session immediately and later records a SUPERSEDED_BY edge.
+
+New session:
+User: What database do I use now?
+MIRA: answers PostgreSQL and returns a trace showing the memory path.
+```
+
+The old MongoDB fact is not erased. It remains as history, but the active memory points to
+PostgreSQL.
 
 ## Architecture flow
 
-```text
-handle_user_message(session_id, message)
-  -> persist observation and enqueue slow-path job
-  -> run session micro-path
-  -> hydrate relevant durable memory
-  -> route retrieval: direct LLM | Quick | Deep | Relational
-  -> merge recent turns, session items, hot memory, retrieved records, ambient context
-  -> apply token budget
-  -> call configured LLM provider
-  -> persist assistant response
-  -> return answer, routing_decision, retrieval_trace
+SQLite is the source of truth. ChromaDB is a rebuildable vector index over SQLite records.
+NetworkX is used as a read-only graph projection when graph algorithms need it; it is not the
+main storage layer.
 
-slow-path worker
-  -> generate embeddings
-  -> extract atomic facts
-  -> extract entities and graph edges
-  -> detect contradiction or supersession
-  -> synthesize reflections
-  -> create foresight records
-  -> refresh community summaries
-  -> promote or demote tier candidates
-  -> confirm or expire Session Working Set items
+```text
+core/
+  agent.py          main runtime loop
+  db/               SQLite schema, repositories, Chroma index
+  llm/              provider profiles, client adapter, prompts, embeddings
+  memory/           observations, facts, graph, reflections, foresight, tiers
+  session/          session micro-path, working set, hydration
+  retrieval/        quick, deep, relational, routing
+  context/          prompt merging and token budgeting
+
+api/                FastAPI backend
+frontend/           web interface
+ui/                 Streamlit inspection app
+slack/              Slack and MCP entry points
+evaluation/         local eval, ablation, benchmark adapters
+scripts/            provider checks, worker, demo seeding, inspection commands
+docs/               architecture notes, ADRs, paper, demo script
+tests/              test suite
 ```
 
-Core storage responsibilities:
-
-- **SQLite** is the source of truth for observations, structured memory, graph records, traces,
-  queue state, and evaluation logs.
-- **ChromaDB** is a rebuildable vector index over SQLite record pointers.
-- **Typed graph records** live in SQLite and are traversed by graph/retrieval helpers; NetworkX
-  is available as a read-only algorithm projection.
-- **Session Working Set** is temporary current-session state with high prompt priority.
-- **Provider profiles** configure OpenAI-compatible chat and embedding endpoints.
-
-See [docs/architecture.md](docs/architecture.md) for module-level details and [docs/adr](docs/adr)
-for architectural decisions.
+More detail: [docs/architecture.md](docs/architecture.md).
 
 ## Setup
 
-Python 3.11 is required.
+Python 3.11 is expected.
 
 ```bash
 python3.11 -m venv .venv
@@ -160,28 +142,7 @@ cp .env.example .env
 make check
 ```
 
-Choose a provider profile in `.env` and add the matching key. Supported profiles are
-`dashscope`, `siliconflow`, `deepseek`, and `gemini`.
-
-```bash
-LLM_PROFILE=siliconflow
-SILICONFLOW_API_KEY=your_siliconflow_key
-LLM_RESPONSE_FORMAT=auto
-EMBEDDING_MODE=auto
-```
-
-For Gemini chat with local CPU embeddings:
-
-```bash
-LLM_PROFILE=gemini
-GEMINI_API_KEY=your_gemini_api_key
-LLM_RESPONSE_FORMAT=auto
-EMBEDDING_MODE=local
-LOCAL_EMBEDDING_PROVIDER=fastembed
-LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
-```
-
-Load `.env` into your terminal when running Make targets:
+Load `.env` into your terminal before running commands that need provider keys:
 
 ```bash
 set -a
@@ -189,47 +150,73 @@ source .env
 set +a
 ```
 
-Smoke-check provider wiring:
+Choose a provider profile in `.env`:
+
+```bash
+LLM_PROFILE=deepseek
+DEEPSEEK_API_KEY=your_key
+LLM_RESPONSE_FORMAT=auto
+EMBEDDING_MODE=local
+LOCAL_EMBEDDING_PROVIDER=fastembed
+LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
+```
+
+Other supported profiles include `dashscope`, `siliconflow`, and `gemini`.
+
+Check provider wiring:
 
 ```bash
 make provider-check
 ```
 
-`LLM_RESPONSE_FORMAT=auto` uses strict `json_schema` when supported and `json_object` for
-providers that require JSON mode. DeepSeek currently uses JSON-object mode; SiliconFlow and
-Gemini can use schema mode through the configured adapter.
+## Run locally
 
-## Running locally
-
-Seed demo data and start the legacy Streamlit UI:
-
-```bash
-python -m scripts.seed_demo --workspace-id workspace_legacy_default --reset
-make run
-```
-
-The Streamlit UI opens at `http://localhost:8501`. Choose **Launch MIRA**, then open the **Results**
-view in the left rail for the live memory-verification result and the mechanism evidence
-behind it. (`make run` launches `streamlit run ui/app.py`; running that command directly also
-works from the repo root.)
-
-Run the current product backend:
+Run the API:
 
 ```bash
 make api
 ```
 
-Run the React frontend in another terminal:
+Run the worker in another terminal:
+
+```bash
+make worker
+```
+
+Run the web interface:
 
 ```bash
 make frontend-dev
 ```
 
-The product UI opens at `http://localhost:5173` and talks to the FastAPI backend at
-`http://localhost:8000`.
+Open:
 
-Local API development uses the workspace selected by `MIRA_AUTH_MODE=development` in `.env`.
-For GitHub sign-in, create a GitHub OAuth app and switch to:
+```text
+http://localhost:5173
+```
+
+The frontend talks to the API at:
+
+```text
+http://localhost:8000
+```
+
+The API queues memory work. The worker drains the queue and creates durable memory artifacts.
+Keep both running when testing the full memory pipeline.
+
+## Auth and workspaces
+
+MIRA separates user data by workspace. Product API routes resolve the workspace from server-side
+auth, not from arbitrary request payloads.
+
+For local development without GitHub OAuth:
+
+```bash
+MIRA_AUTH_MODE=development
+MIRA_DEVELOPMENT_WORKSPACE_ID=workspace_legacy_default
+```
+
+For GitHub OAuth:
 
 ```bash
 MIRA_AUTH_MODE=github
@@ -237,91 +224,41 @@ GITHUB_CLIENT_ID=your_client_id
 GITHUB_CLIENT_SECRET=your_client_secret
 GITHUB_CALLBACK_URL=http://localhost:8000/auth/github/callback
 APP_BASE_URL=http://localhost:5173
-COOKIE_SECURE=false  # true when served over HTTPS
+COOKIE_SECURE=false
 ```
 
-GitHub mode stores only hashed opaque session and CSRF tokens. The server derives the user and
-workspace from that session; request payloads cannot select another user's workspace.
-
-`POST /auth/demo` creates a separately seeded, short-lived workspace and server session for each
-visitor. Demo workspaces do not share interactive memory. Issuance and active-workspace limits
-are configured with the `MIRA_DEMO_*` variables in `.env`; expired demos can be removed with:
+Demo accounts use short-lived demo workspaces:
 
 ```bash
 make demo-cleanup
 ```
 
-Run the slow-path worker:
-
-```bash
-make worker
-```
-
-Run the test suite and checks:
-
-```bash
-make test
-make check
-```
-
-Run the local memory regression suite:
-
-```bash
-make local-eval
-```
-
-Inspect runtime state:
-
-```bash
-WORKSPACE_ID=workspace_legacy_default make slow-path-status
-WORKSPACE_ID=workspace_legacy_default make graph-inspect
-WORKSPACE_ID=workspace_legacy_default QUERY="what database do I use now?" make memory-search
-```
-
-The UI opens the Memory Command Center with chat, graph, Session Working Set, retrieval trace,
-foresight, reflections, community summaries, and evaluation surfaces. The chat surface includes
-a demo/real-agent toggle. Demo mode is deterministic; real-agent mode calls the MIRA runtime and
-requires database, provider, and worker configuration.
-
-The judge/user walkthrough is in [docs/demo-script.md](docs/demo-script.md).
-
 ## Demo
 
-The quickest demo path is:
+The older Streamlit UI is still useful for inspection and demos:
 
 ```bash
 python -m scripts.seed_demo --workspace-id workspace_legacy_default --reset
 make run
 ```
 
-Use the Streamlit app to show:
+Open:
 
-- Session Working Set updates after a correction.
-- Graph Viewer nodes and evidence paths.
-- Retrieval Trace explaining which memory records shaped an answer.
-- Foresight Timeline for future-relevant constraints.
-- Evaluation Dashboard for local and benchmark-oriented runs.
-
-You can also call the runtime directly:
-
-```python
-from core.db.repositories import configure_database, create_session
-from core.agent import handle_user_message
-
-configure_database("mira.db")
-session = create_session("jerry")
-print(handle_user_message(session, "Use 2026, not 2025, for all dates."))
+```text
+http://localhost:8501
 ```
 
-## API and integration surfaces
+The demo walkthrough is in [docs/demo-script.md](docs/demo-script.md).
 
-FastAPI:
+## API
+
+Run:
 
 ```bash
 make api
 ```
 
-Endpoints:
+Useful endpoints:
 
 - `GET /health`
 - `GET /auth/github/start`
@@ -340,19 +277,18 @@ Endpoints:
 - `GET /community-summaries`
 - `GET /worker/status`
 
-Except for health, OAuth entry/callback, and evaluation artifacts, product endpoints require an
-authenticated workspace. Cookie-authenticated mutations also require the readable `mira_csrf`
-cookie value in the `X-CSRF-Token` header. Development mode bypasses OAuth and CSRF only for the
-explicitly configured local workspace.
+Most product endpoints require an authenticated workspace. Cookie-authenticated mutations also
+require the readable `mira_csrf` cookie value in the `X-CSRF-Token` header.
 
-Slack:
+## Slack and MCP
+
+Run Slack:
 
 ```bash
 make slack
 ```
 
-Non-browser surfaces fail closed unless explicitly bound. Configure Streamlit and local MCP with
-one workspace each, and map every Slack installation by immutable `team_id`:
+Bind non-browser surfaces to explicit workspaces:
 
 ```bash
 MIRA_STREAMLIT_WORKSPACE_ID=workspace_legacy_default
@@ -360,43 +296,35 @@ MIRA_MCP_WORKSPACE_ID=workspace_legacy_default
 MIRA_SLACK_TEAM_WORKSPACES={"T01234567":"workspace_legacy_default"}
 ```
 
-Slack user IDs remain Slack identities; they are used only inside the workspace selected by the
-verified team mapping. MCP tools do not accept workspace-switching arguments.
-
-The API and Slack layers are intentionally thin. Memory behavior remains in `core/` so other
-agent surfaces can reuse the same infrastructure.
+Slack user IDs stay inside the workspace selected by the verified Slack team mapping.
 
 ## Runtime inspection
 
-Inspect the typed memory graph:
+Graph snapshot:
 
 ```bash
 WORKSPACE_ID=workspace_legacy_default make graph-inspect
 WORKSPACE_ID=workspace_legacy_default ENTITY=PostgreSQL make graph-inspect
 ```
 
-Inspect slow-path health:
+Slow-path queue and artifact health:
 
 ```bash
 WORKSPACE_ID=workspace_legacy_default make slow-path-status
 ```
 
-Search vector memory and verify Chroma pointers against SQLite:
+Vector search through Chroma pointers:
 
 ```bash
-WORKSPACE_ID=workspace_legacy_default QUERY="what did I say about oranges?" make memory-search
+WORKSPACE_ID=workspace_legacy_default QUERY="what database do I use now?" make memory-search
 ```
 
-If `memory-search` returns `"record_found": false`, Chroma contains a stale pointer to a SQLite
-record that is not present in the active `MIRA_DB_PATH`. Rebuild or clear Chroma after switching
-databases.
+If `memory-search` returns `"record_found": false`, Chroma has a pointer to a SQLite record that
+is not present in the active database. Rebuild or clear Chroma after switching databases.
 
 ## Evaluation
 
-MIRA includes evaluation scripts and local regression cases. The repository does not ship invented
-benchmark numbers; run the scripts against your configured provider and dataset.
-
-Run local deterministic memory cases:
+Run local deterministic cases:
 
 ```bash
 make local-eval
@@ -408,60 +336,36 @@ Run local cases with live provider calls:
 python -m scripts.run_local_eval --live
 ```
 
-Run local cases with inline slow-path distillation after each interaction:
+Run live local cases with inline slow-path processing:
 
 ```bash
 python -m scripts.run_local_eval --live --run-slow-path --debug-trace --delay-s 15
 ```
 
-Local eval prints `[local-eval]` progress messages to stderr so live runs show the active case
-and interaction. Use `--delay-s 15` for rate-limited free-tier providers and `--quiet` if you
-need machine-readable output only. `--run-slow-path` is closer to a long-running worker setup,
-but it performs additional extraction/distillation model calls. `--debug-trace` writes
-`evaluation/local/memory_cases.debug.md` with routing, retrieved records, session items, prompt
-sections, and slow-path step output.
+Useful notes:
 
-Every case runs in an explicit evaluation workspace backed by its own isolated SQLite database
-and cleared vector store by default. Database isolation prevents state carry-over, while the
-workspace boundary exercises the same ownership checks used by the API, retrieval, and worker
-paths. With `--shared-db`, local eval creates one shared evaluation workspace so intentional
-multi-case continuity remains scoped rather than falling back to a global workspace.
+- `--run-slow-path` is closer to the real worker setup, but it makes more model calls.
+- `--debug-trace` writes `evaluation/local/memory_cases.debug.md`.
+- `--delay-s` helps with free-tier provider rate limits.
+- By default, each case gets an isolated SQLite database, cleared vector store, and evaluation
+  workspace.
 
-### Reproducing the live memory result
+## Ablation
 
-The shipped suite exercises the full memory pipeline end to end (routing, session working set,
-supersession, contradiction, foresight, retrieval sufficiency). To reproduce a full live run with
-inline slow-path distillation:
-
-```bash
-set -a; source .env; set +a
-LLM_PROFILE=deepseek python -m scripts.run_local_eval --live --run-slow-path
-```
-
-This writes per-case scores to `evaluation/local/memory_cases.results.json`. On DeepSeek
-(`deepseek-chat`) with local FastEmbed embeddings, the current suite passes **10/10**, and the
-mechanism checks are verifiable in the run's database — `SUPERSEDED_BY` edges exist, superseded
-facts are actually closed, and `foresight_records` persist. These are reproducible facts from a
-live provider, not shipped benchmark numbers. Provider quality varies: free-tier hosts (e.g.
-Gemini's 5 requests/minute cap) cannot complete a full slow-path run without throttling or a paid
-plan. Known extraction-quality follow-ups are tracked in
-[docs/canonicalization-followups.md](docs/canonicalization-followups.md).
-
-Run an offline ablation study:
+Offline ablation:
 
 ```bash
 make ablation
 ```
 
-Run a live ablation study against the active provider:
+Live ablation:
 
 ```bash
 set -a; source .env; set +a
 LLM_PROFILE=deepseek OUT=evaluation/ablation/results make ablation-live
 ```
 
-For architecture-level ablations, enable inline slow-path draining so every
-configuration gets the same durable-memory ingestion opportunity before scoring:
+Slow-path-aware live ablation:
 
 ```bash
 LLM_PROFILE=deepseek \
@@ -473,7 +377,7 @@ LIMIT=3 \
 make ablation-live
 ```
 
-Direct Python equivalent:
+Direct Python form:
 
 ```bash
 python -m scripts.run_ablation \
@@ -485,10 +389,10 @@ python -m scripts.run_ablation \
   --out evaluation/ablation/results
 ```
 
-By default ablation uses a fresh SQLite database, cleared vector store, and explicit evaluation
-workspace per config/case pair. With `--shared-db`, each configuration receives one workspace
-shared by its cases; configurations remain isolated from each other. This gives every ablation
-the same scoped slow-path and retrieval behavior as the runtime architecture.
+By default, ablation isolates each config/case pair. Use `--shared-db` only when you intentionally
+want continuity inside a run.
+
+## Benchmark
 
 Prepare LongMemEval-style data:
 
@@ -496,19 +400,19 @@ Prepare LongMemEval-style data:
 python3 -m scripts.prepare_longmemeval --variant oracle
 ```
 
-That writes:
+Output:
 
 ```text
 data/benchmarks/longmemeval.json
 ```
 
-Estimate benchmark cost without live calls:
+Estimate cost:
 
 ```bash
 make benchmark-cost
 ```
 
-Run a limited live benchmark:
+Run a small live subset:
 
 ```bash
 LIMIT=20 make benchmark-subset
@@ -520,12 +424,7 @@ Run the configured live benchmark:
 make benchmark
 ```
 
-Each benchmark example receives its own SQLite database, cleared vector store, and evaluation
-workspace. Conversation import, slow-path claiming, retrieval, and answer generation all carry
-that workspace ID, preventing one example from supplying memory to another. Existing benchmark
-commands and dataset formats are unchanged.
-
-You can select another provider/model through environment variables:
+Use another provider/model:
 
 ```bash
 LLM_PROFILE=deepseek \
@@ -535,27 +434,11 @@ JUDGE_MODEL=deepseek-chat \
 make benchmark-subset
 ```
 
-## Use cases
-
-MIRA is useful anywhere an agent needs inspectable memory beyond one chat window:
-
-- personal AI assistants that remember preferences, projects, and corrections;
-- Slack agents that preserve team context across threads and days;
-- developer assistants that remember repository decisions and workflow constraints;
-- customer-support agents that track durable account context and unresolved issues;
-- research assistants that preserve evolving hypotheses, citations, and project plans;
-- long-running workflow agents that need future constraints, reminders, and answer traces.
-
-## Competition and demo context
-
-MIRA can be evaluated in memory-agent benchmarks and hackathon settings, but the system is
-designed as general-purpose agent memory infrastructure. The Qwen/DashScope path is one provider
-profile and demo context, not the identity of the project. The current adapter supports multiple
-OpenAI-compatible providers and local embeddings.
+Benchmark examples are isolated by database, vector store, and workspace.
 
 ## Docker local development
 
-Docker is optional, but it gives the team a repeatable clean-clone environment.
+Docker gives you the API, worker, frontend, and dev tools in containers:
 
 ```bash
 cp .env.example .env
@@ -565,121 +448,140 @@ docker compose run --rm devtools python -m scripts.seed_demo \
 docker compose up api worker frontend
 ```
 
-Then open <http://localhost:5173>. The API is available at <http://localhost:8000>.
+Open:
 
-If those ports are already in use, override them without editing Compose:
+```text
+http://localhost:5173
+```
+
+API:
+
+```text
+http://localhost:8000
+```
+
+If ports are busy:
 
 ```bash
 API_PORT=18000 FRONTEND_PORT=15173 docker compose up api worker frontend
 ```
 
-Then open <http://localhost:15173>. For GitHub OAuth on custom ports, update the OAuth callback
-URL in your GitHub OAuth app to match `http://localhost:18000/auth/github/callback`.
+Then open:
 
-The Compose API and worker services mount durable local data into `.docker-data/`:
+```text
+http://localhost:15173
+```
 
-- SQLite: `.docker-data/sqlite/mira.db` mounted as `MIRA_DB_PATH=/data/sqlite/mira.db`
-- Chroma: `.docker-data/chroma` mounted as `CHROMA_DB_PATH=/data/chroma`
+For GitHub OAuth on custom ports, set the OAuth callback URL to:
 
-The worker is intentionally a separate container. The API queues memory work quickly; the worker
-drains the slow path and builds durable memory artifacts.
+```text
+http://localhost:18000/auth/github/callback
+```
 
-Run checks inside the container:
+Persistent Docker data:
+
+- SQLite: `.docker-data/sqlite/mira.db`
+- Chroma: `.docker-data/chroma`
+
+Inside the containers these are mounted as:
+
+- `MIRA_DB_PATH=/data/sqlite/mira.db`
+- `CHROMA_DB_PATH=/data/chroma`
+
+Run checks inside Docker:
 
 ```bash
 docker compose run --rm devtools make check
 ```
 
+## Tests and checks
+
+```bash
+make test
+make check
+```
+
+Focused commands:
+
+```bash
+make lint
+make type
+make security
+make frontend-build
+```
+
 ## Makefile commands
 
-- `install` — install development and production requirements.
-- `run` — launch the Streamlit UI (`ui/app.py`).
-- `api` — launch the FastAPI backend (`api.main:app`).
-- `slack` — run the Slack bot.
-- `worker` — run the slow-path background worker.
-- `provider-check` — smoke-check configured chat and embedding providers.
-- `graph-inspect` — print a JSON snapshot of graph nodes, edges, and provenance.
-- `slow-path-status` — print queue health, failures, and slow-path artifact counts.
-- `memory-search` — embed `QUERY` and search vector memory through Chroma pointers.
-- `local-eval` — run the isolated local memory regression suite.
-- `test` — run pytest.
-- `lint`, `format`, `fix` — check or format with Ruff.
-- `type` — run strict mypy.
-- `security` — run Bandit.
-- `check` — run lint, type, security, and tests.
-- `precommit` — run all pre-commit hooks.
-- `ablation` — run the offline ablation study and write results.
-- `ablation-live` — run live provider ablations; set `RUN_SLOW_PATH=1` for fair
-  slow-path-aware architecture ablations.
-- `benchmark-cost` — estimate benchmark cost without paid calls.
-- `benchmark` — run the live LongMemEval-style benchmark.
-- `benchmark-subset` — run the live benchmark on a limited subset.
-- `clean` — remove generated caches and reports.
+- `install`: install Python requirements.
+- `run`: start the Streamlit UI.
+- `api`: start FastAPI.
+- `frontend-dev`: start the web interface.
+- `frontend-build`: build the web interface.
+- `worker`: run slow-path worker.
+- `provider-check`: test configured provider and embeddings.
+- `graph-inspect`: print graph state.
+- `slow-path-status`: print worker queue and artifact health.
+- `memory-search`: search vector memory.
+- `local-eval`: run local memory cases.
+- `ablation`: run offline ablation.
+- `ablation-live`: run live ablation.
+- `benchmark-cost`: estimate benchmark cost.
+- `benchmark-subset`: run a limited benchmark.
+- `benchmark`: run the configured benchmark.
+- `test`: run pytest.
+- `check`: run lint, type, security, and tests.
+- `clean`: remove caches and reports.
 
-## Repository layout
+## Use cases
 
-```text
-core/
-  agent.py          runtime loop: user message -> memory -> answer
-  db/               SQLite source of truth, ChromaDB index, schema, repositories
-  llm/              provider profiles, OpenAI-compatible client, prompts, embeddings
-  memory/           observations, atomic facts, graph, reflections, foresight, tiers
-  session/          session micro-path, Session Working Set, confirmation, hydration
-  retrieval/        Quick, Deep, Relational, Auto routing, sufficiency
-  context/          merger, token budget, ambient context
-ui/                 Streamlit app and graph visualization
-api/                FastAPI backend over the MIRA core runtime
-slack/              Slack bot and MCP server skeleton
-evaluation/         evaluation surfaces, grouped by kind
-  local/            local memory regression suite (cases harness)
-  benchmarks/       official benchmark adapters (LongMemEval / LoCoMo) and judge
-  ablation/         component ablation studies
-docs/               paper, architecture, ADRs, demo script, issues
-scripts/            setup, demo, provider, worker, benchmark, and inspection scripts
-tests/              test suite
-```
+- personal assistants that remember preferences and corrections;
+- Slack agents with team memory;
+- developer assistants that remember repository decisions;
+- support agents that track unresolved account context;
+- research assistants that preserve project context;
+- workflow agents that need future constraints and traces.
 
 ## Implementation status
 
-MIRA has a working core memory loop today: persistence, session memory, slow-path memory
-consolidation, graph records, retrieval routing, answer traces, local eval, UI, API, and Slack
-surfaces. Public facades for retrieval dispatch, vector search, prompt building, hot-memory
-listing, memory inspection, and concrete structured tool dispatch now delegate to the active
-runtime/read-model modules.
+MIRA has a working core memory loop: persistence, session memory, slow-path processing, graph
+records, retrieval routing, traces, local evaluation, API routes, web UI, Streamlit inspection,
+Slack, and Docker setup.
+
+Some parts are still prototype-grade. The goal is to keep the runtime honest: working features
+should be visible in tests and traces, and unfinished work should stay in the roadmap.
 
 ## Roadmap
 
-Next work is intentionally narrow:
-
-- Add stronger benchmark result reporting once live runs are complete.
-- Keep full procedural memory, multimodal memory, and multi-user memory as future research.
+- Improve benchmark reporting after more live runs.
+- Tighten long-running worker observability.
+- Keep procedural memory, multimodal memory, and advanced multi-user policies as future work.
 
 ## Team ownership
 
-- **Jerry** — architecture, core memory, retrieval, context, and LLM integration.
-- **Kelechi** — database, deployment, infrastructure, and Slack/MCP.
+- **Jerry**: architecture, memory runtime, retrieval, context, and LLM integration.
+- **Kelechi**: database, deployment, infrastructure, and Slack/MCP.
 
 ## Architecture decision records
 
 Major decisions are tracked in [docs/adr](docs/adr):
 
-- [ADR-0001 — Session Working Set is Separate from Durable Hot Memory](docs/adr/0001-session-working-set.md)
-- [ADR-0002 — Single Typed Graph Instead of Disconnected Graph Stores](docs/adr/0002-single-typed-graph.md)
-- [ADR-0003 — SQLite Source of Truth and ChromaDB Vector Index](docs/adr/0003-sqlite-source-of-truth.md)
-- [ADR-0004 — Quick, Deep, Relational, and Auto Retrieval Modes](docs/adr/0004-retrieval-modes.md)
-- [ADR-0005 — Provisional vs Confirmed Memory](docs/adr/0005-provisional-confirmed-memory.md)
-- [ADR-0006 — Session Micro-Path vs Cross-Session Slow Path](docs/adr/0006-session-micro-path-slow-path.md)
-- [ADR-0007 — Prompt Builder as Integration Point](docs/adr/0007-prompt-builder-integration-point.md)
-- [ADR-0008 — Foresight Lifecycle](docs/adr/0008-foresight-lifecycle.md)
-- [ADR-0009 — Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
-- [ADR-0010 — Sensa-Style Ambient Context as Prompt Signal, Not Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
+- [ADR-0001: Session Working Set is Separate from Durable Hot Memory](docs/adr/0001-session-working-set.md)
+- [ADR-0002: Single Typed Graph Instead of Disconnected Graph Stores](docs/adr/0002-single-typed-graph.md)
+- [ADR-0003: SQLite Source of Truth and ChromaDB Vector Index](docs/adr/0003-sqlite-source-of-truth.md)
+- [ADR-0004: Quick, Deep, Relational, and Auto Retrieval Modes](docs/adr/0004-retrieval-modes.md)
+- [ADR-0005: Provisional vs Confirmed Memory](docs/adr/0005-provisional-confirmed-memory.md)
+- [ADR-0006: Session Micro-Path vs Cross-Session Slow Path](docs/adr/0006-session-micro-path-slow-path.md)
+- [ADR-0007: Prompt Builder as Integration Point](docs/adr/0007-prompt-builder-integration-point.md)
+- [ADR-0008: Foresight Lifecycle](docs/adr/0008-foresight-lifecycle.md)
+- [ADR-0009: Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
+- [ADR-0010: Sensa-Style Ambient Context as Prompt Signal, Not Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
 
 ## Further reading
 
-- [MIRA paper](docs/mira-paper.md) — research framing and architecture summary.
-- [Architecture overview](docs/architecture.md) — implementation map for engineers.
-- [Demo script](docs/demo-script.md) — guided walkthrough for reviewers and teammates.
-- [Contributing guide](CONTRIBUTING.md) — branch-per-issue workflow and PR expectations.
+- [MIRA paper](docs/mira-paper.md)
+- [Architecture overview](docs/architecture.md)
+- [Demo script](docs/demo-script.md)
+- [Contributing guide](CONTRIBUTING.md)
 
 ## License
 
