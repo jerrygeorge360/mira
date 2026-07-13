@@ -27,6 +27,8 @@ from core.db.repositories import (
     resolve_canonical_form,
 )
 from core.llm.embeddings import embed_text
+from core.llm.prompts import render_prompt
+from core.llm.qwen import LLMClientError, call_qwen_json
 from core.memory.atomic_fact import detect_transitions, extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
 from core.memory.community import (
@@ -125,10 +127,15 @@ class SlowPathSemanticConfig:
     enable_reflection: bool = True
     enable_reflection_invalidation: bool = True
     enable_community_summaries: bool = True
-    reflection_min_importance: float = 0.6
+    # A single durable-trait marker scores 0.53; the gate sits just below so one clearly
+    # self/user-descriptive observation is enough to qualify a reflection pass.
+    reflection_min_importance: float = 0.5
     reflection_min_observations: int = 5
     reflection_cooldown_observations: int = 10
-    community_refresh_every_observations: int = 50
+    # Cumulative observations (across batches) before the graph community job reruns.
+    # Low default so interactive sessions and the eval actually exercise Deep Mode;
+    # raise it for large-scale deployments to trade freshness for cost.
+    community_refresh_every_observations: int = 8
     community_refresh_every_minutes: int = 30
     max_foresight_records_per_observation: int = 3
     max_reflections_per_run: int = 3
@@ -294,7 +301,7 @@ def run_slow_path_for_observation(
         ("contradiction_supersession", lambda: _step_changes(context, observation_id, content)),
         (
             "reflection_invalidation",
-            lambda: _step_reflection_invalidation(observation_id, semantic_config),
+            lambda: _step_reflection_invalidation(observation_id, context, semantic_config),
         ),
         ("tier_update", lambda: _step_tiers(context)),
         ("foresight_detection", lambda: _step_foresight(observation_id, content, semantic_config)),
@@ -335,7 +342,36 @@ def run_slow_path_batch(
         else:
             mark_failed(queue_id, str(result.get("error_message") or "slow-path step failed"))
         results.append(result)
+    if results:
+        run_semantic_passes(config)
     return results
+
+
+def run_semantic_passes(
+    config: SlowPathSemanticConfig | None = None,
+) -> list[SlowPathStepResult]:
+    """Run the batch-level consolidation passes: reflection and community refresh.
+
+    These accumulate evidence across batches and look across observations, so they
+    belong to any batch drain (worker, eval harness, or scripts), not only the
+    long-running worker loop. Both are internally gated on cumulative store state and
+    no-op until enough evidence exists.
+    """
+    semantic_results = [
+        *maybe_run_reflection_pass(config),
+        *maybe_run_community_refresh(config),
+    ]
+    for semantic_result in semantic_results:
+        if semantic_result.created_record_ids or semantic_result.updated_record_ids:
+            log_event(
+                "semantic_step_completed",
+                "semantic slow-path step completed",
+                step_name=semantic_result.step_name,
+                created_record_ids=semantic_result.created_record_ids,
+                updated_record_ids=semantic_result.updated_record_ids,
+                succeeded=semantic_result.succeeded,
+            )
+    return semantic_results
 
 
 # --- background worker runtime (ISSUE-124) ----------------------------------
@@ -447,24 +483,8 @@ def run_worker(
                 failed=batch_failed,
                 duration_ms=duration_ms,
             )
-            processed_observation_ids = [
-                str(result["observation_id"]) for result in results if result["succeeded"]
-            ]
-            semantic_results = [
-                *maybe_run_reflection_pass(processed_observation_ids, config),
-                *maybe_run_community_refresh(processed, config),
-            ]
-            for semantic_result in semantic_results:
-                if semantic_result.created_record_ids or semantic_result.updated_record_ids:
-                    log_event(
-                        "semantic_step_completed",
-                        "semantic slow-path step completed",
-                        worker_id=worker_id,
-                        step_name=semantic_result.step_name,
-                        created_record_ids=semantic_result.created_record_ids,
-                        updated_record_ids=semantic_result.updated_record_ids,
-                        succeeded=semantic_result.succeeded,
-                    )
+            # Reflection and community refresh run inside run_slow_path_batch so every
+            # batch drain (worker, eval, scripts) exercises them, not only this worker.
             if once or _reached(max_iterations, iterations):
                 break
     except KeyboardInterrupt:
@@ -587,6 +607,32 @@ def _step_embedding_index(
     return {"observations": [observation_id]}
 
 
+_AGENT_SELF_SUBJECTS = frozenset({"i", "me", "my", "myself", "assistant", "agent", "mira", "ai"})
+
+
+def _agent_self_facts(facts: list[dict[str, object]]) -> list[dict[str, object]]:
+    """Keep only facts a non-user turn asserts about itself, attributed to the assistant.
+
+    Pronoun attribution is speaker-relative: in an assistant turn "I/me/my" is the
+    assistant and "you" is the user, but the shared canonical registry assumes the user
+    is speaking. So we resolve self-reference here and keep only the agent's own
+    commitments/self-knowledge, re-attributing the subject to "assistant". Everything
+    else from an assistant turn -- echoes of the user's claims ("You prefer Rust") and
+    third-party/world assertions -- is dropped so the agent cannot mint user facts or
+    confirm its own output.
+    """
+    kept: list[dict[str, object]] = []
+    for fact in facts:
+        tokens = str(fact.get("subject", "")).casefold().replace("_", " ").split()
+        if len(tokens) > 1 and tokens[0] in {"the", "a", "an"}:
+            tokens = tokens[1:]
+        if " ".join(tokens) in _AGENT_SELF_SUBJECTS:
+            attributed = dict(fact)
+            attributed["subject"] = "assistant"
+            kept.append(attributed)
+    return kept
+
+
 def _step_atomic_facts(
     observation_id: str,
     content: str,
@@ -596,7 +642,11 @@ def _step_atomic_facts(
     if existing:
         context["fact_ids"] = existing
         return {}
-    fact_ids = store_atomic_facts(extract_atomic_facts(observation_id, content))
+    facts = extract_atomic_facts(observation_id, content)
+    if _observation_role(observation_id) != "user":
+        # Assistant/system turns contribute only what the agent says about itself.
+        facts = _agent_self_facts(facts)
+    fact_ids = store_atomic_facts(facts)
     context["fact_ids"] = fact_ids
     return {"atomic_facts": fact_ids}
 
@@ -623,6 +673,196 @@ def _step_entities(observation_id: str, content: str) -> dict[str, list[str]]:
     return {"entities": entity_ids, "graph_nodes": node_ids, "graph_edges": edge_ids}
 
 
+_ENTITY_GRAPH_CANDIDATE_LIMIT = 25
+
+
+def _apply_changes(
+    changes: list[dict[str, object]],
+    transition_edge_ids: list[str],
+    general_edge_ids: list[str],
+    recheck_observations: set[str],
+) -> int:
+    """Apply detected memory changes as edges; return supersessions suppressed by a transition.
+
+    A general SUPERSEDED_BY is skipped when an explicit "from X to Y" transition in the
+    same observation already recorded the authoritative edge, so one transition yields
+    one edge. Contradictions are always applied (they never duplicate a transition). The
+    prior fact's source observation is recorded in ``recheck_observations`` so any
+    reflection derived from it is re-evaluated for staleness (its evidence just changed).
+    """
+    suppressed = 0
+    for change in changes:
+        relation = str(change["relation"])
+        old_id = str(change["source_id"])
+        new_id = str(change["target_id"])
+        # Evidence must be real observation ids; skip rather than fabricate one.
+        evidence = _json_string_list(change.get("evidence"))
+        if not evidence:
+            continue
+        if _relation_edge_exists_by_fact(old_id, new_id, relation):
+            continue
+        if relation == "SUPERSEDED_BY":
+            if transition_edge_ids:
+                suppressed += 1
+                continue
+            general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
+        else:
+            general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+        old_fact = _fetch_fact(old_id)
+        old_source = _optional_str(old_fact.get("source_observation_id")) if old_fact else None
+        if old_source:
+            recheck_observations.add(old_source)
+    return suppressed
+
+
+_LLM_CHANGE_CANDIDATE_SCAN = 25
+_LLM_CHANGE_SHORTLIST_LIMIT = 5
+_LLM_CHANGE_SHORTLIST_THRESHOLD = 0.5
+_LLM_CHANGE_CONFIDENCE_GATE = 0.5
+
+
+def _shortlist_candidate_facts(fact: dict[str, object]) -> list[dict[str, object]]:
+    """Embedding-shortlist recent active facts for LLM change verification (high recall).
+
+    Recent active facts ranked by embedding similarity to the new fact, excluding this
+    fact and the *exact* canonical matches (same canonical subject AND predicate) that the
+    deterministic fast path already classifies. Everything else -- fragmented subjects or
+    predicates the fast path misses -- is a candidate for the LLM to judge, capped to a
+    small top-k so at most one LLM call runs per fact.
+    """
+    fact_id = str(fact["id"])
+    subject_canonical = _optional_str(fact.get("canonical_subject_id"))
+    predicate_canonical = _optional_str(fact.get("canonical_predicate_id"))
+    new_text = _fact_text(fact)
+    if not new_text:
+        return []
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, subject, predicate, object, canonical_subject_id,
+                   canonical_predicate_id, source_observation_id
+            FROM atomic_facts
+            WHERE status = 'active' AND id != ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (fact_id, _LLM_CHANGE_CANDIDATE_SCAN),
+        ).fetchall()
+    target = embed_text(new_text)
+    scored: list[tuple[float, dict[str, object]]] = []
+    for row in rows:
+        exact_match = (
+            subject_canonical
+            and predicate_canonical
+            and _optional_str(row["canonical_subject_id"]) == subject_canonical
+            and _optional_str(row["canonical_predicate_id"]) == predicate_canonical
+        )
+        if exact_match:
+            continue
+        similarity = _cosine_similarity(target, embed_text(_fact_text(dict(row))))
+        if similarity >= _LLM_CHANGE_SHORTLIST_THRESHOLD:
+            scored.append((similarity, dict(row)))
+    scored.sort(key=lambda pair: -pair[0])
+    return [row for _score, row in scored[:_LLM_CHANGE_SHORTLIST_LIMIT]]
+
+
+def _llm_verify_changes(
+    fact: dict[str, object], candidates: list[dict[str, object]]
+) -> list[dict[str, object]]:
+    """Have the LLM classify each shortlisted pair, returning applied-ready change records.
+
+    One structured-JSON call judges the plausible pairs with full context, handling the
+    entity-distinction, value-equivalence, and acknowledged-change-vs-conflict edge cases
+    that string rules miss. Verdicts are validated against the ids we supplied and gated on
+    confidence before they can create an edge; the call degrades to no changes on error.
+    """
+    new_id = str(fact["id"])
+    valid_ids = {new_id} | {str(candidate["id"]) for candidate in candidates}
+    observation_by_fact = {new_id: _optional_str(fact.get("source_observation_id"))}
+    for candidate in candidates:
+        observation_by_fact[str(candidate["id"])] = _optional_str(
+            candidate.get("source_observation_id")
+        )
+    prompt = render_prompt(
+        "contradiction_supersession_detection",
+        {
+            "existing_records": _format_fact_records(candidates),
+            "new_evidence": _format_fact_records([fact]),
+        },
+    )
+    try:
+        response = call_qwen_json(
+            [{"role": "user", "content": prompt}],
+            schema_name="contradiction_supersession_detection",
+        )
+    except LLMClientError:
+        return []
+    payload = response.get("json", {})
+    raw_relations = payload.get("relations", []) if isinstance(payload, dict) else []
+    changes: list[dict[str, object]] = []
+    for relation in raw_relations if isinstance(raw_relations, list) else []:
+        if not isinstance(relation, dict):
+            continue
+        relation_type = str(relation.get("relation", "")).upper()
+        source_id = _optional_str(relation.get("source_id"))
+        target_id = _optional_str(relation.get("target_id"))
+        if relation_type not in ("SUPERSEDED_BY", "CONTRADICTS"):
+            continue
+        if source_id not in valid_ids or target_id not in valid_ids or source_id == target_id:
+            continue
+        if _confidence_value(relation.get("confidence")) < _LLM_CHANGE_CONFIDENCE_GATE:
+            continue
+        evidence = [
+            observation
+            for observation in (
+                observation_by_fact.get(source_id),
+                observation_by_fact.get(target_id),
+            )
+            if observation
+        ]
+        if not evidence:
+            continue
+        changes.append(
+            {
+                "relation": relation_type,
+                "source_id": source_id,
+                "target_id": target_id,
+                "evidence": evidence,
+            }
+        )
+    log_event(
+        "llm_change_verification",
+        "LLM contradiction/supersession verification",
+        step="contradiction_supersession",
+        fact_id=new_id,
+        candidates=len(candidates),
+        applied=len(changes),
+    )
+    return changes
+
+
+def _fact_text(fact: dict[str, object]) -> str:
+    return " ".join(
+        part
+        for part in (
+            _optional_str(fact.get("subject")),
+            _optional_str(fact.get("predicate")),
+            _optional_str(fact.get("object")),
+        )
+        if part
+    )
+
+
+def _format_fact_records(facts: list[dict[str, object]]) -> str:
+    return "\n".join(f"- id={fact['id']}: {_fact_text(fact)}" for fact in facts)
+
+
+def _confidence_value(value: object) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    return 0.0
+
+
 def _step_changes(
     context: dict[str, list[str]],
     observation_id: str,
@@ -636,6 +876,7 @@ def _step_changes(
     transition_edge_ids: list[str] = _apply_transition_supersessions(observation_id, content)
     general_edge_ids: list[str] = []
     general_superseded = 0
+    recheck_observations: set[str] = set()
     for fact_id in context.get("fact_ids", []):
         fact = _fetch_fact(fact_id)
         if fact is None or str(fact.get("status")) != "active":
@@ -655,24 +896,24 @@ def _step_changes(
             candidates_found=len(priors),
             reason="no_candidates" if not priors else "candidates_found",
         )
-        for change in detect_memory_change(fact_id, priors):
-            relation = str(change["relation"])
-            old_id = str(change["source_id"])
-            new_id = str(change["target_id"])
-            evidence = _json_string_list(change.get("evidence")) or [fact_id]
-            if _relation_edge_exists_by_fact(old_id, new_id, relation):
-                continue
-            if relation == "SUPERSEDED_BY":
-                if transition_edge_ids:
-                    # An explicit "from X to Y" transition in this observation was already
-                    # recorded authoritatively by PR2 direct-flagging. Suppress the
-                    # general path's redundant supersession over the LLM's own facts so a
-                    # single transition yields a single edge.
-                    general_superseded += 1
-                    continue
-                general_edge_ids.append(apply_supersession(old_id, new_id, evidence))
-            else:
-                general_edge_ids.append(apply_contradiction(old_id, new_id, evidence))
+        general_superseded += _apply_changes(
+            detect_memory_change(fact_id, priors),
+            transition_edge_ids,
+            general_edge_ids,
+            recheck_observations,
+        )
+        # Hybrid hard-case path: the deterministic scan above handles clean
+        # same-canonical-subject pairs cheaply; embedding-shortlisted cross-subject
+        # candidates are verified by the LLM, which judges entity identity, value
+        # equivalence, and change-vs-conflict that string rules miss.
+        candidates = _shortlist_candidate_facts(fact)
+        if candidates:
+            general_superseded += _apply_changes(
+                _llm_verify_changes(fact, candidates),
+                transition_edge_ids,
+                general_edge_ids,
+                recheck_observations,
+            )
     if transition_edge_ids and general_superseded:
         # Measures how often the general path WOULD have duplicated the explicit
         # transition edge (now suppressed above). See docs/canonicalization-followups.md.
@@ -684,6 +925,9 @@ def _step_changes(
             transition_edges=len(transition_edge_ids),
             suppressed=general_superseded,
         )
+    # Reflections built on facts that were just superseded/contradicted must be
+    # re-evaluated for staleness; the invalidation step reads this from context.
+    context["reflection_recheck_observations"] = sorted(recheck_observations)
     return {"graph_edges": transition_edge_ids + general_edge_ids}
 
 
@@ -730,14 +974,18 @@ def run_foresight_step_for_observation(
 
 
 def maybe_run_reflection_pass(
-    observation_ids: list[str],
     config: SlowPathSemanticConfig | None = None,
 ) -> list[SlowPathStepResult]:
-    """Run gated reflection synthesis when enough important evidence has accumulated."""
+    """Run gated reflection synthesis when enough important evidence has accumulated.
+
+    Evidence is drawn from recent observations in the store (accumulated across
+    batches), not from a single batch, so reflection fires once enough important
+    observations exist regardless of drain cadence.
+    """
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_reflection:
         return [_semantic_result("reflection_check")]
-    evidence_ids = _recent_unreflected_observation_ids(observation_ids, semantic_config)
+    evidence_ids = _recent_unreflected_observation_ids(semantic_config)
     importance = {
         observation_id: _importance_score(str(row["content"]))
         for observation_id, row in _observations_by_id(evidence_ids).items()
@@ -769,15 +1017,42 @@ def maybe_run_reflection_pass(
     return [_semantic_result("reflection_check", created_record_ids=created)]
 
 
+def _observations_since_last_community_refresh() -> int:
+    """Count observations processed since the last community summary was written.
+
+    Community detection is a background job over the accumulated graph (paper,
+    Community Detection), so the trigger is a cumulative observation count derived
+    from the store -- observations processed after the most recent summary -- rather
+    than the size of a single slow-path batch. This survives one-at-a-time draining.
+    """
+    with repository_connection() as connection:
+        last_refresh = connection.execute(
+            "SELECT MAX(created_at) AS ts FROM community_summaries"
+        ).fetchone()["ts"]
+        if last_refresh is None:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM observations WHERE processed_at IS NOT NULL"
+            ).fetchone()
+        else:
+            row = connection.execute(
+                "SELECT COUNT(*) AS n FROM observations "
+                "WHERE processed_at IS NOT NULL AND processed_at > ?",
+                (last_refresh,),
+            ).fetchone()
+    return int(row["n"])
+
+
 def maybe_run_community_refresh(
-    processed_observations: int,
     config: SlowPathSemanticConfig | None = None,
 ) -> list[SlowPathStepResult]:
-    """Run periodic graph community detection and summary refresh when due."""
+    """Run graph community detection and summary refresh when enough has accumulated."""
     semantic_config = config or SlowPathSemanticConfig()
     if not semantic_config.enable_community_summaries:
         return [_semantic_result("community_update")]
-    if processed_observations < semantic_config.community_refresh_every_observations:
+    if (
+        _observations_since_last_community_refresh()
+        < semantic_config.community_refresh_every_observations
+    ):
         return [_semantic_result("community_update")]
 
     created: list[str] = []
@@ -831,12 +1106,20 @@ def _step_foresight(
 
 def _step_reflection_invalidation(
     observation_id: str,
+    context: dict[str, list[str]],
     config: SlowPathSemanticConfig,
 ) -> dict[str, list[str]]:
     if not config.enable_reflection_invalidation:
         return {}
+    # Re-check reflections derived from this observation and from any observation whose
+    # facts were just superseded/contradicted this turn (their evidence collapsed even
+    # though the observation itself is not the one being processed).
+    recheck_observations = {observation_id, *context.get("reflection_recheck_observations", [])}
+    reflection_ids: set[str] = set()
+    for source_observation_id in recheck_observations:
+        reflection_ids.update(find_reflections_derived_from(source_observation_id))
     updated: list[str] = []
-    for reflection_id in find_reflections_derived_from(observation_id):
+    for reflection_id in sorted(reflection_ids):
         before = _reflection_status(reflection_id)
         invalidate_reflection_if_unsupported(reflection_id)
         after = _reflection_status(reflection_id)
@@ -1336,22 +1619,30 @@ def _community_summary_exists(community_id: str) -> bool:
     return row is not None
 
 
-def _recent_unreflected_observation_ids(
-    observation_ids: list[str],
-    config: SlowPathSemanticConfig,
-) -> list[str]:
-    unique_ids = list(dict.fromkeys(observation_ids))
-    if not unique_ids:
-        return []
-    unreflected: list[str] = []
-    for observation_id in unique_ids:
-        if find_reflections_derived_from(observation_id):
-            continue
-        unreflected.append(observation_id)
-    if not unreflected:
-        return []
+def _recent_unreflected_observation_ids(config: SlowPathSemanticConfig) -> list[str]:
+    """Return recent observations not yet reflected on, accumulated across batches.
+
+    Reflection is cross-session consolidation over a flat set of recent observations
+    (paper, Reflection), so the evidence window is drawn from the observation store,
+    not from the current slow-path batch. Draining one observation at a time otherwise
+    means each batch holds a single observation and the min-observations gate is never
+    reached, so reflection never fires.
+    """
     limit = max(config.reflection_min_observations, config.reflection_cooldown_observations)
-    return unreflected[-limit:]
+    window = limit * 3
+    with repository_connection() as connection:
+        rows = connection.execute(
+            "SELECT id FROM observations ORDER BY created_at DESC, id DESC LIMIT ?",
+            (window,),
+        ).fetchall()
+    newest_first = [str(row["id"]) for row in rows]
+    unreflected_newest_first = [
+        observation_id
+        for observation_id in newest_first
+        if not find_reflections_derived_from(observation_id)
+    ]
+    # Return the most recent unreflected observations in chronological order.
+    return list(reversed(unreflected_newest_first))[-limit:]
 
 
 def _observations_by_id(observation_ids: list[str]) -> dict[str, dict[str, object]]:
@@ -1384,7 +1675,8 @@ def _passes_reflection_gate(
 
 def _importance_score(content: str) -> float:
     normalized = content.casefold()
-    markers = (
+    # Urgency / change markers: things that must be acted on or that revise prior state.
+    urgency_markers = (
         "must",
         "need",
         "important",
@@ -1398,7 +1690,25 @@ def _importance_score(content: str) -> float:
         "remember",
         "decided",
     )
-    hits = sum(1 for marker in markers if marker in normalized)
+    # Durable-trait markers: stable self/user identity, preferences, and habits. Reflection
+    # (user_knowledge and self_knowledge) is built from exactly this content, but it carries
+    # none of the urgency words above, so without these it scored at the floor and the gate
+    # never fired. See docs/paper-reconciliation.md (A1).
+    trait_markers = (
+        "always",
+        "usually",
+        "prefer",
+        "tend to",
+        "every ",
+        "habit",
+        "routinely",
+        "typically",
+        "generally",
+        "frequent",
+        "value ",
+        "believe",
+    )
+    hits = sum(1 for marker in urgency_markers + trait_markers if marker in normalized)
     return min(1.0, 0.35 + hits * 0.18)
 
 

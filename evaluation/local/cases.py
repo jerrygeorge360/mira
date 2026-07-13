@@ -15,33 +15,26 @@ from __future__ import annotations
 
 import json
 import logging
-import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Protocol
 
-from core.agent import handle_user_message
 from core.db.chroma import reset_vector_store
 from core.db.repositories import (
     configure_database,
-    create_session,
     current_database_path,
-    get_answer_trace,
-    repository_connection,
 )
-from core.session.working_set import list_active_session_items
+from evaluation.runtime.case_runner import (
+    DebugRecord,
+    ProgressReporter,
+    isolate_case_state,
+    isolation_base_path,
+    json_dump,
+    run_case_interactions,
+)
 
 EvaluationCase = dict[str, object]
 CaseResult = dict[str, object]
 Score = dict[str, object]
-DebugRecord = dict[str, object]
-
-
-class ProgressReporter(Protocol):
-    """Receives human-readable local-eval progress messages."""
-
-    def __call__(self, message: str) -> None: ...
 
 
 LOGGER = logging.getLogger(__name__)
@@ -82,6 +75,7 @@ def run_evaluation_cases(
     debug_trace: bool = False,
     case_ids: list[str] | None = None,
     isolate_cases: bool = True,
+    resume: bool = False,
 ) -> dict[str, object]:
     """Run every case, score it, persist results, and return a summary.
 
@@ -89,23 +83,37 @@ def run_evaluation_cases(
     vector store, so a previous case's durable memory cannot leak into the next
     through retrieval. Pass ``isolate_cases=False`` for intentional multi-case
     continuity scenarios that share one database.
+
+    Results are checkpointed to the results file after every case, so a run that
+    dies partway (e.g. a provider outage) does not lose completed work. Pass
+    ``resume=True`` to skip cases already recorded in that file and continue with
+    the rest -- cases are isolated and independent, so resuming is exact.
     """
     if delay_s < 0:
         raise ValueError("delay_s must not be negative")
     if slow_path_batch_size < 1:
         raise ValueError("slow_path_batch_size must be a positive integer")
-    cases = _filter_cases(load_evaluation_cases(cases_path), case_ids)
-    total = len(cases)
+    all_cases = _filter_cases(load_evaluation_cases(cases_path), case_ids)
+    total = len(all_cases)
+    prior_results = _load_prior_results(cases_path) if resume else []
+    done_ids = {str(result.get("id")) for result in prior_results}
+    if resume and done_ids:
+        _progress(
+            progress,
+            f"resume: {len(done_ids)} already done, {total - len(done_ids)} remaining",
+        )
     interaction_counter = {"count": 0}
     debug_records: list[DebugRecord] = []
     _progress(progress, f"loaded cases={total} path={cases_path}")
     original_database = current_database_path()
-    isolation_base = _isolation_base_path(original_database) if isolate_cases else None
-    results: list[CaseResult] = []
+    isolation_base = isolation_base_path(original_database) if isolate_cases else None
+    results: list[CaseResult] = list(prior_results)
     try:
-        for index, case in enumerate(cases, start=1):
+        for index, case in enumerate(all_cases, start=1):
+            if str(case.get("id", "unnamed")) in done_ids:
+                continue
             if isolation_base is not None:
-                _isolate_case_state(isolation_base, index, progress)
+                isolate_case_state(isolation_base, index, progress)
             results.append(
                 _evaluate_case(
                     case,
@@ -119,6 +127,8 @@ def run_evaluation_cases(
                     debug_records=debug_records if debug_trace else None,
                 )
             )
+            # Checkpoint after each case so a crash can resume from here.
+            _save_results(cases_path, _summarize(results))
     finally:
         if isolate_cases and original_database is not None:
             configure_database(original_database)
@@ -216,6 +226,18 @@ def score_case(expected: dict[str, object], actual: dict[str, object]) -> Score:
                     sorted(observed_sources),
                 )
             )
+    if "top_retrieved_source" in expected:
+        # Ranking-order check: which source won the #1 slot. Structured-first weighting
+        # ranks validated memory (atomic_facts/...) above the raw observation log, so this
+        # discriminates the flat_memory ablation, which removes that weighting.
+        retrieved = _retrieved_records(actual)
+        observed_top = str(retrieved[0].get("source")) if retrieved else None
+        expected_top = str(expected["top_retrieved_source"])
+        checks.append(
+            _check(
+                f"top_retrieved_source=={expected_top}", observed_top == expected_top, observed_top
+            )
+        )
     if "slow_path_created_min" in expected:
         created_counts = _slow_path_created_counts(actual)
         raw_minimums = expected["slow_path_created_min"]
@@ -284,9 +306,10 @@ def _evaluate_case(
     case_debug_records: list[DebugRecord] = []
     _progress(progress, f"case {index}/{total} {case_id}: start category={category}")
     try:
-        actual = _run_case_interactions(
+        actual = run_case_interactions(
             case,
             case_id=case_id,
+            session_user="evaluation",
             progress=progress,
             delay_s=delay_s,
             interaction_counter=interaction_counter,
@@ -319,67 +342,6 @@ def _evaluate_case(
     }
 
 
-def _run_case_interactions(
-    case: EvaluationCase,
-    *,
-    case_id: str,
-    progress: ProgressReporter | None,
-    delay_s: float,
-    interaction_counter: dict[str, int],
-    run_slow_path: bool,
-    slow_path_batch_size: int,
-    case_debug_records: list[DebugRecord],
-    debug_records: list[DebugRecord] | None,
-) -> dict[str, object]:
-    interactions = _as_list(case.get("interactions"))
-    if not interactions:
-        raise ValueError("case has no interactions")
-    session_id = create_session("evaluation")
-    last_response: dict[str, object] = {}
-    total_interactions = len(interactions)
-    for interaction_index, interaction in enumerate(interactions, start=1):
-        if not isinstance(interaction, dict):
-            continue
-        if interaction.get("reset_session"):
-            session_id = create_session("evaluation")
-            _progress(progress, f"case {case_id}: reset session")
-        message = str(interaction.get("message", "")).strip()
-        if not message:
-            continue
-        _progress(
-            progress,
-            f"case {case_id}: interaction {interaction_index}/{total_interactions} answering",
-        )
-        _throttle_between_interactions(progress, delay_s, interaction_counter["count"])
-        last_response = handle_user_message(session_id, message)
-        interaction_counter["count"] += 1
-        _progress(
-            progress,
-            f"case {case_id}: interaction {interaction_index}/{total_interactions} "
-            f"done mode={last_response.get('retrieval_mode')} "
-            f"trace={last_response.get('trace_id')}",
-        )
-        slow_path_debug: list[DebugRecord] = []
-        if run_slow_path:
-            slow_path_debug = _drain_slow_path(progress, case_id, slow_path_batch_size)
-        debug_record = _interaction_debug_record(
-            case_id=case_id,
-            session_id=session_id,
-            interaction_index=interaction_index,
-            total_interactions=total_interactions,
-            message=message,
-            response=last_response,
-            slow_path=slow_path_debug,
-        )
-        case_debug_records.append(debug_record)
-        if debug_records is not None:
-            debug_records.append(debug_record)
-    if not last_response:
-        raise ValueError("case produced no response")
-    last_response["_eval_debug_records"] = case_debug_records
-    return last_response
-
-
 def _summarize(results: list[CaseResult]) -> dict[str, object]:
     total = len(results)
     passed = sum(1 for result in results if result["passed"])
@@ -400,22 +362,6 @@ def _summarize(results: list[CaseResult]) -> dict[str, object]:
     }
 
 
-def _isolation_base_path(configured: Path | None) -> Path:
-    """Return the base path that per-case isolated databases derive from."""
-    if configured is not None:
-        return configured
-    return Path(tempfile.mkdtemp(prefix="mira-eval-cases-")) / "eval.sqlite3"
-
-
-def _isolate_case_state(base: Path, index: int, progress: ProgressReporter | None) -> None:
-    """Point durable state at a fresh per-case database and empty the vector store."""
-    suffix = base.suffix or ".sqlite3"
-    case_path = base.with_name(f"{base.stem}.case-{index}{suffix}")
-    configure_database(case_path)
-    reset_vector_store()
-    _progress(progress, f"case {index}: isolated db={case_path}")
-
-
 def _filter_cases(cases: list[EvaluationCase], case_ids: list[str] | None) -> list[EvaluationCase]:
     if not case_ids:
         return cases
@@ -429,6 +375,21 @@ def _save_results(cases_path: str, summary: dict[str, object]) -> str:
         json.dumps(summary, indent=2, sort_keys=True, default=str), encoding="utf-8"
     )
     return str(output_path)
+
+
+def _load_prior_results(cases_path: str) -> list[CaseResult]:
+    """Load previously checkpointed case results for a resumed run (empty if none)."""
+    output_path = Path(cases_path).with_suffix(".results.json")
+    if not output_path.is_file():
+        return []
+    try:
+        data = json.loads(output_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return []
+    prior = data.get("results") if isinstance(data, dict) else None
+    if not isinstance(prior, list):
+        return []
+    return [result for result in prior if isinstance(result, dict) and result.get("id")]
 
 
 def _check(name: str, passed: bool, observed: object = None) -> dict[str, object]:
@@ -521,137 +482,6 @@ def _progress(progress: ProgressReporter | None, message: str) -> None:
         progress(message)
 
 
-def _throttle_between_interactions(
-    progress: ProgressReporter | None,
-    delay_s: float,
-    completed_interactions: int,
-) -> None:
-    if delay_s <= 0 or completed_interactions == 0:
-        return
-    _progress(progress, f"throttle: sleeping {delay_s:g}s before next live call")
-    time.sleep(delay_s)
-
-
-def _drain_slow_path(
-    progress: ProgressReporter | None,
-    case_id: str,
-    batch_size: int,
-) -> list[DebugRecord]:
-    from core.memory.slow_path import run_slow_path_batch
-
-    total_processed = 0
-    total_failed = 0
-    debug_batches: list[DebugRecord] = []
-    while True:
-        _progress(progress, f"case {case_id}: slow path claiming up to {batch_size}")
-        results = run_slow_path_batch(batch_size)
-        if not results:
-            _progress(
-                progress,
-                f"case {case_id}: slow path idle processed={total_processed} failed={total_failed}",
-            )
-            return debug_batches
-        processed = len(results)
-        failed = sum(1 for result in results if not result.get("succeeded"))
-        total_processed += processed
-        total_failed += failed
-        debug_batches.append(
-            {
-                "processed": processed,
-                "failed": failed,
-                "observations": [_slow_path_result_debug(result) for result in results],
-            }
-        )
-        _progress(
-            progress,
-            f"case {case_id}: slow path batch processed={processed} failed={failed}",
-        )
-
-
-def _interaction_debug_record(
-    *,
-    case_id: str,
-    session_id: str,
-    interaction_index: int,
-    total_interactions: int,
-    message: str,
-    response: dict[str, object],
-    slow_path: list[DebugRecord],
-) -> DebugRecord:
-    trace_id = str(response.get("trace_id", ""))
-    trace = get_answer_trace(trace_id) if trace_id else None
-    return {
-        "case_id": case_id,
-        "session_id": session_id,
-        "interaction": f"{interaction_index}/{total_interactions}",
-        "message": message,
-        "answer": response.get("answer", ""),
-        "retrieval_mode": response.get("retrieval_mode"),
-        "routing_decision": response.get("routing_decision", {}),
-        "retrieval_trace": response.get("retrieval_trace", {}),
-        "used_session_items": response.get("used_session_items", []),
-        "used_memory_items": response.get("used_memory_items", []),
-        "active_session_items": _compact_session_items(list_active_session_items(session_id)),
-        "trace_id": trace_id,
-        "prompt_sections": trace.get("prompt_sections_json", []) if trace else [],
-        "hydration_ids": trace.get("hydration_ids_json", []) if trace else [],
-        "slow_path": slow_path,
-    }
-
-
-def _slow_path_result_debug(result: dict[str, object]) -> DebugRecord:
-    raw_steps = result.get("steps", [])
-    steps = raw_steps if isinstance(raw_steps, list) else []
-    created = result.get("created_record_ids", {})
-    created_ids = created if isinstance(created, dict) else {}
-    graph_edge_ids = [str(edge_id) for edge_id in _as_list(created_ids.get("graph_edges"))]
-    return {
-        "observation_id": result.get("observation_id"),
-        "succeeded": result.get("succeeded"),
-        "error_message": result.get("error_message"),
-        "created_record_ids": created_ids,
-        "created_graph_edges": _graph_edge_details(graph_edge_ids),
-        "steps": [
-            {
-                "step": step.get("step_name"),
-                "succeeded": step.get("succeeded"),
-                "created": step.get("created_record_ids", []),
-                "error": step.get("error_message"),
-            }
-            for step in steps
-            if isinstance(step, dict)
-        ],
-    }
-
-
-def _compact_session_items(items: list[dict[str, object]]) -> list[DebugRecord]:
-    keys = ("id", "type", "content", "scope", "status", "priority", "explicitness_label")
-    return [{key: item.get(key) for key in keys if item.get(key) is not None} for item in items]
-
-
-def _graph_edge_details(edge_ids: list[str]) -> list[DebugRecord]:
-    if not edge_ids:
-        return []
-    placeholders = ", ".join("?" for _ in edge_ids)
-    with repository_connection() as connection:
-        rows = connection.execute(
-            f"""
-            SELECT graph_edges.id,
-                   graph_edges.edge_type,
-                   graph_edges.confidence,
-                   source.label AS source_label,
-                   target.label AS target_label
-            FROM graph_edges
-            JOIN graph_nodes AS source ON source.id = graph_edges.source_node_id
-            JOIN graph_nodes AS target ON target.id = graph_edges.target_node_id
-            WHERE graph_edges.id IN ({placeholders})
-            ORDER BY graph_edges.created_at ASC
-            """,  # nosec B608
-            tuple(edge_ids),
-        ).fetchall()
-    return [dict(row) for row in rows]
-
-
 def _save_debug_trace(
     cases_path: str,
     summary: dict[str, object],
@@ -698,30 +528,26 @@ def _render_debug_record(index: int, record: DebugRecord) -> list[str]:
         "",
         "### Routing",
         "",
-        _code_block(_json_dump(record.get("routing_decision", {})), "json"),
+        _code_block(json_dump(record.get("routing_decision", {})), "json"),
         "",
         "### Retrieval Trace",
         "",
-        _code_block(_json_dump(record.get("retrieval_trace", {})), "json"),
+        _code_block(json_dump(record.get("retrieval_trace", {})), "json"),
         "",
         "### Active Session Items",
         "",
-        _code_block(_json_dump(record.get("active_session_items", [])), "json"),
+        _code_block(json_dump(record.get("active_session_items", [])), "json"),
         "",
         "### Prompt Sections",
         "",
-        _code_block(_json_dump(record.get("prompt_sections", [])), "json"),
+        _code_block(json_dump(record.get("prompt_sections", [])), "json"),
         "",
         "### Slow Path",
         "",
-        _code_block(_json_dump(record.get("slow_path", [])), "json"),
+        _code_block(json_dump(record.get("slow_path", [])), "json"),
         "",
     ]
     return lines
-
-
-def _json_dump(value: object) -> str:
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
 
 
 def _code_block(value: str, language: str = "") -> str:

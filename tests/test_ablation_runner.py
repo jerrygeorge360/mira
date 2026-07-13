@@ -47,6 +47,10 @@ def _args(tmp_path: Path, cases: Path, *, live: bool = False) -> list[str]:
         str(tmp_path / "results"),
         "--db",
         str(tmp_path / "ablation.sqlite3"),
+        "--components",
+        "session_working_set",
+        "--limit",
+        "1",
     ]
     argv.append("--live" if live else "--stub")
     return argv
@@ -96,9 +100,20 @@ def test_stub_mode_does_not_require_api_key(
 def test_live_mode_fails_clearly_without_api_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """Live mode without a key fails with a clear error and non-zero exit."""
-    monkeypatch.delenv("LLM_API_KEY", raising=False)
-    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    """Live mode without any provider key fails with a clear error and non-zero exit."""
+    # Neutralize .env loading and clear every key the live gate accepts (generic,
+    # legacy DashScope, and the active provider profile) so the check is deterministic.
+    monkeypatch.setattr(run_ablation, "load_dotenv", lambda: None)
+    for var in (
+        "LLM_API_KEY",
+        "DASHSCOPE_API_KEY",
+        "LLM_PROFILE",
+        "LLM_PROVIDER",
+        "DEEPSEEK_API_KEY",
+        "GEMINI_API_KEY",
+        "SILICONFLOW_API_KEY",
+    ):
+        monkeypatch.delenv(var, raising=False)
     cases = _tiny_cases(tmp_path)
 
     exit_code = run_ablation.main(_args(tmp_path, cases, live=True))
@@ -117,8 +132,11 @@ def test_missing_cases_file_fails_clearly(tmp_path: Path) -> None:
 
 
 def test_makefile_target_points_to_runner() -> None:
-    """The Makefile exposes an ablation target wired to the runner."""
+    """The Makefile exposes offline and live ablation targets wired to the runner."""
     makefile = (PROJECT_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "ablation:" in makefile
+    assert "ablation-live:" in makefile
     assert "scripts.run_ablation" in makefile
-    assert "ablation   Run the ablation study and write results" in makefile
+    assert "scripts.run_ablation --live" in makefile
+    assert "RUN_SLOW_PATH" in makefile
+    assert "--run-slow-path" in makefile

@@ -5,7 +5,7 @@ Related issue: ISSUE-123.
 Architecture area: evaluation.
 
 This script downloads one of the official LongMemEval JSON files, rewrites it into the
-repo-native format expected by ``evaluation.longmemeval``, and saves the result under
+repo-native format expected by ``evaluation.benchmarks.longmemeval``, and saves the result under
 ``data/benchmarks/`` by default.
 """
 

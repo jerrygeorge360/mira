@@ -63,6 +63,15 @@ def _fact_status(object_value: str) -> str:
     return str(row["status"])
 
 
+def _reflection_status(reflection_id: str) -> str:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM reflections WHERE id = ?",
+            (reflection_id,),
+        ).fetchone()
+    return str(row["status"])
+
+
 def _processed_at(observation_id: str) -> object:
     with repository_connection() as connection:
         row = connection.execute(
@@ -196,6 +205,61 @@ def test_preference_correction_records_supersession(
     assert len(edges) == 1
 
 
+def test_supersession_invalidates_reflection_built_on_the_old_fact(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Superseding an old fact re-evaluates a reflection derived from its observation.
+
+    The reflection's evidence lives on the *old* observation, not the correction being
+    processed, so this exercises the cross-observation staleness trigger.
+    """
+    from core.memory.reflection import store_reflection_with_evidence
+
+    session_id = create_session("jerry")
+    old_observation = save_observation(session_id, "user", "The project year is 2025.")
+    new_observation = save_observation(
+        session_id, "user", "The project year is now 2030, not 2025 anymore."
+    )
+    enqueue_observation(old_observation)
+    enqueue_observation(new_observation)
+
+    def _facts(observation_id: str, content: str) -> list[dict[str, object]]:
+        year = "2030" if "2030" in content else "2025"
+        return [
+            {
+                "subject": "project year",
+                "predicate": "IS",
+                "object": year,
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            }
+        ]
+
+    monkeypatch.setattr(slow_path, "extract_atomic_facts", _facts)
+    monkeypatch.setattr(slow_path, "extract_entities", lambda text: [])
+
+    # Process the old observation so its 2025 fact exists and is active.
+    run_slow_path_for_observation(old_observation)
+
+    # A reflection grounded only on the old observation's evidence.
+    reflection_id = store_reflection_with_evidence(
+        {
+            "reflection_type": "user_knowledge",
+            "content": "The user is planning around the 2025 project year.",
+            "confidence": 0.8,
+        },
+        [old_observation],
+    )
+    assert _reflection_status(reflection_id) == "active"
+
+    # Processing the correction supersedes the 2025 fact...
+    run_slow_path_for_observation(new_observation)
+
+    assert _fact_status("2025") == "superseded"
+    # ...so the reflection built only on that now-collapsed evidence is invalidated.
+    assert _reflection_status(reflection_id) == "invalidated"
+
+
 def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
     database_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -249,3 +313,78 @@ def test_failed_step_marks_queue_failed_and_retry_is_idempotent(
         == 1
     )
     assert _processed_at(observation_id) is not None
+
+
+def test_llm_verify_changes_validates_ids_and_confidence(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The LLM verifier keeps only valid, confident verdicts and uses observation evidence."""
+    fact = {
+        "id": "new",
+        "subject": "project deadline",
+        "predicate": "is",
+        "object": "Monday",
+        "source_observation_id": "obs_new",
+    }
+    candidates = [
+        {
+            "id": "cand",
+            "subject": "project",
+            "predicate": "has deadline",
+            "object": "Friday",
+            "source_observation_id": "obs_cand",
+        }
+    ]
+
+    def _fake(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert schema_name == "contradiction_supersession_detection"
+        return {
+            "json": {
+                "relations": [
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "cand",
+                        "target_id": "new",
+                        "confidence": 0.9,
+                        "reason": "conflicting dates",
+                    },
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "ghost",
+                        "target_id": "new",
+                        "confidence": 0.9,
+                    },  # unknown id -> filtered
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "cand",
+                        "target_id": "new",
+                        "confidence": 0.1,
+                    },  # below gate -> filtered
+                ]
+            }
+        }
+
+    monkeypatch.setattr(slow_path, "call_qwen_json", _fake)
+
+    changes = slow_path._llm_verify_changes(fact, candidates)
+
+    assert len(changes) == 1
+    assert changes[0]["relation"] == "CONTRADICTS"
+    assert (changes[0]["source_id"], changes[0]["target_id"]) == ("cand", "new")
+    assert changes[0]["evidence"] == ["obs_cand", "obs_new"]
+
+
+def test_agent_self_facts_keeps_only_assistant_attributed() -> None:
+    """A non-user turn contributes only agent self-facts; echoes and world facts are dropped."""
+    facts = [
+        {"subject": "You", "predicate": "prefers", "object": "Rust"},  # echo of the user
+        {"subject": "I", "predicate": "will use", "object": "PostgreSQL"},  # agent commitment
+        {"subject": "the assistant", "predicate": "keeps", "object": "answers concise"},
+        {"subject": "PostgreSQL", "predicate": "is", "object": "a database"},  # third-party
+    ]
+
+    kept = slow_path._agent_self_facts(facts)
+
+    # Self-reference ("I", "the assistant") is re-attributed to the assistant.
+    assert [fact["subject"] for fact in kept] == ["assistant", "assistant"]
+    assert {str(fact["object"]) for fact in kept} == {"PostgreSQL", "answers concise"}
+    # The user echo and the third-party/world assertion are dropped.
+    assert all(str(fact["object"]) not in {"Rust", "a database"} for fact in kept)

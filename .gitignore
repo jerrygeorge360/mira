@@ -27,7 +27,11 @@ build/
 
 # Generated ablation/evaluation outputs
 evaluation/results/
+evaluation/ablation/results/
 *.results.json
+*.debug.md
+*-run.log
+.llm-cache/
 
 # Downloaded benchmark datasets
 data/benchmarks/longmemeval.json

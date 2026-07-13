@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from core.db import chroma
 from core.db.repositories import (
     configure_database,
     create_community_summary,
@@ -19,6 +20,7 @@ from core.db.repositories import (
     create_session,
     save_observation,
 )
+from core.llm.embeddings import embed_text
 from core.retrieval.deep import retrieve_deep
 
 
@@ -39,6 +41,20 @@ def _community(title: str, summary: str, members: list[str]) -> str:
             "member_nodes_json": members,
         }
     )
+
+
+def _reflection(reflection_type: str, content: str, confidence: float) -> str:
+    """Create a reflection and index it in the vector store, as production does."""
+    reflection_id = create_reflection(
+        {
+            "reflection_type": reflection_type,
+            "content": content,
+            "confidence": confidence,
+            "status": "active",
+        }
+    )
+    chroma.add_embedding("reflections", "reflections", reflection_id, embed_text(content))
+    return reflection_id
 
 
 def test_broad_query_retrieves_community_summaries(database_path: Path) -> None:
@@ -81,13 +97,10 @@ def test_reflections_can_be_included(database_path: Path) -> None:
         "SQLite stores durable memory while indexes stay rebuildable.",
         ["node_1", "node_2"],
     )
-    reflection_id = create_reflection(
-        {
-            "reflection_type": "self_knowledge",
-            "content": "The project prefers repository helpers over ad-hoc SQLite access.",
-            "confidence": 0.86,
-            "status": "active",
-        }
+    reflection_id = _reflection(
+        "self_knowledge",
+        "The project prefers repository helpers over ad-hoc SQLite access.",
+        0.86,
     )
 
     results = retrieve_deep("repository helpers and SQLite preferences", None, limit=10)

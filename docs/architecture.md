@@ -392,6 +392,11 @@ MIRA keeps **official benchmark results** separate from **ablation studies**:
 - Ablation studies remove one MIRA component at a time and measure the drop. Example
   components include Session Working Set, keyword retrieval, typed graph traversal,
   foresight records, and reflections/community summaries.
+- Ablation uses the shared case-execution runtime from local eval, but keeps its own
+  comparison table and result files. By default it isolates each config/case pair with a
+  fresh SQLite database and cleared vector store; pass `--shared-db` only for intentional
+  continuity experiments. Add `--run-slow-path` when comparing durable-memory components so
+  every configuration gets the same slow-path ingestion opportunity before scoring.
 - Local regressions run a small isolated suite against a temporary SQLite database and
   deterministic answer stub by default:
 

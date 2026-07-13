@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 from core.db.repositories import configure_database
 from core.observability import configure_logging
-from evaluation.cases import run_evaluation_cases
+from evaluation.local.cases import run_evaluation_cases
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -52,6 +52,7 @@ def _run_cases(args: argparse.Namespace) -> dict[str, object]:
             debug_trace=args.debug_trace,
             case_ids=args.case_id,
             isolate_cases=not args.shared_db,
+            resume=args.resume,
         )
         summary["llm_mode"] = "live"
         return summary
@@ -81,6 +82,7 @@ def _run_cases(args: argparse.Namespace) -> dict[str, object]:
             debug_trace=args.debug_trace,
             case_ids=args.case_id,
             isolate_cases=not args.shared_db,
+            resume=args.resume,
         )
     finally:
         for module, original in zip(patchable_modules, originals, strict=True):
@@ -103,7 +105,7 @@ def _summary_for_terminal(summary: dict[str, object]) -> dict[str, object]:
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cases", default="evaluation/memory_cases.json")
+    parser.add_argument("--cases", default="evaluation/local/memory_cases.json")
     parser.add_argument(
         "--case-id",
         action="append",
@@ -143,6 +145,14 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
         help="Write a Markdown debug trace with routing, prompt sections, and slow-path details.",
     )
     parser.add_argument("--quiet", action="store_true", help="Suppress progress logs on stderr.")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Skip cases already recorded in the results file and continue with the rest. "
+            "Results are checkpointed after every case, so a crashed run can be resumed."
+        ),
+    )
     return parser.parse_args(argv)
 
 

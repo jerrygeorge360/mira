@@ -58,13 +58,29 @@ def test_seeded_aliases_resolve_case_insensitively(database_path: Path) -> None:
     assert canonical_form_for_id("canonical_subjects", first) == "user"
 
 
+def test_leading_determiner_collapses_onto_seeded_alias(database_path: Path) -> None:
+    """ "the speaker" strips its determiner and collapses onto the seeded user bucket.
+
+    Without this, a determiner forks the subject into its own canonical bucket and
+    contradiction/supersession pairing (which requires a shared canonical subject)
+    silently finds no candidates.
+    """
+    user = resolve_canonical_form("canonical_subjects", "user")
+    the_speaker = resolve_canonical_form("canonical_subjects", "the speaker")
+
+    assert the_speaker == user
+    assert canonical_form_for_id("canonical_subjects", the_speaker) == "user"
+
+
 def test_unmapped_form_creates_visible_low_confidence_bucket(database_path: Path) -> None:
     """Unknown wording gets its own reviewable bucket rather than failing silently."""
     prefers = resolve_canonical_form("canonical_predicates", "prefer")
     junk = resolve_canonical_form("canonical_predicates", "prefers_language")
 
     assert junk != prefers
-    assert canonical_form_for_id("canonical_predicates", junk) == "prefers_language"
+    # snake_case normalizes to spaces so "prefers_language" and "prefers language"
+    # share one reviewable bucket instead of forking on punctuation alone.
+    assert canonical_form_for_id("canonical_predicates", junk) == "prefers language"
     with repository_connection() as connection:
         confidence = connection.execute(
             "SELECT confidence FROM canonical_predicates WHERE id = ?", (junk,)

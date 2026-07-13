@@ -18,14 +18,20 @@ This module only decides the mode; it never retrieves records.
 
 from __future__ import annotations
 
+import os
 import re
 
+from core.llm.profiles import active_profile
 from core.llm.prompts import render_prompt
 from core.llm.qwen import LLMClientError, call_qwen_json
 
 Decision = dict[str, object]
 RoutingStrategy = str
-ROUTING_STRATEGIES = frozenset({"fast", "accurate"})
+ROUTING_STRATEGIES = frozenset({"fast", "hybrid", "accurate"})
+
+# Under the "hybrid" strategy, a deterministic route below this confidence (or one
+# flagged ambiguous) defers to the LLM classifier.
+ROUTER_ESCALATION_CONFIDENCE = 0.72
 ROUTER_MODES = frozenset({"general", "quick", "deep", "relational", "auto"})
 
 GENERAL_KNOWLEDGE_INTENT = "general_knowledge"
@@ -189,12 +195,39 @@ def route_retrieval(
     """
     del session_id  # Reserved for future session-aware routing.
     if strategy not in ROUTING_STRATEGIES:
-        raise ValueError("strategy must be one of: fast, accurate")
+        raise ValueError("strategy must be one of: fast, hybrid, accurate")
     if strategy == "accurate":
         decision = _llm_route_retrieval(query)
         if decision is not None:
             return decision
-    return _deterministic_route_retrieval(query)
+        return _deterministic_route_retrieval(query)
+
+    deterministic = _deterministic_route_retrieval(query)
+    # Hybrid keeps the cheap deterministic route unless it is uncertain, then defers to
+    # the LLM classifier -- but only when a provider key is configured, so unit tests
+    # and offline runs stay deterministic and never attempt a network call.
+    if strategy == "hybrid" and _should_escalate_to_llm(deterministic) and _llm_routing_available():
+        llm_decision = _llm_route_retrieval(query)
+        if llm_decision is not None:
+            return llm_decision
+    return deterministic
+
+
+def _should_escalate_to_llm(decision: Decision) -> bool:
+    """A low-confidence or ambiguous deterministic route defers to the LLM classifier."""
+    raw_confidence = decision.get("confidence", 1.0)
+    confidence = float(raw_confidence) if isinstance(raw_confidence, (int, float)) else 0.0
+    return confidence < ROUTER_ESCALATION_CONFIDENCE or bool(
+        decision.get("needs_sufficiency_check")
+    )
+
+
+def _llm_routing_available() -> bool:
+    """True when an LLM provider key is configured, so hybrid escalation can call it."""
+    if os.environ.get("LLM_API_KEY") or os.environ.get("DASHSCOPE_API_KEY"):
+        return True
+    profile = active_profile()
+    return bool(profile and os.environ.get(profile.api_key_env))
 
 
 def _deterministic_route_retrieval(query: str) -> Decision:

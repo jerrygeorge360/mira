@@ -15,7 +15,7 @@ import pytest
 
 from core import agent
 from core.db.repositories import configure_database
-from evaluation.longmemeval import (
+from evaluation.benchmarks.longmemeval import (
     default_scorer,
     import_conversations,
     iter_examples,
@@ -138,7 +138,12 @@ def test_default_scorer_containment_and_overlap() -> None:
 
 def test_shipped_sample_dataset_loads() -> None:
     """The shipped prototype dataset is loadable with sessions."""
-    sample = Path(__file__).resolve().parents[1] / "evaluation" / "sample_longmemeval.json"
+    sample = (
+        Path(__file__).resolve().parents[1]
+        / "evaluation"
+        / "benchmarks"
+        / "sample_longmemeval.json"
+    )
     dataset = load_benchmark_dataset(str(sample))
     examples = iter_examples(dataset)
     assert len(examples) == 2

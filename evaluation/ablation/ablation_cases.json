@@ -1,0 +1,97 @@
+{
+  "name": "MIRA ablation case set (lean, per-layer signals)",
+  "note": "Small, targeted cases for the component ablation -- each is chosen so a specific layer's removal changes the outcome. For broad behavior coverage use evaluation/local/memory_cases.json instead (slower).",
+  "cases": [
+    {
+      "id": "abl-fact-recall",
+      "category": "direct_fact_recall",
+      "interactions": [
+        { "message": "My project deadline is Friday." },
+        { "message": "What is my deadline?" }
+      ],
+      "expect": {
+        "retrieval_mode": "quick",
+        "answer_contains": ["Friday"]
+      }
+    },
+    {
+      "id": "abl-session-constraint",
+      "category": "session_correction_handling",
+      "interactions": [
+        { "message": "Use 2026, not 2025, for all dates." }
+      ],
+      "expect": {
+        "used_session_items_nonempty": true
+      }
+    },
+    {
+      "id": "abl-structured-first",
+      "category": "direct_fact_recall",
+      "interactions": [
+        { "message": "I deploy my application on AWS." },
+        { "message": "What platform do I deploy on?" }
+      ],
+      "expect": {
+        "answer_contains": ["AWS"],
+        "top_retrieved_source": "atomic_facts"
+      }
+    },
+    {
+      "id": "abl-supersession",
+      "category": "supersession_handling",
+      "interactions": [
+        { "message": "I switched from MongoDB to PostgreSQL for storage." },
+        { "message": "What database do I use now?" }
+      ],
+      "expect": {
+        "retrieval_mode": "relational",
+        "retrieved_sources_include": ["graph_edge"],
+        "answer_contains": ["PostgreSQL"]
+      }
+    },
+    {
+      "id": "abl-foresight",
+      "category": "foresight_activation",
+      "interactions": [
+        { "message": "The hackathon submission is due next Friday." },
+        { "message": "Anything time-sensitive I should remember?" }
+      ],
+      "expect": {
+        "answer_contains": ["hackathon"],
+        "retrieved_sources_include": ["foresight_records"]
+      }
+    },
+    {
+      "id": "abl-reflection",
+      "category": "deep_mode_synthesis",
+      "interactions": [
+        { "message": "I always write tests before implementing a feature." },
+        { "message": "I refactor aggressively once the tests pass." },
+        { "message": "I prefer small, frequent commits over one large commit." },
+        { "message": "I review my own diff before every push." },
+        { "message": "Based on my habits, what kind of engineer am I?" }
+      ],
+      "expect": {
+        "retrieval_mode": "deep",
+        "retrieved_sources_include": ["reflection"]
+      }
+    },
+    {
+      "id": "abl-community",
+      "category": "deep_mode_synthesis",
+      "interactions": [
+        { "message": "MIRA uses PostgreSQL for durable storage." },
+        { "message": "MIRA uses Chroma for vector search." },
+        { "message": "MIRA runs a slow path that extracts atomic facts." },
+        { "message": "MIRA's slow path builds a temporal knowledge graph." },
+        { "message": "MIRA retrieval has quick, deep, and relational modes." },
+        { "message": "MIRA's deep mode synthesizes community summaries over the graph." },
+        { "message": "Give me a high-level overview of the MIRA architecture." }
+      ],
+      "expect": {
+        "retrieval_mode": "deep",
+        "retrieved_sources_include": ["community_summary"]
+      }
+    }
+  ]
+}

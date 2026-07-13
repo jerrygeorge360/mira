@@ -1,4 +1,4 @@
-.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search local-eval test test-slack lint format type security check fix precommit clean ablation benchmark benchmark-cost benchmark-subset
+.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api
@@ -27,7 +27,8 @@ help:
 		'  check      Run lint, type, security, and tests' \
 		'  fix        Apply Ruff fixes and formatting' \
 		'  precommit  Run all pre-commit hooks' \
-		'  ablation   Run the ablation study and write results' \
+		'  ablation   Run the ablation study offline (stub) and write results' \
+		'  ablation-live   Run the ablation study against the live provider (LLM_PROFILE)' \
 		'  benchmark-cost     Estimate benchmark cost without paid calls' \
 		'  benchmark          Run official-capable benchmark with budget cap' \
 		'  benchmark-subset   Run budget-limited benchmark subset' \
@@ -38,10 +39,19 @@ install:
 	$(PYTHON) -m pip install -r requirements.txt
 
 run:
-	$(PYTHON) -m ui.app
+	PYTHONPATH=. $(PYTHON) -m streamlit run ui/app.py
 
 api:
 	uvicorn api.main:app --reload --host 0.0.0.0 --port $${PORT:-8000}
+
+frontend-install:
+	cd frontend && npm install
+
+frontend-dev:
+	cd frontend && npm run dev
+
+frontend-build:
+	cd frontend && npm run build
 
 slack:
 	$(PYTHON) -m slack.bot
@@ -77,6 +87,9 @@ precommit:
 ablation:
 	$(PYTHON) -m scripts.run_ablation --stub --out evaluation/results
 
+ablation-live:
+	$(PYTHON) -m scripts.run_ablation --live --out $${OUT:-evaluation/results} $${CASES:+--cases $$CASES} $${COMPONENTS:+--components $$COMPONENTS} $${LIMIT:+--limit $$LIMIT} $${RUN_SLOW_PATH:+--run-slow-path} $${SLOW_PATH_BATCH_SIZE:+--slow-path-batch-size $$SLOW_PATH_BATCH_SIZE} $${DELAY_S:+--delay-s $$DELAY_S} $${SHARED_DB:+--shared-db} $${RESUME:+--resume} $${PARALLEL:+--parallel $$PARALLEL} $${NO_CACHE:+--no-cache}
+
 worker:
 	$(PYTHON) -m scripts.run_worker --batch-size $${BATCH_SIZE:-20} --poll-interval $${POLL_INTERVAL:-2}
 
@@ -93,7 +106,7 @@ memory-search:
 	$(PYTHON) -m scripts.search_memory "$${QUERY:?set QUERY='your search text'}" --limit $${LIMIT:-5} $${REBUILD:+--rebuild}
 
 local-eval:
-	$(PYTHON) -m scripts.run_local_eval --cases $${CASES:-evaluation/memory_cases.json}
+	$(PYTHON) -m scripts.run_local_eval --cases $${CASES:-evaluation/local/memory_cases.json}
 
 benchmark-cost:
 	$(PYTHON) -m scripts.run_benchmark \
@@ -113,6 +126,7 @@ benchmark:
 		--budget-usd $${BUDGET_USD:-15} \
 		--model $${MODEL:-qwen-plus} \
 		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		$${PARALLEL:+--parallel $$PARALLEL} $${RESUME:+--resume} $${CACHE:+--cache} \
 		--out evaluation/results/benchmarks
 
 benchmark-subset:
@@ -126,6 +140,7 @@ benchmark-subset:
 		--budget-usd $${BUDGET_USD:-15} \
 		--model $${MODEL:-qwen-plus} \
 		--judge-model $${JUDGE_MODEL:-qwen-plus} \
+		$${PARALLEL:+--parallel $$PARALLEL} $${RESUME:+--resume} $${CACHE:+--cache} \
 		--out evaluation/results/benchmarks
 
 clean:
