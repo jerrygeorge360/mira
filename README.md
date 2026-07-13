@@ -350,6 +350,30 @@ Useful notes:
 - By default, each case gets an isolated SQLite database, cleared vector store, and evaluation
   workspace.
 
+### Latest local evaluation story
+
+The latest saved local run is in `evaluation/local/memory_cases.results.json`. It passed 12 of
+13 cases, or 92.31%. The run is useful because it checks both final answers and mechanism
+evidence such as routing mode, retrieved sources, session items, and graph edges.
+
+| Area | Passed | Total | What it showed |
+| --- | ---: | ---: | --- |
+| Direct fact recall | 1 | 1 | Quick retrieval can recall a simple saved fact. |
+| Session correction handling | 1 | 1 | Direct corrections enter the Session Working Set with the right labels. |
+| Cross-session recall | 1 | 1 | A later session can recover relevant project context without pulling in unrelated deadline memory. |
+| Supersession handling | 1 | 1 | A migration from MongoDB to PostgreSQL produced relational evidence and a `SUPERSEDED_BY` path. |
+| Foresight activation | 1 | 1 | Time-sensitive hackathon memory was retrieved from `foresight_records`. |
+| Deep mode synthesis | 3 | 3 | Deep retrieval surfaced reflections, community summaries, and broader identity/context records. |
+| Retrieval sufficiency | 1 | 1 | The system could answer from available memory when retrieval was sufficient. |
+| Routing intent | 2 | 2 | General questions bypassed memory, while personal-memory questions used memory. |
+| Contradiction handling | 1 | 2 | Preference correction worked; one deadline-conflict case still needs stricter `CONTRADICTS` behavior. |
+| **Total** | **12** | **13** | **The core memory loop works, with contradiction classification still the clearest gap.** |
+
+The most important signal is not only the pass rate. The mechanism checks show that the system is
+not just getting lucky from prompt text: relational retrieval returned graph evidence, Deep Mode
+returned synthesis records, general knowledge avoided memory, and session corrections were visible
+before waiting on long-term memory.
+
 ## Ablation
 
 Offline ablation:
@@ -391,6 +415,32 @@ python -m scripts.run_ablation \
 
 By default, ablation isolates each config/case pair. Use `--shared-db` only when you intentionally
 want continuity inside a run.
+
+### Latest ablation story
+
+The latest saved ablation run is in `evaluation/results/ablation_results.json`. It was a live run
+with slow-path processing enabled. The full system passed all 7 ablation cases. Removing individual
+components caused targeted drops, which is the result you want from an ablation: each subsystem
+should matter for the behavior it claims to support.
+
+| Configuration | Disabled component(s) | Passed | Total | Pass rate | Readout |
+| --- | --- | ---: | ---: | ---: | --- |
+| Full system | none | 7 | 7 | 1.00 | Baseline memory stack passed every targeted case. |
+| Without Session Working Set | session working set | 6 | 7 | 0.86 | Immediate session correction handling lost one case. |
+| Without Relational Mode | relational mode | 6 | 7 | 0.86 | Supersession/migration evidence weakened when graph traversal was disabled. |
+| Without Deep Mode | deep mode | 5 | 7 | 0.71 | Reflection and community-summary synthesis failed. |
+| Without Foresight | foresight | 6 | 7 | 0.86 | Time-sensitive recall degraded. |
+| Without Reflection | reflection | 6 | 7 | 0.86 | User-habit synthesis lost direct reflection support. |
+| Without Community Summaries | community summaries | 5 | 7 | 0.71 | Broad architecture synthesis degraded. |
+| Without Correction/Supersession | contradiction and supersession logic | 6 | 7 | 0.86 | Migration/correction semantics weakened. |
+| Vector-only baseline | graph, deep mode, foresight, reflection, community summaries, session working set | 2 | 7 | 0.29 | Flat vector recall kept simple facts but lost most architecture-specific behavior. |
+| Flat-memory baseline | flat memory mode | 6 | 7 | 0.86 | Mostly held up, but structured-first recall lost evidence quality. |
+| Full-transcript baseline | transcript-only baseline | 1 | 7 | 0.14 | Raw transcript context did not replace structured memory. |
+
+The ablation result supports the architecture story: simple fact recall can survive with less
+machinery, but correction handling, relational migration, foresight, and synthesis depend on the
+specialized memory layers. The weak baselines are also useful: they show why MIRA is not just
+"put everything in a vector store" or "paste the whole transcript."
 
 ## Benchmark
 
