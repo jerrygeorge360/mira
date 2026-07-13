@@ -497,21 +497,34 @@ Docker is optional, but it gives the team a repeatable clean-clone environment.
 ```bash
 cp .env.example .env
 docker compose build
-docker compose run --rm app python -m scripts.seed_demo --reset
-docker compose up app
+docker compose run --rm devtools python -m scripts.seed_demo \
+  --workspace-id workspace_legacy_default --reset
+docker compose up api worker frontend
 ```
 
-Then open <http://localhost:8501>.
+Then open <http://localhost:5173>. The API is available at <http://localhost:8000>.
 
-The Compose app service mounts durable local data into `.docker-data/`:
+If those ports are already in use, override them without editing Compose:
+
+```bash
+API_PORT=18000 FRONTEND_PORT=15173 docker compose up api worker frontend
+```
+
+Then open <http://localhost:15173>. For GitHub OAuth on custom ports, update the OAuth callback
+URL in your GitHub OAuth app to match `http://localhost:18000/auth/github/callback`.
+
+The Compose API and worker services mount durable local data into `.docker-data/`:
 
 - SQLite: `.docker-data/sqlite/mira.db` mounted as `MIRA_DB_PATH=/data/sqlite/mira.db`
 - Chroma: `.docker-data/chroma` mounted as `CHROMA_DB_PATH=/data/chroma`
 
+The worker is intentionally a separate container. The API queues memory work quickly; the worker
+drains the slow path and builds durable memory artifacts.
+
 Run checks inside the container:
 
 ```bash
-docker compose run --rm app make check
+docker compose run --rm devtools make check
 ```
 
 ## Makefile commands
