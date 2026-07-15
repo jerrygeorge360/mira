@@ -51,7 +51,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   );
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
-  const [activeThread, setActiveThread] = useState('nova');
+  const [activeThread, setActiveThread] = useState('new');
   const [useRealAgent, setUseRealAgent] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastTraceId, setLastTraceId] = useState<string | null>(null);

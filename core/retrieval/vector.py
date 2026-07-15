@@ -7,9 +7,12 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import logging
+
 from core.db import chroma
 from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
+from core.observability import log_event
 
 DEFAULT_COLLECTIONS = ("observations", "reflections", "community_summaries")
 
@@ -34,6 +37,17 @@ def vector_search(
                 collection, embedding, top_k=limit, workspace_id=workspace_id
             )
         except ValueError:
+            continue
+        except Exception as error:  # noqa: BLE001 - Chroma is a recoverable retrieval source
+            log_event(
+                "vector_search_failed",
+                "vector search failed; continuing without this collection",
+                level=logging.WARNING,
+                collection=collection,
+                workspace_id=workspace_id,
+                error_type=type(error).__name__,
+                error_message=str(error) or error.__class__.__name__,
+            )
             continue
         for pointer in pointers:
             item = dict(pointer)

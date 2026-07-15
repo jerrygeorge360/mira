@@ -16,7 +16,7 @@ from api.schemas.sessions import (
     SessionWorkingSetResponse,
 )
 from core.db.repositories import bind_workspace, list_observations, message_counts_by_session
-from core.session.working_set import list_active_session_items
+from core.session.read_models import active_session_items, list_session_working_set_read_model
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -95,16 +95,17 @@ def get_working_set_route(
 ) -> SessionWorkingSetResponse:
     """Return active Session Working Set state grouped for UI clients."""
     _get_session_or_404(session_id, auth.context.workspace_id)
-    items = list_active_session_items(session_id)
+    items = list_session_working_set_read_model(session_id, workspace_id=auth.context.workspace_id)
+    active_items = active_session_items(items)
     return SessionWorkingSetResponse(
         session_id=session_id,
-        active_goals=_items_of_type(items, "current_goal"),
-        corrections=_items_of_type(items, "correction"),
-        constraints=_items_of_type(items, "active_constraint"),
-        unresolved_questions=_items_of_type(items, "open_question"),
+        active_goals=_items_of_type(active_items, "current_goal"),
+        corrections=_items_of_type(active_items, "correction"),
+        constraints=_items_of_type(active_items, "active_constraint"),
+        unresolved_questions=_items_of_type(active_items, "open_question"),
         provisional_decisions=[
             item
-            for item in items
+            for item in active_items
             if item.get("type") == "decision" and item.get("status") == "provisional"
         ],
         items=items,

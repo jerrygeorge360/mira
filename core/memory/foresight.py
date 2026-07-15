@@ -40,8 +40,45 @@ DETECTABLE_STATUSES = frozenset({"pending", "active"})
 TERMINAL_STATUSES = frozenset({"resolved", "expired", "cancelled"})
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
+DATE_PATTERN = re.compile(r"\b(?:20\d{2}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b")
 STOPWORDS = frozenset(
     {"a", "an", "the", "is", "are", "do", "did", "i", "my", "me", "to", "of", "for", "on", "when"}
+)
+FUTURE_MARKERS = frozenset(
+    {
+        "after",
+        "before",
+        "by",
+        "deadline",
+        "due",
+        "event",
+        "exam",
+        "later",
+        "next",
+        "remind",
+        "schedule",
+        "scheduled",
+        "soon",
+        "submit",
+        "tomorrow",
+        "upcoming",
+        "until",
+        "week",
+        "month",
+        "quarter",
+    }
+)
+NON_FORESIGHT_MARKERS = frozenset(
+    {
+        "prefer",
+        "prefers",
+        "preference",
+        "detailed responses",
+        "concise responses",
+        "answer in",
+        "respond in",
+        "use detailed",
+    }
 )
 
 
@@ -177,12 +214,16 @@ def _normalize_detected(
     content = _string(raw_record.get("content"))
     if not content:
         return None
+    reason = _string(raw_record.get("reason"))
+    if not _is_future_relevant(content, reason):
+        LOGGER.info("Rejected non-future foresight candidate: %s", content)
+        return None
     status = _string(raw_record.get("status"))
     if status not in DETECTABLE_STATUSES:
         status = "pending"
     return {
         "content": content,
-        "reason": _string(raw_record.get("reason")),
+        "reason": reason,
         "status": status,
         "always_inject": bool(raw_record.get("always_inject")),
         "source_observation_id": observation_id,
@@ -286,6 +327,24 @@ def _evidence_with_ambient(content: str, ambient_context: dict[str, object]) -> 
     return f"{content}\n\n(Current date/time: {ambient_now})"
 
 
+def _is_future_relevant(content: str, reason: str) -> bool:
+    text = _normalize_text(f"{content} {reason}")
+    if any(marker in text for marker in NON_FORESIGHT_MARKERS) and not _has_future_trigger(text):
+        return False
+    return _has_future_trigger(text)
+
+
+def _has_future_trigger(text: str) -> bool:
+    tokens = _tokens(text)
+    phrase_markers = {marker for marker in FUTURE_MARKERS if " " in marker}
+    word_markers = FUTURE_MARKERS - phrase_markers
+    return (
+        DATE_PATTERN.search(text) is not None
+        or bool(tokens & word_markers)
+        or any(marker in text for marker in phrase_markers)
+    )
+
+
 def _parse(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
@@ -309,6 +368,10 @@ def _tokens(value: str) -> set[str]:
         for token in TOKEN_PATTERN.findall(value.casefold())
         if len(token) > 1 and token not in STOPWORDS
     }
+
+
+def _normalize_text(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _string(value: object) -> str:

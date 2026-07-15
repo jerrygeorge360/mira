@@ -212,6 +212,66 @@ def test_deepseek_auto_mode_uses_json_object_response_format(
 
     assert response["json"] == {"facts": []}
     assert captured_payload["response_format"] == {"type": "json_object"}
+    assert captured_payload["max_tokens"] == qwen.DEFAULT_LLM_JSON_MAX_TOKENS
+
+
+def test_deepseek_json_schema_mode_still_uses_documented_json_object_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DeepSeek does not support OpenAI response_format=json_schema."""
+    captured_payload: dict[str, object] = {}
+
+    def fake_post_chat_completion(
+        payload: dict[str, object],
+        timeout_s: int,
+    ) -> dict[str, object]:
+        captured_payload.update(payload)
+        return _chat_response('{"facts": []}', model="deepseek-chat")
+
+    monkeypatch.setenv(qwen.LLM_API_KEY_ENV, "test-key")
+    monkeypatch.setenv(qwen.LLM_PROVIDER_ENV, "deepseek")
+    monkeypatch.setenv(qwen.LLM_RESPONSE_FORMAT_ENV, "json_schema")
+    monkeypatch.setattr(qwen, "_post_chat_completion", fake_post_chat_completion)
+
+    response = qwen.call_qwen_json(
+        [{"role": "user", "content": "extract facts"}],
+        "atomic_fact_extraction",
+    )
+
+    assert response["json"] == {"facts": []}
+    assert captured_payload["response_format"] == {"type": "json_object"}
+
+
+def test_json_calls_include_schema_example_and_configurable_max_tokens(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Structured JSON calls include provider guidance recommended by DeepSeek."""
+    captured_payload: dict[str, object] = {}
+
+    def fake_post_chat_completion(
+        payload: dict[str, object],
+        timeout_s: int,
+    ) -> dict[str, object]:
+        captured_payload.update(payload)
+        return _chat_response('{"facts": []}', model="deepseek-chat")
+
+    monkeypatch.setenv(qwen.LLM_API_KEY_ENV, "test-key")
+    monkeypatch.setenv(qwen.LLM_PROVIDER_ENV, "deepseek")
+    monkeypatch.setenv(qwen.LLM_JSON_MAX_TOKENS_ENV, "4096")
+    monkeypatch.setattr(qwen, "_post_chat_completion", fake_post_chat_completion)
+
+    qwen.call_qwen_json(
+        [{"role": "user", "content": "extract facts"}],
+        "atomic_fact_extraction",
+    )
+
+    assert captured_payload["max_tokens"] == 4096
+    messages = captured_payload["messages"]
+    assert isinstance(messages, list)
+    system_message = messages[0]
+    assert isinstance(system_message, dict)
+    assert "JSON" in str(system_message["content"])
+    assert "Example JSON output" in str(system_message["content"])
 
 
 def test_siliconflow_auto_mode_uses_json_schema_response_format(

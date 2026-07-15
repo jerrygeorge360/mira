@@ -162,6 +162,8 @@ LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 ```
 
 Other supported profiles include `dashscope`, `siliconflow`, and `gemini`.
+For DeepSeek, `auto` uses DeepSeek's documented JSON object mode and MIRA validates
+the required schema locally.
 
 Check provider wiring:
 

@@ -5,11 +5,18 @@ from __future__ import annotations
 from fastapi import APIRouter, Query
 
 from api.auth import WorkspaceAuth
-from api.schemas.memory import ItemsResponse, MemoryGraphResponse
+from api.schemas.memory import (
+    ItemsResponse,
+    MemoryGraphResponse,
+    MemoryHealthResponse,
+    MemoryLifecycleResponse,
+)
 from core.memory.read_models import (
     get_memory_graph_read_model,
+    get_memory_health_read_model,
     list_community_summaries_read_model,
     list_foresight_read_model,
+    list_memory_lifecycle_read_model,
     list_reflections_read_model,
 )
 
@@ -27,6 +34,30 @@ def get_memory_graph(
         entity=entity, limit=limit, workspace_id=auth.context.workspace_id
     )
     return MemoryGraphResponse(nodes=graph["nodes"], edges=graph["edges"])
+
+
+@router.get("/memory/lifecycle", response_model=MemoryLifecycleResponse)
+def get_memory_lifecycle(
+    auth: WorkspaceAuth,
+    session_id: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+) -> MemoryLifecycleResponse:
+    """Return recent fast-path and slow-path lifecycle evidence."""
+    return MemoryLifecycleResponse(
+        items=list_memory_lifecycle_read_model(
+            session_id=session_id,
+            limit=limit,
+            workspace_id=auth.context.workspace_id,
+        )
+    )
+
+
+@router.get("/memory/health", response_model=MemoryHealthResponse)
+def get_memory_health(auth: WorkspaceAuth) -> MemoryHealthResponse:
+    """Return tier counts, status counts, and recent retention transitions."""
+    return MemoryHealthResponse(
+        health=get_memory_health_read_model(workspace_id=auth.context.workspace_id)
+    )
 
 
 @router.get("/foresight", response_model=ItemsResponse)

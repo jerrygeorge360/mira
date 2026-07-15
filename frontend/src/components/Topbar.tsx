@@ -2,13 +2,15 @@ import { useApp } from '../context/AppContext';
 
 const VIEW_TITLES: Record<string, string> = {
   Chat: 'Chat',
-  Graph: 'Memory Graph',
-  'Working Set': 'Session Working Set',
-  Retrieval: 'Retrieval Trace',
+  'Memory Graph': 'Memory Graph',
+  'Session Working Set': 'Session Working Set',
+  'Memory Pipeline': 'Memory Pipeline',
+  'Memory Health': 'Memory Health',
+  'Retrieval Trace': 'Retrieval Trace',
   Reflections: 'Reflections',
   Communities: 'Communities',
-  Timeline: 'Foresight Timeline',
-  Results: 'Evaluation Results',
+  Foresight: 'Foresight',
+  Evaluation: 'Evaluation',
 };
 
 export default function Topbar() {

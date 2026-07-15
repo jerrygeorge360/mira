@@ -231,3 +231,38 @@ def test_detect_foresight_grounds_records_in_ambient(
 
     record_id = create_foresight(records[0])
     assert _status(record_id) == "active"
+
+
+def test_detect_foresight_rejects_standing_response_preferences(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Answer-style preferences belong in working set, not foresight."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "Prefer detailed responses.")
+
+    def _fake(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert schema_name == "foresight_detection"
+        return {
+            "json": {
+                "foresight": [
+                    {
+                        "content": "Prefer detailed, thorough responses rather than concise ones.",
+                        "reason": "User stated an answer-style preference.",
+                        "status": "active",
+                        "always_inject": False,
+                    }
+                ]
+            }
+        }
+
+    monkeypatch.setattr(foresight, "call_qwen_json", _fake)
+
+    assert (
+        detect_foresight(
+            observation_id,
+            "Prefer detailed responses.",
+            {"current_time": "2026-06-24T09:00:00+00:00"},
+        )
+        == []
+    )
