@@ -179,6 +179,33 @@ def test_unsupported_personality_reflection_is_rejected(
     assert synthesize_reflections([observation_id]) == []
 
 
+def test_world_knowledge_reflection_is_rejected(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ordinary world knowledge belongs in facts/answers, not reflections."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(
+        session_id, "user", "The principles of democracy include voting and representation."
+    )
+    monkeypatch.setattr(
+        reflection,
+        "call_qwen_json",
+        _qwen_reflections(
+            [
+                {
+                    "reflection_type": "world_knowledge",
+                    "content": "The principles of democracy include voting and representation.",
+                    "confidence": 0.9,
+                    "evidence_ids": [observation_id],
+                }
+            ]
+        ),
+    )
+
+    assert synthesize_reflections([observation_id]) == []
+
+
 def test_store_rejects_unsourced_reflection(database_path: Path) -> None:
     """Persistence refuses reflections without an existing evidence observation."""
     with pytest.raises(ValueError, match="source-backed"):

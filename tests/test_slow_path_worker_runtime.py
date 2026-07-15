@@ -73,6 +73,15 @@ def _queue_status(observation_id: str) -> str:
     return str(row["status"])
 
 
+def _queue_last_error(observation_id: str) -> str | None:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT last_error FROM slow_path_queue WHERE observation_id = ?",
+            (observation_id,),
+        ).fetchone()
+    return str(row["last_error"]) if row and row["last_error"] is not None else None
+
+
 def _fact_count(observation_id: str) -> int:
     with repository_connection() as connection:
         row = connection.execute(
@@ -121,7 +130,7 @@ def test_empty_queue_is_safe(database_path: Path) -> None:
 def test_failed_observation_is_marked_failed(
     database_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An orchestrator failure leaves the queue item failed, not done."""
+    """An extraction failure is visible as a failed, retryable queue item."""
     session_id = create_session("jerry")
     observation_id = _enqueue(session_id, "trigger a failure")
 
@@ -135,6 +144,7 @@ def test_failed_observation_is_marked_failed(
 
     assert summary["failed"] == 1
     assert _queue_status(observation_id) == "failed"
+    assert _queue_last_error(observation_id) == "extraction boom"
 
 
 def test_one_bad_item_does_not_stop_batch(

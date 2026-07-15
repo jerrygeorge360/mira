@@ -3,9 +3,11 @@ import {
   Network,
   Layers,
   Search,
+  Activity,
+  HeartPulse,
   Sparkles,
   Users,
-  Timeline as TimelineIcon,
+  Clock3,
   CheckCircle,
   PanelLeftClose,
   PanelLeftOpen,
@@ -19,21 +21,20 @@ import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import BrandMark from './BrandMark';
 
-// lucide doesn't export Timeline – use a proxy
-const TimelineIco = (TimelineIcon as unknown) as React.FC<{ size?: number }>;
-
 const PRIMARY_VIEWS = [
   { label: 'Chat', icon: <MessageSquare size={16} /> },
 ] as const;
 
 const MEMORY_VIEWS = [
-  { label: 'Graph', icon: <Network size={16} /> },
-  { label: 'Working Set', icon: <Layers size={16} /> },
-  { label: 'Retrieval', icon: <Search size={16} /> },
+  { label: 'Memory Graph', icon: <Network size={16} /> },
+  { label: 'Session Working Set', icon: <Layers size={16} /> },
+  { label: 'Memory Pipeline', icon: <Activity size={16} /> },
+  { label: 'Memory Health', icon: <HeartPulse size={16} /> },
+  { label: 'Retrieval Trace', icon: <Search size={16} /> },
   { label: 'Reflections', icon: <Sparkles size={16} /> },
   { label: 'Communities', icon: <Users size={16} /> },
-  { label: 'Timeline', icon: <TimelineIco size={16} /> },
-  { label: 'Results', icon: <CheckCircle size={16} /> },
+  { label: 'Foresight', icon: <Clock3 size={16} /> },
+  { label: 'Evaluation', icon: <CheckCircle size={16} /> },
 ] as const;
 
 export default function Rail() {
@@ -70,24 +71,31 @@ export default function Rail() {
     <nav className={`rail${railCollapsed ? ' collapsed' : ''}`} aria-label="Navigation rail">
       {/* top row */}
       <div className="rail-top">
-        {!railCollapsed && (
-          <button className="rail-brand" onClick={() => setPage('landing')} title="Back to landing">
-            <BrandMark className="brand-mark" size={21} />
-            <span>MIRA</span>
+        {railCollapsed ? (
+          <button
+            className="rail-icon-btn rail-expand-btn"
+            onClick={() => setRailCollapsed(false)}
+            title="Expand sidebar"
+            aria-label="Expand sidebar"
+          >
+            <PanelLeftOpen size={16} />
           </button>
+        ) : (
+          <>
+            <button className="rail-brand" onClick={() => setPage('landing')} title="Back to landing">
+              <BrandMark className="brand-mark" size={21} />
+              <span>MIRA</span>
+            </button>
+            <button
+              className="rail-icon-btn"
+              onClick={() => setRailCollapsed(true)}
+              title="Collapse sidebar"
+              aria-label="Collapse sidebar"
+            >
+              <PanelLeftClose size={16} />
+            </button>
+          </>
         )}
-        {railCollapsed && (
-          <button className="rail-brand" style={{ justifyContent: 'center', width: '100%' }} onClick={() => setPage('landing')}>
-            <BrandMark className="brand-mark" size={21} title="MIRA" />
-          </button>
-        )}
-        <button
-          className="rail-icon-btn"
-          onClick={() => setRailCollapsed(!railCollapsed)}
-          title={railCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {railCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-        </button>
       </div>
 
       {/* new chat */}

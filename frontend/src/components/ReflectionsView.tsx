@@ -10,7 +10,7 @@ export default function ReflectionsView() {
     <div>
       <div className="view-header">
         <h2>Reflections</h2>
-        <p>Gated higher-order patterns synthesized from accumulated evidence</p>
+        <p>Higher-order patterns synthesized from evidence. Facts, deadlines, and preferences belong in their own memory surfaces.</p>
       </div>
       {items.length === 0 ? (
         <ViewStatus
@@ -27,9 +27,13 @@ export default function ReflectionsView() {
             ].filter((t) => t && t !== 'active');
             return (
               <div key={i} className="reflection-card">
-                <div className="reflection-time">{formatTime(r.created_at)}</div>
+                <div className="reflection-kind">Pattern · {String(r.reflection_type ?? '').replace(/_/g, ' ')}</div>
                 <div className="reflection-insight">{String(r.content ?? '')}</div>
+                <div className="reflection-boundary">
+                  Reflection means a cross-turn pattern, not a single extracted fact or standing instruction.
+                </div>
                 <div className="reflection-tags">
+                  <span className="chip">{formatTime(r.created_at)}</span>
                   {tags.map((tag, j) => (
                     <span key={j} className="chip chip-accent">
                       {tag}

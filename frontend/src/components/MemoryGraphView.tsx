@@ -1,3 +1,4 @@
+import { useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import GraphView, { type GraphData } from './GraphView';
@@ -13,6 +14,16 @@ const TYPE_COLORS: Record<string, string> = {
 };
 
 type Row = Record<string, unknown>;
+type EdgeCategory = 'all' | 'change' | 'conflict' | 'evidence' | 'causal' | 'other';
+
+const EDGE_CATEGORIES: { id: EdgeCategory; label: string; types?: string[] }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'change', label: 'Change', types: ['SUPERSEDED_BY'] },
+  { id: 'conflict', label: 'Conflict', types: ['CONTRADICTS'] },
+  { id: 'evidence', label: 'Evidence', types: ['MENTIONS', 'DERIVED_FROM'] },
+  { id: 'causal', label: 'Causal', types: ['CAUSED_BY', 'LEADS_TO'] },
+  { id: 'other', label: 'Other' },
+];
 
 function toGraphData(nodes: Row[], edges: Row[]): GraphData {
   return {
@@ -27,20 +38,62 @@ function toGraphData(nodes: Row[], edges: Row[]): GraphData {
         headline: String(n.source_table ?? type),
         summary: '',
         status: '',
+        sourceTable: maybeString(n.source_table),
+        sourceId: maybeString(n.source_id),
+        createdAt: maybeString(n.created_at),
+        metadata: objectRecord(n.metadata),
       };
     }),
     links: edges.map((e) => ({
+      id: String(e.id ?? `${e.source_node_id ?? e.source}-${e.target_node_id ?? e.target}-${e.edge_type ?? e.type}`),
       source: String(e.source_node_id ?? e.source),
       target: String(e.target_node_id ?? e.target),
       type: String(e.edge_type ?? ''),
+      confidence: parseConfidence(e.confidence),
+      status: String(e.status ?? (e.invalidated_at ? 'invalidated' : 'active')),
+      sourceObservations: Array.isArray(e.source_observations)
+        ? e.source_observations.map(String)
+        : [],
+      validFrom: maybeString(e.valid_from),
+      validUntil: maybeString(e.valid_until),
+      createdAt: maybeString(e.created_at),
+      invalidatedAt: maybeString(e.invalidated_at),
+      metadata: objectRecord(e.metadata),
     })),
   };
 }
 
 export default function MemoryGraphView() {
+  const [nodeTypeFilter, setNodeTypeFilter] = useState<string>('all');
+  const [edgeTypeFilter, setEdgeTypeFilter] = useState<string>('all');
+  const [edgeCategoryFilter, setEdgeCategoryFilter] = useState<EdgeCategory>('all');
   const { data, status } = useLiveData(() => api.memoryGraph({ limit: 150 }), []);
-  const nodes = (data?.nodes ?? []) as Row[];
-  const edges = (data?.edges ?? []) as Row[];
+  const nodes = useMemo(() => (data?.nodes ?? []) as Row[], [data]);
+  const edges = useMemo(() => (data?.edges ?? []) as Row[], [data]);
+  const nodeTypes = useMemo(
+    () => Array.from(new Set(nodes.map((node) => String(node.node_type ?? 'entity')))).sort(),
+    [nodes],
+  );
+  const edgeTypes = useMemo(
+    () => Array.from(new Set(edges.map((edge) => String(edge.edge_type ?? 'RELATED')))).sort(),
+    [edges],
+  );
+  const filteredNodes = useMemo(
+    () => nodes.filter((node) => nodeTypeFilter === 'all' || String(node.node_type ?? 'entity') === nodeTypeFilter),
+    [nodes, nodeTypeFilter],
+  );
+  const filteredEdges = useMemo(() => {
+    const visibleIds = new Set(filteredNodes.map((node) => String(node.id)));
+    return edges.filter((edge) => {
+      const source = String(edge.source_node_id ?? edge.source);
+      const target = String(edge.target_node_id ?? edge.target);
+      const type = String(edge.edge_type ?? 'RELATED');
+      return visibleIds.has(source)
+        && visibleIds.has(target)
+        && matchesEdgeCategory(type, edgeCategoryFilter)
+        && (edgeTypeFilter === 'all' || type === edgeTypeFilter);
+    });
+  }, [edges, filteredNodes, edgeCategoryFilter, edgeTypeFilter]);
 
   return (
     <div>
@@ -68,9 +121,109 @@ export default function MemoryGraphView() {
               </div>
             ))}
           </div>
-          <GraphView height={460} data={toGraphData(nodes, edges)} />
+          <div className="graph-filter-panel">
+            <div className="graph-filter-group">
+              <span>Nodes</span>
+              <button
+                type="button"
+                className={nodeTypeFilter === 'all' ? 'active' : ''}
+                onClick={() => setNodeTypeFilter('all')}
+              >
+                All
+              </button>
+              {nodeTypes.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  className={nodeTypeFilter === type ? 'active' : ''}
+                  onClick={() => setNodeTypeFilter(type)}
+                >
+                  {type.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+            <div className="graph-filter-group">
+              <span>Relationship groups</span>
+              {EDGE_CATEGORIES.map((category) => (
+                <button
+                  type="button"
+                  key={category.id}
+                  className={edgeCategoryFilter === category.id ? 'active' : ''}
+                  onClick={() => {
+                    setEdgeCategoryFilter(category.id);
+                    setEdgeTypeFilter('all');
+                  }}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+            <div className="graph-filter-group">
+              <span>Edge type</span>
+              <button
+                type="button"
+                className={edgeTypeFilter === 'all' ? 'active' : ''}
+                onClick={() => setEdgeTypeFilter('all')}
+              >
+                All
+              </button>
+              {edgeTypes.map((type) => (
+                <button
+                  type="button"
+                  key={type}
+                  className={edgeTypeFilter === type ? 'active' : ''}
+                  onClick={() => setEdgeTypeFilter(type)}
+                >
+                  {type.replace('_', ' ')}
+                </button>
+              ))}
+            </div>
+            <div className="graph-filter-count">
+              Showing {filteredNodes.length} nodes · {filteredEdges.length} edges
+            </div>
+          </div>
+          {filteredNodes.length === 0 ? (
+            <ViewStatus
+              status="live"
+              emptyLabel="No graph records match this filter."
+              hint="Broaden the node or edge filter to inspect more memory."
+            />
+          ) : (
+            <GraphView height={460} data={toGraphData(filteredNodes, filteredEdges)} />
+          )}
         </>
       )}
     </div>
   );
+}
+
+function parseConfidence(value: unknown): number | undefined {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : undefined;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+}
+
+function maybeString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() ? value : undefined;
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | undefined {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return undefined;
+}
+
+function matchesEdgeCategory(type: string, category: EdgeCategory): boolean {
+  if (category === 'all') return true;
+  const normalized = type.toUpperCase();
+  const selected = EDGE_CATEGORIES.find((item) => item.id === category);
+  if (selected?.types) return selected.types.includes(normalized);
+  const known = new Set(
+    EDGE_CATEGORIES.flatMap((item) => item.types ?? []),
+  );
+  return category === 'other' && !known.has(normalized);
 }

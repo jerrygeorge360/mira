@@ -8,6 +8,7 @@ from api.auth import WorkspaceAuth, require_csrf
 from api.schemas.chat import ChatRequest, ChatResponse
 from core.agent import Agent
 from core.db.repositories import bind_workspace
+from core.observability import log_event
 
 router = APIRouter(tags=["chat"])
 
@@ -33,8 +34,19 @@ def chat(
         )
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
-    except Exception as error:  # noqa: BLE001 - API must not leak raw tracebacks
-        raise HTTPException(status_code=500, detail=str(error) or "agent runtime failed") from error
+    except Exception as error:  # noqa: BLE001 - API boundary logs and sanitizes runtime errors
+        log_event(
+            "api_chat_error",
+            "chat turn failed",
+            level=40,
+            exc_info=error,
+            session_id=session_id,
+            error_type=type(error).__name__,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="chat runtime failed; check API logs for details",
+        ) from error
 
     return ChatResponse(
         answer=str(result.get("answer") or ""),

@@ -7,6 +7,8 @@ import ChatView from './components/ChatView';
 import MemoryGraphView from './components/MemoryGraphView';
 import WorkingSetView from './components/WorkingSetView';
 import RetrievalView from './components/RetrievalView';
+import PipelineView from './components/PipelineView';
+import MemoryHealthView from './components/MemoryHealthView';
 import ReflectionsView from './components/ReflectionsView';
 import CommunitiesView from './components/CommunitiesView';
 import TimelineView from './components/TimelineView';
@@ -16,13 +18,15 @@ function ViewRouter() {
   const { view } = useApp();
   switch (view) {
     case 'Chat': return <ChatView />;
-    case 'Graph': return <div className="view-area"><MemoryGraphView /></div>;
-    case 'Working Set': return <div className="view-area"><WorkingSetView /></div>;
-    case 'Retrieval': return <div className="view-area"><RetrievalView /></div>;
+    case 'Memory Graph': return <div className="view-area"><MemoryGraphView /></div>;
+    case 'Session Working Set': return <div className="view-area"><WorkingSetView /></div>;
+    case 'Retrieval Trace': return <div className="view-area"><RetrievalView /></div>;
+    case 'Memory Pipeline': return <div className="view-area"><PipelineView /></div>;
+    case 'Memory Health': return <div className="view-area"><MemoryHealthView /></div>;
     case 'Reflections': return <div className="view-area"><ReflectionsView /></div>;
     case 'Communities': return <div className="view-area"><CommunitiesView /></div>;
-    case 'Timeline': return <div className="view-area"><TimelineView /></div>;
-    case 'Results': return <div className="view-area"><ResultsView /></div>;
+    case 'Foresight': return <div className="view-area"><TimelineView /></div>;
+    case 'Evaluation': return <div className="view-area"><ResultsView /></div>;
     default: return <ChatView />;
   }
 }

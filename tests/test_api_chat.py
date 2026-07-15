@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 from starlette.requests import Request
 
@@ -33,6 +34,14 @@ class _FakeAgent:
             "used_session_items": ["sws_1"],
             "trace_id": "trace_1",
         }
+
+
+class _FailingAgent:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+
+    def respond(self, user_message: str, *, routing_strategy: str = "fast") -> dict[str, object]:
+        raise RuntimeError("Error executing plan: Internal error: Error finding id")
 
 
 def _request_and_auth() -> tuple[Request, AuthenticatedWorkspace]:
@@ -83,6 +92,38 @@ def test_chat_endpoint_passes_accurate_routing_strategy(monkeypatch: Any, tmp_pa
     )
 
     assert _FakeAgent.calls and _FakeAgent.calls[0][2] == "accurate"
+
+
+def test_chat_endpoint_sanitizes_internal_runtime_errors(
+    monkeypatch: Any,
+    tmp_path: Any,
+) -> None:
+    db_path = tmp_path / "api-chat-failure.sqlite3"
+    monkeypatch.setenv("MIRA_DB_PATH", str(db_path))
+    configure_database(db_path)
+    logged: list[dict[str, object]] = []
+    monkeypatch.setattr("api.routes.chat.Agent", _FailingAgent)
+    monkeypatch.setattr(
+        "api.routes.chat.log_event",
+        lambda event, message, **fields: logged.append(
+            {"event": event, "message": message, **fields}
+        ),
+    )
+
+    request, auth = _request_and_auth()
+    with pytest.raises(HTTPException) as exc_info:
+        chat(
+            request,
+            ChatRequest(message="I prefer Python."),
+            auth,
+        )
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == "chat runtime failed; check API logs for details"
+    assert "Error finding id" not in str(exc_info.value.detail)
+    assert logged
+    assert logged[0]["event"] == "api_chat_error"
+    assert logged[0]["error_type"] == "RuntimeError"
 
 
 def test_chat_endpoint_validates_payload() -> None:

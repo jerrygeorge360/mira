@@ -196,9 +196,7 @@ REFLECTION_SCHEMA: JsonSchema = {
                 "required": ["reflection_type", "content", "confidence", "evidence_ids"],
                 "additionalProperties": False,
                 "properties": {
-                    "reflection_type": {
-                        "enum": ["user_knowledge", "world_knowledge", "self_knowledge"]
-                    },
+                    "reflection_type": {"enum": ["user_knowledge", "self_knowledge"]},
                     "content": {"type": "string"},
                     "confidence": {"type": "number"},
                     "evidence_ids": {"type": "array", "items": {"type": "string"}},
@@ -397,19 +395,23 @@ New evidence:
         example_output={
             "foresight": [
                 {
-                    "content": "Remind the agent to run make check before PR.",
-                    "reason": "User made it a workflow constraint.",
+                    "content": "Before opening a PR, remind the user to run make check.",
+                    "reason": "User attached the check to a future PR workflow.",
                     "status": "active",
                     "always_inject": False,
                 }
             ]
         },
         template="""Task definition:
-Detect future-facing reminders, constraints, or checks that may help later responses.
+Detect only future-relevant reminders, deadlines, validity windows, scheduled checks, or
+time-bounded actions that may help later responses.
 
 Non-goals:
 - Do not create calendar events.
 - Do not treat vague wishes as active foresight.
+- Do not store standing preferences, answer-style instructions, or durable project constraints here.
+- If the memory has no future trigger, deadline, upcoming event, or time window,
+  return no foresight.
 - {overclaiming_guardrail}
 
 Strict JSON schema:
@@ -436,11 +438,17 @@ Evidence:
             ]
         },
         template="""Task definition:
-Synthesize compact reflections from multiple evidence records.
+Synthesize compact higher-order patterns from accumulated evidence records.
+
+Reflection is not a fact store. It should describe a durable pattern, strategy,
+or tendency inferred from evidence, not a single claim, definition, deadline,
+or answer-style preference.
 
 Non-goals:
 - Do not summarize stale or invalidated evidence as current.
 - Do not add unsupported personality or preference claims.
+- Do not emit ordinary world knowledge, definitions, or encyclopedia-style statements.
+- Do not restate atomic facts, preferences, deadlines, or active constraints.
 - {overclaiming_guardrail}
 
 Strict JSON schema:

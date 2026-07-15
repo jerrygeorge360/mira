@@ -16,3 +16,15 @@ class ItemsResponse(BaseModel):
     """Generic list response for memory surfaces."""
 
     items: list[dict[str, object]]
+
+
+class MemoryLifecycleResponse(BaseModel):
+    """Recent observation lifecycle rows for the memory pipeline view."""
+
+    items: list[dict[str, object]]
+
+
+class MemoryHealthResponse(BaseModel):
+    """Tier, retention, and status summary for the memory health view."""
+
+    health: dict[str, object]

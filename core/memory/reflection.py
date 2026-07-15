@@ -38,6 +38,7 @@ TERMINAL_REFLECTION_STATUSES = frozenset({"invalidated", "superseded"})
 LOGGER = logging.getLogger(__name__)
 
 REFLECTION_TYPES = frozenset({"user_knowledge", "world_knowledge", "self_knowledge"})
+SYNTHESIZED_REFLECTION_TYPES = frozenset({"user_knowledge", "self_knowledge"})
 HOT_MEMORY_TYPES = frozenset({"self_knowledge"})
 
 IMPORTANCE_THRESHOLD = 0.5
@@ -54,6 +55,19 @@ UNSUPPORTED_PERSONALITY_MARKERS = frozenset(
         "is emotional",
         "is rude",
         "personality",
+    }
+)
+WORLD_KNOWLEDGE_MARKERS = frozenset(
+    {
+        "principles of",
+        "definition of",
+        "defined as",
+        "refers to",
+        "is a concept",
+        "is the practice",
+        "is the process",
+        "in general",
+        "generally means",
     }
 )
 
@@ -315,7 +329,9 @@ def _normalize_reflection(
         if evidence_id in valid_evidence_ids
     ]
 
-    if reflection_type not in REFLECTION_TYPES or not content:
+    if reflection_type not in SYNTHESIZED_REFLECTION_TYPES or not content:
+        if reflection_type == "world_knowledge":
+            LOGGER.info("Rejected world-knowledge reflection: %s", content)
         return None
     if not evidence_ids:
         LOGGER.info("Rejected ungrounded reflection: %s", content)
@@ -325,6 +341,9 @@ def _normalize_reflection(
         return None
     if _looks_unsupported(content):
         LOGGER.info("Rejected unsupported personality reflection: %s", content)
+        return None
+    if _looks_like_world_knowledge(content):
+        LOGGER.info("Rejected fact-like reflection: %s", content)
         return None
 
     return {
@@ -401,6 +420,11 @@ def _format_evidence_records(observations: dict[str, str]) -> str:
 def _looks_unsupported(content: str) -> bool:
     normalized = _normalize(content)
     return any(marker in normalized for marker in UNSUPPORTED_PERSONALITY_MARKERS)
+
+
+def _looks_like_world_knowledge(content: str) -> bool:
+    normalized = _normalize(content)
+    return any(marker in normalized for marker in WORLD_KNOWLEDGE_MARKERS)
 
 
 def _label(content: str) -> str:

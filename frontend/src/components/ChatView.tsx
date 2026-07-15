@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Plus } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Send, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import { api } from '../api/client';
@@ -21,6 +22,7 @@ export default function ChatView() {
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('New chat');
   const bottomRef = useRef<HTMLDivElement>(null);
+  const composerRef = useRef<HTMLTextAreaElement>(null);
   // The session whose messages are currently loaded, so we don't reload after sending.
   const loadedRef = useRef<string | null>(null);
 
@@ -43,7 +45,10 @@ export default function ChatView() {
         loadedRef.current = activeThread;
       })
       .catch(() => {
-        if (active) setStatus('Could not load conversation');
+        if (!active) return;
+        setMessages([]);
+        loadedRef.current = null;
+        setStatus('New chat');
       });
     return () => {
       active = false;
@@ -54,10 +59,22 @@ export default function ChatView() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    adjustComposerHeight();
+  }, [input]);
+
+  function adjustComposerHeight() {
+    const composer = composerRef.current;
+    if (!composer) return;
+    composer.style.height = 'auto';
+    composer.style.height = `${Math.min(composer.scrollHeight, 170)}px`;
+  }
+
   async function send() {
     const text = input.trim();
     if (!text) return;
     setInput('');
+    if (composerRef.current) composerRef.current.style.height = 'auto';
     const next: Message[] = [...messages, { role: 'user', content: text }];
     setMessages(next);
     setLoading(true);
@@ -95,42 +112,25 @@ export default function ChatView() {
 
   return (
     <div className="chat-view">
-      {/* mode bar */}
-      <div className="chat-mode-bar">
-        <label className="agent-toggle">
-          <div className="toggle-switch">
-            <input
-              type="checkbox"
-              checked={useRealAgent}
-              onChange={e => setUseRealAgent(e.target.checked)}
-            />
-            <span className="toggle-slider" />
-          </div>
-          Use real MIRA agent
-        </label>
-        <span className="badge badge-neutral">{useRealAgent ? 'Real backend' : 'Demo data'}</span>
-        <small style={{ color: 'var(--faint)', fontSize: '0.78rem', marginLeft: 4 }}>{status}</small>
-      </div>
-
       {/* messages */}
       <div className="chat-messages">
         {messages.map((m, i) => (
           <div key={i} className={`chat-turn ${m.role}`}>
             {m.role === 'assistant' && <div className="bot-avatar"><BrandMark size={17} /></div>}
-            <div className="chat-bubble">{m.content}</div>
+            <div className="chat-bubble">
+              {m.role === 'assistant' ? <MarkdownText content={m.content} /> : m.content}
+            </div>
           </div>
         ))}
 
         {messages.length === 0 && !loading && (
           <div className="chat-empty">
-            <div className="bot-avatar"><BrandMark size={17} /></div>
-            <div>
-              <div className="chat-empty-title">Start a conversation</div>
-              <div className="chat-empty-sub">
-                {useRealAgent
-                  ? 'Ask MIRA anything — it builds durable memory as you go.'
-                  : 'Demo mode. Flip “real backend” on to talk to the live agent.'}
-              </div>
+            <div className="chat-empty-mark"><BrandMark size={30} /></div>
+            <div className="chat-empty-title">What should MIRA remember?</div>
+            <div className="chat-empty-sub">
+              {useRealAgent
+                ? 'Ask naturally. MIRA keeps the conversation, memory, and retrieval trace connected.'
+                : 'Demo mode is on. Switch to the live agent when you want real memory writes.'}
             </div>
           </div>
         )}
@@ -147,22 +147,171 @@ export default function ChatView() {
       </div>
 
       {/* composer */}
-      <div className="chat-composer">
-        <button className="composer-add" title="Attach">
-          <Plus size={16} />
-        </button>
-        <input
-          className="composer-input"
-          placeholder="Reply to MIRA…"
-          value={input}
-          onChange={e => setInput(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && !e.shiftKey && send()}
-        />
-        <button className="composer-send" onClick={send} disabled={loading || !input.trim()}>
-          <Send size={16} />
-        </button>
+      <div className="chat-composer-shell">
+        <div className="chat-runtime-strip">
+          <label className="agent-toggle">
+            <div className="toggle-switch">
+              <input
+                type="checkbox"
+                checked={useRealAgent}
+                onChange={e => setUseRealAgent(e.target.checked)}
+              />
+              <span className="toggle-slider" />
+            </div>
+            {useRealAgent ? 'Live memory' : 'Demo mode'}
+          </label>
+          <span className="chat-status">
+            <Sparkles size={13} />
+            {status}
+          </span>
+        </div>
+        <div className="chat-composer">
+          <textarea
+            ref={composerRef}
+            className="composer-input"
+            placeholder="Message MIRA"
+            rows={1}
+            value={input}
+            onChange={e => {
+              setInput(e.target.value);
+            }}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <button className="composer-send" onClick={send} disabled={loading || !input.trim()} aria-label="Send message">
+            <Send size={16} />
+          </button>
+        </div>
+        <div className="chat-disclaimer">MIRA can make mistakes. Verify important details.</div>
       </div>
-      <div className="chat-disclaimer">MIRA can make mistakes. Verify important details.</div>
     </div>
   );
+}
+
+function MarkdownText({ content }: { content: string }) {
+  const lines = content.split(/\r?\n/);
+  const nodes: ReactNode[] = [];
+  let paragraph: string[] = [];
+  let listItems: string[] = [];
+  let orderedItems: string[] = [];
+  let codeLines: string[] = [];
+  let inCode = false;
+
+  function flushParagraph() {
+    if (!paragraph.length) return;
+    nodes.push(
+      <p key={`p-${nodes.length}`}>
+        {renderInline(paragraph.join(' '))}
+      </p>
+    );
+    paragraph = [];
+  }
+
+  function flushList() {
+    if (listItems.length) {
+      nodes.push(
+        <ul key={`ul-${nodes.length}`}>
+          {listItems.map((item, index) => (
+            <li key={`${index}-${item}`}>{renderInline(item)}</li>
+          ))}
+        </ul>
+      );
+      listItems = [];
+    }
+    if (orderedItems.length) {
+      nodes.push(
+        <ol key={`ol-${nodes.length}`}>
+          {orderedItems.map((item, index) => (
+            <li key={`${index}-${item}`}>{renderInline(item)}</li>
+          ))}
+        </ol>
+      );
+      orderedItems = [];
+    }
+  }
+
+  function flushCode() {
+    if (!codeLines.length) return;
+    nodes.push(
+      <pre key={`code-${nodes.length}`}>
+        <code>{codeLines.join('\n')}</code>
+      </pre>
+    );
+    codeLines = [];
+  }
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith('```')) {
+      if (inCode) {
+        flushCode();
+        inCode = false;
+      } else {
+        flushParagraph();
+        flushList();
+        inCode = true;
+      }
+      continue;
+    }
+    if (inCode) {
+      codeLines.push(line);
+      continue;
+    }
+    if (!trimmed) {
+      flushParagraph();
+      flushList();
+      continue;
+    }
+    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
+    if (heading) {
+      flushParagraph();
+      flushList();
+      const level = heading[1].length;
+      const text = heading[2];
+      const Tag = (`h${level}` as 'h1' | 'h2' | 'h3');
+      nodes.push(<Tag key={`h-${nodes.length}`}>{renderInline(text)}</Tag>);
+      continue;
+    }
+    const bullet = /^[-*]\s+(.+)$/.exec(trimmed);
+    if (bullet) {
+      flushParagraph();
+      orderedItems = [];
+      listItems.push(bullet[1]);
+      continue;
+    }
+    const ordered = /^\d+\.\s+(.+)$/.exec(trimmed);
+    if (ordered) {
+      flushParagraph();
+      listItems = [];
+      orderedItems.push(ordered[1]);
+      continue;
+    }
+    paragraph.push(trimmed);
+  }
+
+  flushParagraph();
+  flushList();
+  if (inCode) flushCode();
+
+  return <div className="chat-markdown">{nodes.length ? nodes : content}</div>;
+}
+
+function renderInline(text: string): ReactNode[] {
+  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
+  return parts.map((part, index) => {
+    if (part.startsWith('`') && part.endsWith('`')) {
+      return <code key={index}>{part.slice(1, -1)}</code>;
+    }
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={index}>{part.slice(2, -2)}</strong>;
+    }
+    if (part.startsWith('*') && part.endsWith('*')) {
+      return <em key={index}>{part.slice(1, -1)}</em>;
+    }
+    return part;
+  });
 }

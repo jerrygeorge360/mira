@@ -162,6 +162,8 @@ LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 ```
 
 Other supported profiles include `dashscope`, `siliconflow`, and `gemini`.
+For DeepSeek, `auto` uses DeepSeek's documented JSON object mode and MIRA validates
+the required schema locally.
 
 Check provider wiring:
 
@@ -498,6 +500,16 @@ docker compose run --rm devtools python -m scripts.seed_demo \
 docker compose up api worker frontend
 ```
 
+If your machine uses the older standalone Compose binary, replace `docker compose` with
+`docker-compose`:
+
+```bash
+docker-compose build
+docker-compose run --rm devtools python -m scripts.seed_demo \
+  --workspace-id workspace_legacy_default --reset
+docker-compose up api worker frontend
+```
+
 Open:
 
 ```text
@@ -514,6 +526,8 @@ If ports are busy:
 
 ```bash
 API_PORT=18000 FRONTEND_PORT=15173 docker compose up api worker frontend
+# or:
+API_PORT=18000 FRONTEND_PORT=15173 docker-compose up api worker frontend
 ```
 
 Then open:
@@ -542,6 +556,8 @@ Run checks inside Docker:
 
 ```bash
 docker compose run --rm devtools make check
+# or:
+docker-compose run --rm devtools make check
 ```
 
 ## Tests and checks

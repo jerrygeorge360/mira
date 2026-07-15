@@ -22,13 +22,14 @@ from core.llm.json_helpers import (
     validate_required_keys,
 )
 from core.llm.profiles import LLM_PROFILE_ENV, active_profile
-from core.llm.prompts import get_output_schema
+from core.llm.prompts import get_output_schema, get_prompt
 
 LLM_API_KEY_ENV = "LLM_API_KEY"
 LLM_CHAT_ENDPOINT_ENV = "LLM_CHAT_ENDPOINT"
 LLM_PROVIDER_ENV = "LLM_PROVIDER"
 LLM_MODEL_ENV = "LLM_MODEL"
 LLM_RESPONSE_FORMAT_ENV = "LLM_RESPONSE_FORMAT"
+LLM_JSON_MAX_TOKENS_ENV = "LLM_JSON_MAX_TOKENS"
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DASHSCOPE_ENDPOINT_ENV = "DASHSCOPE_CHAT_ENDPOINT"
 DEFAULT_QWEN_MODEL = "qwen-plus"
@@ -39,6 +40,7 @@ DEFAULT_LLM_PROVIDER = "dashscope"
 DEFAULT_LLM_MODEL = DEFAULT_QWEN_MODEL
 DEFAULT_LLM_CHAT_ENDPOINT = DEFAULT_DASHSCOPE_ENDPOINT
 DEFAULT_LLM_RESPONSE_FORMAT = "auto"
+DEFAULT_LLM_JSON_MAX_TOKENS = 2048
 MAX_ATTEMPTS = 3
 MAX_JSON_VALIDATION_ATTEMPTS = 3
 RETRY_BACKOFF_S = 0.25
@@ -76,6 +78,7 @@ def call_llm_chat(
     timeout_s: int = 60,
     provider: str | None = None,
     response_format: dict[str, object] | None = None,
+    max_tokens: int | None = None,
 ) -> ResponseObject:
     """Call an OpenAI-compatible chat completion endpoint."""
     _validate_messages(messages)
@@ -85,6 +88,8 @@ def call_llm_chat(
     payload: dict[str, object] = {"model": selected_model, "messages": messages}
     if response_format is not None:
         payload["response_format"] = response_format
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
     raw_response = _call_with_retries(payload, timeout_s)
     return _normalize_chat_response(raw_response, selected_model, selected_provider)
 
@@ -136,6 +141,7 @@ def _call_llm_json_chat(
             timeout_s=timeout_s,
             provider=provider,
             response_format=response_format,
+            max_tokens=_load_json_max_tokens(),
         )
     except LLMRequestError as error:
         if not _should_fallback_to_json_object(response_format, error):
@@ -146,6 +152,7 @@ def _call_llm_json_chat(
             timeout_s=timeout_s,
             provider=provider,
             response_format={"type": "json_object"},
+            max_tokens=_load_json_max_tokens(),
         )
 
 
@@ -409,10 +416,10 @@ def _response_format_for_schema(
         raise LLMConfigurationError(
             f"{LLM_RESPONSE_FORMAT_ENV} must be one of: auto, json_object, json_schema"
         )
-    if mode == "json_object":
-        return {"type": "json_object"}
     selected_provider = provider or _load_provider()
-    if mode == "auto" and selected_provider.casefold() in {"deepseek"}:
+    if selected_provider.casefold() in {"deepseek"}:
+        return {"type": "json_object"}
+    if mode == "json_object":
         return {"type": "json_object"}
     schema = _schema_for_response_format(schema_name)
     if schema is None:
@@ -477,12 +484,14 @@ def _repair_messages(
 def _schema_contract_messages(messages: list[Message], schema_name: str) -> list[Message]:
     schema = _schema_for_response_format(schema_name)
     required_keys = sorted(_required_keys_for_schema(schema_name))
+    example = _example_for_schema(schema_name)
     contract = (
         "You are a strict JSON API. Return only one JSON object and no prose, "
         "markdown, code fences, or alternate top-level keys. "
         f"The top-level schema name is {schema_name!r}. "
         f"The required top-level keys are: {json.dumps(required_keys)}. "
-        f"The exact JSON Schema is: {json.dumps(schema or {}, sort_keys=True)}."
+        f"The exact JSON Schema is: {json.dumps(schema or {}, sort_keys=True)}. "
+        f"Example JSON output: {json.dumps(example or {}, sort_keys=True)}."
     )
     if messages and messages[0].get("role") == "system":
         first = dict(messages[0])
@@ -504,6 +513,27 @@ def _validate_messages(messages: list[Message]) -> None:
 def _validate_timeout(timeout_s: int) -> None:
     if timeout_s < 1:
         raise ValueError("timeout_s must be a positive integer")
+
+
+def _load_json_max_tokens() -> int:
+    raw_value = os.environ.get(LLM_JSON_MAX_TOKENS_ENV)
+    if raw_value is None or raw_value.strip() == "":
+        return DEFAULT_LLM_JSON_MAX_TOKENS
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise LLMConfigurationError(f"{LLM_JSON_MAX_TOKENS_ENV} must be an integer") from error
+    if value < 1:
+        raise LLMConfigurationError(f"{LLM_JSON_MAX_TOKENS_ENV} must be positive")
+    return value
+
+
+def _example_for_schema(schema_name: str) -> object | None:
+    try:
+        template = get_prompt(schema_name)
+    except KeyError:
+        return None
+    return template.example_output
 
 
 def _required_keys_for_schema(schema_name: str) -> set[str]:

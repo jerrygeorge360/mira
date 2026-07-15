@@ -26,6 +26,14 @@ export interface ItemsResponse {
   items: Record<string, unknown>[];
 }
 
+export interface MemoryLifecycleResponse {
+  items: Record<string, unknown>[];
+}
+
+export interface MemoryHealthResponse {
+  health: Record<string, unknown>;
+}
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const headers = new Headers(init?.headers);
@@ -92,6 +100,15 @@ export const api = {
     if (params?.limit != null) qs.set('limit', String(params.limit));
     return req<MemoryGraphResponse>(`/memory/graph?${qs}`);
   },
+
+  memoryLifecycle: (params?: { session_id?: string; limit?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.session_id) qs.set('session_id', params.session_id);
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    return req<MemoryLifecycleResponse>(`/memory/lifecycle?${qs}`);
+  },
+
+  memoryHealth: () => req<MemoryHealthResponse>('/memory/health'),
 
   foresight: (params?: { status?: string; limit?: number }) => {
     const qs = new URLSearchParams();
@@ -162,15 +179,26 @@ export interface EvalCase {
   category: string;
   passed: boolean;
   retrieval_mode: string | null;
+  score?: number | null;
+  answer?: string | null;
+  error?: string | null;
+  checks?: Record<string, unknown>[];
+  failed_checks?: Record<string, unknown>[];
+  interactions?: Record<string, unknown>[];
+  expect?: Record<string, unknown>;
 }
 
 export interface AblationRow {
   name: string;
   disabled: string[];
+  applied?: string[];
   passed: number;
   total: number;
   pass_rate: number;
+  drop_from_full?: number | null;
   lost: string[];
+  results?: Record<string, unknown>[];
+  note?: string | null;
 }
 
 export interface EvaluationSummary {
@@ -178,11 +206,17 @@ export interface EvaluationSummary {
     passed: number;
     total: number;
     pass_rate: number;
+    by_category?: Record<string, { passed: number; total: number }>;
+    by_retrieval_mode?: Record<string, { passed: number; total: number }>;
+    failed_cases?: EvalCase[];
+    generated_at?: string | null;
     cases: EvalCase[];
   } | null;
   ablation: {
     cases_path: string;
     run_slow_path: boolean;
+    llm_mode?: string | null;
+    parallel?: number | null;
     rows: AblationRow[];
   } | null;
   benchmark: {
