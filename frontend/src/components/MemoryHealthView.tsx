@@ -1,6 +1,7 @@
 import { Activity, Archive, Clock3, Flame, Info, Layers3, MoveRight, ShieldCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
+import { useApp } from '../context/AppContext';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -25,7 +26,8 @@ interface Movement {
 }
 
 export default function MemoryHealthView() {
-  const { data, status } = useLiveData(() => api.memoryHealth(), []);
+  const { memoryRefreshKey } = useApp();
+  const { data, status } = useLiveData(() => api.memoryHealth(), [memoryRefreshKey]);
   const health = asRecord(data?.health);
   const tiers = asRecord(health.tiers);
   const workingSet = asRecord(health.working_set);

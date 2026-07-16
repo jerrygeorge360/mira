@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from core import agent
-from core.agent import Agent, handle_user_message
+from core.agent import Agent, AgentTurnCancelled, handle_user_message
 from core.db.repositories import configure_database, create_session, list_observations
 
 
@@ -264,3 +264,28 @@ def test_sufficiency_retry_runs_only_when_flagged(
     )
     handle_user_message(session_id, "anything at all")
     assert calls["n"] == 0
+
+
+def test_cancelled_turn_does_not_persist_assistant_answer(
+    database_path: Path,
+    fake_qwen: _CapturingQwen,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = create_session("jerry")
+    cancelled = False
+
+    def _generate_answer(_: str) -> str:
+        nonlocal cancelled
+        cancelled = True
+        return "This should not be saved."
+
+    monkeypatch.setattr(agent, "_generate_answer", _generate_answer)
+
+    with pytest.raises(AgentTurnCancelled):
+        handle_user_message(
+            session_id,
+            "What is an apple?",
+            should_cancel=lambda: cancelled,
+        )
+
+    assert _roles(session_id) == ["user"]

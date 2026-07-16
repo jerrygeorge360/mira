@@ -38,10 +38,10 @@ const ARTIFACTS = [
 ] as const;
 
 export default function PipelineView() {
-  const { sessionId } = useApp();
+  const { sessionId, memoryRefreshKey } = useApp();
   const { data, status } = useLiveData(
     () => api.memoryLifecycle({ session_id: sessionId ?? undefined, limit: 20 }),
-    [sessionId],
+    [sessionId, memoryRefreshKey],
   );
   const rows = (data?.items ?? []) as LifecycleRow[];
 

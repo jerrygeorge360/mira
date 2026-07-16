@@ -75,10 +75,10 @@ function score(value: unknown): string {
 }
 
 export default function RetrievalView() {
-  const { lastTraceId, setView } = useApp();
+  const { lastTraceId, setView, memoryRefreshKey } = useApp();
   const { data, status } = useLiveData(
     () => (lastTraceId ? api.retrievalTrace(lastTraceId) : Promise.reject(new Error('no trace'))),
-    [lastTraceId],
+    [lastTraceId, memoryRefreshKey],
   );
   const trace = data as TraceData | null;
   const evidence = trace?.evidence ?? [];

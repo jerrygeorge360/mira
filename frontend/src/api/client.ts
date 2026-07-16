@@ -17,6 +17,23 @@ export interface ChatResponse {
   trace_id: string | null;
 }
 
+export type ChatStreamEvent =
+  | { type: 'stage'; stage: string; message: string }
+  | { type: 'answer'; delta: string }
+  | {
+      type: 'trace';
+      session_id: string;
+      user_observation_id: string | null;
+      assistant_observation_id: string | null;
+      retrieval_mode: string;
+      used_session_items: string[];
+      used_memory_items: string[];
+      trace_id: string | null;
+    }
+  | { type: 'complete'; session_id: string }
+  | { type: 'cancelled'; message: string }
+  | { type: 'error'; message: string };
+
 export interface MemoryGraphResponse {
   nodes: Record<string, unknown>[];
   edges: Record<string, unknown>[];
@@ -89,10 +106,19 @@ export const api = {
 
   logout: () => req<void>('/auth/logout', { method: 'POST' }),
 
+  deleteWorkspaceData: () =>
+    req<{ status: string; workspace_id: string; deleted: Record<string, number> }>(
+      '/workspace/data',
+      { method: 'DELETE' },
+    ),
+
   health: () => req<{ status: string }>('/health'),
 
   chat: (body: ChatRequest) =>
     req<ChatResponse>('/chat', { method: 'POST', body: JSON.stringify(body) }),
+
+  chatStream: (body: ChatRequest, onEvent: (event: ChatStreamEvent) => void, signal?: AbortSignal) =>
+    streamReq('/chat/stream', body, onEvent, signal),
 
   memoryGraph: (params?: { entity?: string; limit?: number }) => {
     const qs = new URLSearchParams();
@@ -147,7 +173,60 @@ export const api = {
 
   sessionMessages: (sessionId: string) =>
     req<SessionMessagesResponse>(`/sessions/${sessionId}/messages`),
+
+  deleteSession: (sessionId: string) =>
+    req<{ status: string; session_id: string; deleted: Record<string, number> }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+      { method: 'DELETE' },
+    ),
 };
+
+async function streamReq(
+  path: string,
+  body: unknown,
+  onEvent: (event: ChatStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const headers = new Headers({ 'Content-Type': 'application/json' });
+  const csrf = readCookie('mira_csrf');
+  if (csrf) headers.set('X-CSRF-Token', csrf);
+  const res = await fetch(`${BASE_URL}${path}`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    headers,
+    credentials: 'include',
+    signal,
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => res.statusText);
+    throw new Error(`API ${res.status}: ${detail}`);
+  }
+  if (!res.body) {
+    throw new Error('API stream response did not include a readable body');
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() ?? '';
+    for (const line of lines) {
+      emitStreamLine(line, onEvent);
+    }
+  }
+  buffer += decoder.decode();
+  emitStreamLine(buffer, onEvent);
+}
+
+function emitStreamLine(line: string, onEvent: (event: ChatStreamEvent) => void) {
+  const trimmed = line.trim();
+  if (!trimmed) return;
+  const decoded = JSON.parse(trimmed) as ChatStreamEvent;
+  onEvent(decoded);
+}
 
 export interface SessionSummary {
   session_id: string;

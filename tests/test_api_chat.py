@@ -10,9 +10,9 @@ from pydantic import ValidationError
 from starlette.requests import Request
 
 from api.auth import AuthenticatedWorkspace
-from api.routes.chat import chat
+from api.routes.chat import _chat_event_stream, chat
 from api.schemas.chat import ChatRequest
-from core.db.repositories import WorkspaceContext, configure_database
+from core.db.repositories import WorkspaceContext, configure_database, repository_connection
 from core.db.schema import LEGACY_WORKSPACE_ID
 
 
@@ -44,6 +44,32 @@ class _FailingAgent:
         raise RuntimeError("Error executing plan: Internal error: Error finding id")
 
 
+class _StreamingAgent:
+    def __init__(self, session_id: str) -> None:
+        self.session_id = session_id
+
+    def respond(self, user_message: str, **kwargs: Any) -> dict[str, object]:
+        progress_callback = kwargs.get("progress_callback")
+        if callable(progress_callback):
+            progress_callback(
+                {
+                    "type": "stage",
+                    "stage": "retrieval",
+                    "message": "Searching relevant memory.",
+                }
+            )
+        return {
+            "user_observation_id": "obs_user",
+            "assistant_observation_id": "obs_assistant",
+            "session_id": self.session_id,
+            "answer": f"Answer for {user_message}",
+            "retrieval_mode": "quick",
+            "used_memory_items": ["fact_1"],
+            "used_session_items": ["sws_1"],
+            "trace_id": "trace_1",
+        }
+
+
 def _request_and_auth() -> tuple[Request, AuthenticatedWorkspace]:
     request = Request({"type": "http", "method": "POST", "path": "/chat", "headers": []})
     auth = AuthenticatedWorkspace(WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="development"))
@@ -72,6 +98,12 @@ def test_chat_endpoint_calls_agent_path(monkeypatch: Any, tmp_path: Any) -> None
     assert response.used_session_items == ["sws_1"]
     assert _FakeAgent.calls and _FakeAgent.calls[0][1] == "Use 2026."
     assert _FakeAgent.calls[0][2] == "fast"
+    with repository_connection() as connection:
+        title = connection.execute(
+            "SELECT title FROM sessions WHERE id = ?",
+            (response.session_id,),
+        ).fetchone()["title"]
+    assert title == "Use 2026."
 
 
 def test_chat_endpoint_passes_accurate_routing_strategy(monkeypatch: Any, tmp_path: Any) -> None:
@@ -144,3 +176,23 @@ def test_chat_request_validates_routing_strategy() -> None:
 def test_chat_request_rejects_client_supplied_identity() -> None:
     with pytest.raises(ValidationError):
         ChatRequest(user_id="guessed-user", message="Hello")
+
+
+def test_chat_event_stream_emits_progress_answer_trace_and_completion(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr("api.routes.chat.Agent", _StreamingAgent)
+
+    lines = list(
+        _chat_event_stream(
+            ChatRequest(message="What do I use?", retrieval_mode="auto"),
+            "session-1",
+        )
+    )
+
+    assert any('"type": "stage"' in line and '"stage": "retrieval"' in line for line in lines)
+    assert any('"type": "answer"' in line and "Answer for What do I use?" in line for line in lines)
+    assert any('"type": "trace"' in line and '"trace_id": "trace_1"' in line for line in lines)
+    assert any(
+        '"type": "complete"' in line and '"session_id": "session-1"' in line for line in lines
+    )

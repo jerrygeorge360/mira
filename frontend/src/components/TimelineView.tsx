@@ -1,11 +1,13 @@
 import { api } from '../api/client';
 import { useLiveData, formatTime } from '../api/useLiveData';
+import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
 
 type Row = Record<string, unknown>;
 
 export default function TimelineView() {
-  const { data, status } = useLiveData(() => api.foresight({ limit: 50 }), []);
+  const { memoryRefreshKey } = useApp();
+  const { data, status } = useLiveData(() => api.foresight({ limit: 50 }), [memoryRefreshKey]);
   const rows = (data?.items as Row[] | undefined) ?? [];
 
   return (

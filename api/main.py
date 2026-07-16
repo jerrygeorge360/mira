@@ -13,7 +13,18 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from api.dependencies import configure_runtime_database, load_runtime_environment
-from api.routes import auth, chat, evaluation, health, memory, retrieval, sessions, worker
+from api.rate_limit import rate_limit_middleware
+from api.routes import (
+    auth,
+    chat,
+    evaluation,
+    health,
+    memory,
+    retrieval,
+    sessions,
+    worker,
+    workspace,
+)
 
 DEFAULT_CORS_ORIGINS = (
     "http://localhost:8501",
@@ -34,8 +45,10 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.middleware("http")(rate_limit_middleware)
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(workspace.router)
     app.include_router(chat.router)
     app.include_router(sessions.router)
     app.include_router(memory.router)
