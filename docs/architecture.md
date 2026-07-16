@@ -425,6 +425,20 @@ limits active demos and issuance frequency. Demo sessions and workspaces share a
 in dependency order, and finally removes the disposable identity. General personal-workspace
 deletion is intentionally not implemented by this workflow.
 
+`DELETE /workspace/data` is the self-service reset path for an authenticated workspace. It keeps
+the user, workspace, membership, and active login session, but deletes product records in
+dependency order: traces, prompt/retrieval logs, queue state, session working set, graph edges,
+durable memory records, observations, sessions, and workspace-scoped Chroma pointers.
+
+`DELETE /sessions/{session_id}` is narrower. It tombstones one chat, scrubs its raw observation
+text, removes observation vectors, quarantines pending slow-path work, and deactivates derived
+facts, foresight, reflections, working memory, and graph edges whose evidence comes only from
+that session. Derived memory supported by other sessions can remain active.
+
+The product API has a lightweight in-process rate limiter keyed by client address and route. It
+is suitable for local and single-process Docker use. A hosted multi-replica deployment should
+move this policy to a shared limiter or edge gateway.
+
 The server runs locally with:
 
 ```bash

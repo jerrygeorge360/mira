@@ -12,6 +12,8 @@ assistant turn -> trace logs -> structured response.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from core.context.ambient import build_ambient_context
 from core.context.budget import estimate_tokens
 from core.context.merger import merge_context_sources
@@ -50,6 +52,9 @@ from core.session.working_set import (
 
 Response = dict[str, object]
 RoutingStrategy = str
+ProgressEvent = dict[str, object]
+ProgressCallback = Callable[[ProgressEvent], None]
+CancelCheck = Callable[[], bool]
 
 RECENT_TURNS = 6
 RETRIEVAL_LIMIT = 8
@@ -73,11 +78,17 @@ MEMORY_GROUNDED_MODE = "memory_grounded"
 GENERAL_RETRIEVAL_MODE = "general"
 
 
+class AgentTurnCancelled(RuntimeError):
+    """Raised when a streaming client disconnects before a turn is complete."""
+
+
 def handle_user_message(
     session_id: str,
     user_message: str,
     *,
     routing_strategy: RoutingStrategy = "hybrid",
+    progress_callback: ProgressCallback | None = None,
+    should_cancel: CancelCheck | None = None,
 ) -> Response:
     """Run one full MIRA turn and return a structured response object."""
     if not session_id:
@@ -85,30 +96,40 @@ def handle_user_message(
     if not user_message.strip():
         raise ValueError("user_message must not be empty")
 
+    _emit_progress(progress_callback, "start", "Starting the memory run.")
+    _raise_if_cancelled(should_cancel)
+
     prior_observations = list_observations(session_id)
     recent_turns = _recent_turn_records(prior_observations)
     recent_turn_texts = [str(turn["content"]) for turn in recent_turns]
 
     # Fast path: persist and queue the raw user turn (no model calls).
+    _emit_progress(progress_callback, "fast_path", "Saving the turn.")
     user_observation_id = persist_turn_fast_path(session_id, "user", user_message)
     log_observation_saved(session_id, user_observation_id, "user")
+    _raise_if_cancelled(should_cancel)
 
     # Initialise the trace builder for this turn.
     trace = TraceBuilder(session_id, user_observation_id)
 
     # Session micro-path: provisional Session Working Set updates for this turn.
+    _emit_progress(progress_callback, "session", "Updating session context.")
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
+    _raise_if_cancelled(should_cancel)
 
     # Bring durable memory back into a new or continuing session.
     if routing_strategy not in {"fast", "hybrid", "accurate"}:
         raise ValueError("routing_strategy must be one of: fast, hybrid, accurate")
+    _emit_progress(progress_callback, "routing", "Choosing how to use memory.")
     decision = route_retrieval(user_message, session_id, strategy=routing_strategy)
 
     answer_mode = _answer_mode_from_decision(user_message, decision)
     if _decision_uses_memory(decision) and _should_hydrate(prior_observations, user_message):
+        _emit_progress(progress_callback, "hydration", "Checking related session context.")
         hydrated_ids = hydrate_session_from_memory(session_id, user_message, HYDRATION_MAX)
         trace.record_hydration(hydrated_ids)
         log_session_hydration(session_id, hydrated_ids)
+        _raise_if_cancelled(should_cancel)
 
     # Routed retrieval of cross-session memory.
     if not _decision_uses_memory(decision):
@@ -120,6 +141,8 @@ def handle_user_message(
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
 
         def _retrieve(candidate_query: str) -> list[dict[str, object]]:
+            _emit_progress(progress_callback, "retrieval", _retrieval_status(retrieval_mode))
+            _raise_if_cancelled(should_cancel)
             return retrieve_by_mode(
                 candidate_query,
                 mode=retrieval_mode,
@@ -130,21 +153,28 @@ def handle_user_message(
         if decision.get("needs_sufficiency_check"):
             # Ambiguous query: retrieve, check sufficiency, and rewrite+retry once
             # (Auto rule 4) rather than answering on possibly-thin context.
+            _emit_progress(progress_callback, "sufficiency", "Verifying retrieved evidence.")
             resolution = resolve_with_one_retry(user_message, _retrieve)
             resolved_context = resolution.get("context")
             retrieved = resolved_context if isinstance(resolved_context, list) else []
+            if resolution.get("retries"):
+                _emit_progress(progress_callback, "retry", "Expanded the memory search once.")
         else:
             retrieved = _retrieve(user_message)
 
+    _raise_if_cancelled(should_cancel)
     tool_calls = _structured_tool_calls(session_id, user_message)
     if tool_calls:
         retrieved.extend(tool_result_context_record(tool_call) for tool_call in tool_calls)
     # Surface any unresolved contradiction among the retrieved facts so the answer flags
     # the conflict instead of asserting one contested value as settled.
+    _emit_progress(progress_callback, "verification", "Checking corrections and conflicts.")
     retrieved.extend(resolve_retrieved_contradictions(_retrieved_fact_ids(retrieved)))
     trace.record_retrieval(retrieval_mode, retrieved)
+    _raise_if_cancelled(should_cancel)
 
     # Hot memory: pull active working-memory items for prompt context.
+    _emit_progress(progress_callback, "working_set", "Selecting active session memory.")
     session_items = export_prompt_ready_session_items(session_id, SESSION_ITEMS_MAX)
     trace.record_session_items(session_items)
 
@@ -154,8 +184,10 @@ def handle_user_message(
         else list_hot_memory_for_context(session_id, user_message, HOT_MEMORY_LIMIT)
     )
     trace.record_hot_memory(hot_memory_items)
+    _raise_if_cancelled(should_cancel)
 
     # Context pack + prompt.
+    _emit_progress(progress_callback, "context", "Preparing answer context.")
     ambient_context = build_ambient_context(session_id)
     context_pack = merge_context_sources(
         current_message=user_message,
@@ -170,12 +202,18 @@ def handle_user_message(
 
     # Generation.
     try:
+        _raise_if_cancelled(should_cancel)
+        _emit_progress(progress_callback, "generation", "Preparing the answer.")
         answer = _generate_answer(prompt)
+        _raise_if_cancelled(should_cancel)
+    except AgentTurnCancelled:
+        raise
     except Exception as error:
         log_qwen_error(error, session_id=session_id, observation_id=user_observation_id)
         raise
 
     # Persist and queue the assistant turn.
+    _emit_progress(progress_callback, "persistence", "Saving the completed answer.")
     assistant_observation_id = persist_turn_fast_path(session_id, "assistant", answer)
     trace.assistant_observation_id = assistant_observation_id
 
@@ -197,6 +235,7 @@ def handle_user_message(
     trace.link_prompt_log(prompt_log_id)
 
     # Persist the complete answer trace and return its identifier.
+    _emit_progress(progress_callback, "trace", "Writing the answer trace.")
     trace_id = trace.build()
 
     return {
@@ -234,10 +273,21 @@ class Agent:
         )
 
     def respond(
-        self, user_message: str, *, routing_strategy: RoutingStrategy = "hybrid"
+        self,
+        user_message: str,
+        *,
+        routing_strategy: RoutingStrategy = "hybrid",
+        progress_callback: ProgressCallback | None = None,
+        should_cancel: CancelCheck | None = None,
     ) -> Response:
         """Accept one user turn and return the full structured response."""
-        return handle_user_message(self.session_id, user_message, routing_strategy=routing_strategy)
+        return handle_user_message(
+            self.session_id,
+            user_message,
+            routing_strategy=routing_strategy,
+            progress_callback=progress_callback,
+            should_cancel=should_cancel,
+        )
 
     def reset_session(self) -> None:
         """Reset temporary session state without deleting durable memory."""
@@ -256,6 +306,32 @@ def _generate_answer(prompt: str) -> str:
     if isinstance(payload, dict):
         return str(payload.get("answer", "")).strip()
     return ""
+
+
+def _emit_progress(
+    callback: ProgressCallback | None,
+    stage: str,
+    message: str,
+    **fields: object,
+) -> None:
+    if callback is None:
+        return
+    callback({"type": "stage", "stage": stage, "message": message, **fields})
+
+
+def _raise_if_cancelled(should_cancel: CancelCheck | None) -> None:
+    if should_cancel is not None and should_cancel():
+        raise AgentTurnCancelled("chat stream was cancelled")
+
+
+def _retrieval_status(retrieval_mode: str) -> str:
+    if retrieval_mode == "relational":
+        return "Checking related memories in the graph."
+    if retrieval_mode == "deep":
+        return "Searching broader memory context."
+    if retrieval_mode == "quick":
+        return "Searching relevant memory."
+    return "Checking available context."
 
 
 def _should_hydrate(prior_observations: list[dict[str, object]], user_message: str) -> bool:

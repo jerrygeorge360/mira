@@ -17,6 +17,8 @@ from typing import Any
 
 from fastapi import APIRouter
 
+from api.auth import WorkspaceAuth
+
 router = APIRouter(tags=["evaluation"])
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -189,8 +191,9 @@ def _benchmark_summary() -> dict[str, Any] | None:
 
 
 @router.get("/evaluation/summary")
-def evaluation_summary() -> dict[str, Any]:
+def evaluation_summary(auth: WorkspaceAuth) -> dict[str, Any]:
     """Return the latest local-eval, ablation, and benchmark results for the dashboard."""
+    _ = auth
     return {
         "local_eval": _local_eval_summary(),
         "ablation": _ablation_summary(),

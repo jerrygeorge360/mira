@@ -23,6 +23,7 @@ export default function ChatView() {
   const [status, setStatus] = useState('New chat');
   const bottomRef = useRef<HTMLDivElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const streamAbortRef = useRef<AbortController | null>(null);
   // The session whose messages are currently loaded, so we don't reload after sending.
   const loadedRef = useRef<string | null>(null);
 
@@ -63,6 +64,12 @@ export default function ChatView() {
     adjustComposerHeight();
   }, [input]);
 
+  useEffect(() => {
+    return () => {
+      streamAbortRef.current?.abort();
+    };
+  }, []);
+
   function adjustComposerHeight() {
     const composer = composerRef.current;
     if (!composer) return;
@@ -80,24 +87,75 @@ export default function ChatView() {
     setLoading(true);
 
     if (useRealAgent) {
+      const body = {
+        message: text,
+        session_id: sessionId ?? undefined,
+      };
       try {
-        const res = await api.chat({
-          message: text,
-          session_id: sessionId ?? undefined,
-        });
-        if (res.session_id) {
-          setSessionId(res.session_id);
-          if (activeThread !== res.session_id) {
-            loadedRef.current = res.session_id; // this session's turns are already on screen
-            setActiveThread(res.session_id);
-          }
+        let assistantText = '';
+        const controller = new AbortController();
+        streamAbortRef.current = controller;
+        await api.chatStream(
+          body,
+          (event) => {
+            if (event.type === 'stage') {
+              setStatus(event.message);
+              return;
+            }
+            if (event.type === 'answer') {
+              assistantText += event.delta;
+              setMessages([...next, { role: 'assistant', content: assistantText }]);
+              return;
+            }
+            if (event.type === 'trace') {
+              if (event.session_id) {
+                setSessionId(event.session_id);
+                if (activeThread !== event.session_id) {
+                  loadedRef.current = event.session_id;
+                  setActiveThread(event.session_id);
+                }
+              }
+              if (event.trace_id) setLastTraceId(event.trace_id);
+              setStatus(`Real backend · ${event.retrieval_mode}`);
+              return;
+            }
+            if (event.type === 'complete') {
+              setStatus('Answer complete');
+              return;
+            }
+            if (event.type === 'cancelled') {
+              setStatus('Response stopped');
+              return;
+            }
+            if (event.type === 'error') {
+              throw new Error(event.message);
+            }
+          },
+          controller.signal,
+        );
+        streamAbortRef.current = null;
+        if (!assistantText) {
+          setMessages([...next, { role: 'assistant', content: 'No answer was returned.' }]);
         }
-        if (res.trace_id) setLastTraceId(res.trace_id);
-        setMessages([...next, { role: 'assistant', content: res.answer }]);
-        setStatus(`Real backend · ${res.retrieval_mode}`);
       } catch (err) {
-        setMessages([...next, { role: 'assistant', content: `Error: ${(err as Error).message}` }]);
-        setStatus('Backend error');
+        streamAbortRef.current = null;
+        const message = (err as Error).message;
+        if (!message.includes('API 404')) {
+          setMessages([...next, { role: 'assistant', content: `Error: ${message}` }]);
+          setStatus('Backend error');
+        } else {
+          const res = await api.chat(body);
+          if (res.session_id) {
+            setSessionId(res.session_id);
+            if (activeThread !== res.session_id) {
+              loadedRef.current = res.session_id; // this session's turns are already on screen
+              setActiveThread(res.session_id);
+            }
+          }
+          if (res.trace_id) setLastTraceId(res.trace_id);
+          setMessages([...next, { role: 'assistant', content: res.answer }]);
+          setStatus(`Real backend · ${res.retrieval_mode}`);
+        }
       }
     } else {
       await new Promise(r => setTimeout(r, 600));
@@ -139,7 +197,7 @@ export default function ChatView() {
           <div className="chat-turn">
             <div className="bot-avatar"><BrandMark size={17} /></div>
             <div className="chat-bubble" style={{ color: 'var(--muted)' }}>
-              <span style={{ animation: 'pulse 1s infinite' }}>Thinking…</span>
+              <span style={{ animation: 'pulse 1s infinite' }}>{status}</span>
             </div>
           </div>
         )}

@@ -43,7 +43,7 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     "workspace_type": frozenset({"personal", "demo", "legacy", "development"}),
     "workspace_status": frozenset({"active", "suspended", "expired", "deleting", "deleted"}),
     "workspace_role": frozenset({"owner", "admin", "member"}),
-    "session_record_status": frozenset({"active", "ended", "archived"}),
+    "session_record_status": frozenset({"active", "ended", "archived", "deleted"}),
     "observation_role": frozenset({"user", "assistant", "system", "tool"}),
     "observation_source": frozenset({"chat", "slack", "mcp", "seed", "import"}),
     "slow_path_queue_status": frozenset(
@@ -632,7 +632,7 @@ class WorkspaceRepository:
 
     def get_session(self, session_id: str) -> RepositoryRecord | None:
         rows = _fetch_all(
-            "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+            "SELECT * FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
             (session_id, self.workspace_id),
         )
         return rows[0] if rows else None
@@ -643,7 +643,7 @@ class WorkspaceRepository:
         return _fetch_all(
             """
             SELECT * FROM sessions
-            WHERE workspace_id = ?
+            WHERE workspace_id = ? AND status != 'deleted'
             ORDER BY updated_at DESC LIMIT ?
             """,
             (self.workspace_id, limit),
@@ -763,10 +763,17 @@ def list_sessions(user_id: str | None = None, limit: int = 50) -> list[Repositor
         raise ValueError("limit must be a positive integer")
     if user_id:
         return _fetch_all(
-            "SELECT * FROM sessions WHERE user_id = ? ORDER BY updated_at DESC LIMIT ?",
+            """
+            SELECT * FROM sessions
+            WHERE user_id = ? AND status != 'deleted'
+            ORDER BY updated_at DESC LIMIT ?
+            """,
             (user_id, limit),
         )
-    return _fetch_all("SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,))
+    return _fetch_all(
+        "SELECT * FROM sessions WHERE status != 'deleted' ORDER BY updated_at DESC LIMIT ?",
+        (limit,),
+    )
 
 
 def message_counts_by_session() -> dict[str, int]:
@@ -774,7 +781,11 @@ def message_counts_by_session() -> dict[str, int]:
     with repository_connection() as connection:
         rows = connection.execute(
             "SELECT session_id, COUNT(*) AS n FROM observations "
-            "WHERE role IN ('user', 'assistant') GROUP BY session_id"
+            """
+            WHERE role IN ('user', 'assistant')
+              AND session_id IN (SELECT id FROM sessions WHERE status != 'deleted')
+            GROUP BY session_id
+            """
         ).fetchall()
     return {str(row["session_id"]): int(row["n"]) for row in rows}
 

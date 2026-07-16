@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
+import { useApp } from '../context/AppContext';
 import GraphView, { type GraphData } from './GraphView';
 import { ViewStatus } from './ViewStatus';
 
@@ -15,6 +16,7 @@ const TYPE_COLORS: Record<string, string> = {
 
 type Row = Record<string, unknown>;
 type EdgeCategory = 'all' | 'change' | 'conflict' | 'evidence' | 'causal' | 'other';
+type TimeFilter = 'all' | 'today' | 'week' | 'month';
 
 const EDGE_CATEGORIES: { id: EdgeCategory; label: string; types?: string[] }[] = [
   { id: 'all', label: 'All' },
@@ -64,10 +66,16 @@ function toGraphData(nodes: Row[], edges: Row[]): GraphData {
 }
 
 export default function MemoryGraphView() {
+  const { memoryRefreshKey } = useApp();
+  const [search, setSearch] = useState('');
   const [nodeTypeFilter, setNodeTypeFilter] = useState<string>('all');
   const [edgeTypeFilter, setEdgeTypeFilter] = useState<string>('all');
   const [edgeCategoryFilter, setEdgeCategoryFilter] = useState<EdgeCategory>('all');
-  const { data, status } = useLiveData(() => api.memoryGraph({ limit: 150 }), []);
+  const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
+  const { data, status } = useLiveData(
+    () => api.memoryGraph({ limit: 150 }),
+    [memoryRefreshKey],
+  );
   const nodes = useMemo(() => (data?.nodes ?? []) as Row[], [data]);
   const edges = useMemo(() => (data?.edges ?? []) as Row[], [data]);
   const nodeTypes = useMemo(
@@ -78,9 +86,25 @@ export default function MemoryGraphView() {
     () => Array.from(new Set(edges.map((edge) => String(edge.edge_type ?? 'RELATED')))).sort(),
     [edges],
   );
+  const searchEdgeNodeIds = useMemo(() => {
+    if (!search.trim()) return new Set<string>();
+    const ids = new Set<string>();
+    for (const edge of edges) {
+      if (!matchesSearch(edge, search)) continue;
+      ids.add(String(edge.source_node_id ?? edge.source));
+      ids.add(String(edge.target_node_id ?? edge.target));
+    }
+    return ids;
+  }, [edges, search]);
   const filteredNodes = useMemo(
-    () => nodes.filter((node) => nodeTypeFilter === 'all' || String(node.node_type ?? 'entity') === nodeTypeFilter),
-    [nodes, nodeTypeFilter],
+    () => nodes.filter((node) => {
+      const matchesType = nodeTypeFilter === 'all'
+        || String(node.node_type ?? 'entity') === nodeTypeFilter;
+      const nodeId = String(node.id);
+      const matchesQuery = matchesSearch(node, search) || searchEdgeNodeIds.has(nodeId);
+      return matchesType && matchesQuery && matchesTime(node, timeFilter);
+    }),
+    [nodes, nodeTypeFilter, search, searchEdgeNodeIds, timeFilter],
   );
   const filteredEdges = useMemo(() => {
     const visibleIds = new Set(filteredNodes.map((node) => String(node.id)));
@@ -91,9 +115,11 @@ export default function MemoryGraphView() {
       return visibleIds.has(source)
         && visibleIds.has(target)
         && matchesEdgeCategory(type, edgeCategoryFilter)
-        && (edgeTypeFilter === 'all' || type === edgeTypeFilter);
+        && (edgeTypeFilter === 'all' || type === edgeTypeFilter)
+        && matchesSearch(edge, search)
+        && matchesTime(edge, timeFilter);
     });
-  }, [edges, filteredNodes, edgeCategoryFilter, edgeTypeFilter]);
+  }, [edges, filteredNodes, edgeCategoryFilter, edgeTypeFilter, search, timeFilter]);
 
   return (
     <div>
@@ -122,6 +148,24 @@ export default function MemoryGraphView() {
             ))}
           </div>
           <div className="graph-filter-panel">
+            <div className="graph-filter-row">
+              <label className="graph-search">
+                <span>Search graph</span>
+                <input
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Find entity, edge, source ID, or relationship"
+                />
+              </label>
+              <div className="graph-quick-actions">
+                <button type="button" onClick={() => setEdgeCategoryFilter('conflict')}>
+                  Show contradiction chain
+                </button>
+                <button type="button" onClick={() => setEdgeCategoryFilter('evidence')}>
+                  Show evidence lineage
+                </button>
+              </div>
+            </div>
             <div className="graph-filter-group">
               <span>Nodes</span>
               <button
@@ -178,6 +222,24 @@ export default function MemoryGraphView() {
                 </button>
               ))}
             </div>
+            <div className="graph-filter-group">
+              <span>Time range</span>
+              {[
+                ['all', 'All time'],
+                ['today', 'Today'],
+                ['week', '7 days'],
+                ['month', '30 days'],
+              ].map(([value, label]) => (
+                <button
+                  type="button"
+                  key={value}
+                  className={timeFilter === value ? 'active' : ''}
+                  onClick={() => setTimeFilter(value as TimeFilter)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
             <div className="graph-filter-count">
               Showing {filteredNodes.length} nodes · {filteredEdges.length} edges
             </div>
@@ -215,6 +277,24 @@ function objectRecord(value: unknown): Record<string, unknown> | undefined {
     return value as Record<string, unknown>;
   }
   return undefined;
+}
+
+function matchesSearch(record: Row, query: string): boolean {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  return JSON.stringify(record).toLowerCase().includes(needle);
+}
+
+function matchesTime(record: Row, filter: TimeFilter): boolean {
+  if (filter === 'all') return true;
+  const value = maybeString(record.created_at) ?? maybeString(record.valid_from);
+  if (!value) return false;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return false;
+  const ageMs = Date.now() - timestamp;
+  if (filter === 'today') return ageMs <= 24 * 60 * 60 * 1000;
+  if (filter === 'week') return ageMs <= 7 * 24 * 60 * 60 * 1000;
+  return ageMs <= 30 * 24 * 60 * 60 * 1000;
 }
 
 function matchesEdgeCategory(type: string, category: EdgeCategory): boolean {

@@ -15,6 +15,7 @@ import {
   Sun,
   Moon,
   LogOut,
+  Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
@@ -45,13 +46,14 @@ export default function Rail() {
     activeThread, setActiveThread,
     sessionId, setSessionId,
     railCollapsed, setRailCollapsed,
-    authUser, signOut,
+    authUser, signOut, deleteWorkspaceData,
+    historyRefreshKey, refreshHistory, refreshMemory,
   } = useApp();
 
   // Refetch when the active session changes so a brand-new conversation appears in history.
   const { data, status } = useLiveData(
     () => api.sessions({ limit: 30 }),
-    [sessionId, authUser?.workspaceId],
+    [sessionId, authUser?.workspaceId, historyRefreshKey],
   );
   const threads = data?.sessions ?? [];
 
@@ -65,6 +67,30 @@ export default function Rail() {
     setView('Chat');
     setActiveThread(id);
     setSessionId(id);
+  }
+
+  async function deleteThread(id: string, title: string | null) {
+    const label = title || 'this chat';
+    const confirmed = window.confirm(
+      `Delete ${label}? This removes the conversation and deactivates memory derived only from it.`,
+    );
+    if (!confirmed) return;
+    await api.deleteSession(id);
+    if (activeThread === id || sessionId === id) {
+      startNewChat();
+    }
+    refreshHistory();
+    refreshMemory();
+  }
+
+  async function handleDeleteWorkspaceData() {
+    const firstConfirmed = window.confirm(
+      'Delete all memory in this workspace? This removes chats, memory records, traces, graph data, and vector pointers. Your account stays active.',
+    );
+    if (!firstConfirmed) return;
+    const typed = window.prompt('Type DELETE MEMORY to confirm workspace memory deletion.');
+    if (typed !== 'DELETE MEMORY') return;
+    await deleteWorkspaceData();
   }
 
   return (
@@ -142,14 +168,26 @@ export default function Rail() {
           <>
             <div className="rail-section-label">History</div>
             {threads.map(t => (
-              <button
+              <div
                 key={t.session_id}
-                className={`rail-history-btn${activeThread === t.session_id ? ' active' : ''}`}
-                onClick={() => selectThread(t.session_id)}
+                className={`rail-history-row${activeThread === t.session_id ? ' active' : ''}`}
               >
-                <h4>{t.title || 'Untitled chat'}</h4>
-                <small>{t.message_count} message{t.message_count === 1 ? '' : 's'}</small>
-              </button>
+                <button
+                  className="rail-history-btn"
+                  onClick={() => selectThread(t.session_id)}
+                >
+                  <h4>{t.title || 'Untitled chat'}</h4>
+                  <small>{t.message_count} message{t.message_count === 1 ? '' : 's'}</small>
+                </button>
+                <button
+                  className="rail-history-delete"
+                  onClick={() => deleteThread(t.session_id, t.title)}
+                  title="Delete chat"
+                  aria-label={`Delete ${t.title || 'chat'}`}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
             ))}
             {threads.length === 0 && (
               <div className="rail-history-empty">
@@ -162,19 +200,43 @@ export default function Rail() {
 
       {/* footer */}
       <div className="rail-footer">
-        <div className="rail-avatar">{authUser?.avatarInitial ?? 'D'}</div>
-        {!railCollapsed && (
-          <div className="rail-user-meta">
-            <strong>{authUser?.name ?? 'Demo account'}</strong>
-            <small>{authUser?.workspaceName ?? 'Workspace'}</small>
-          </div>
+        <div className="rail-account-row">
+          <div className="rail-avatar">{authUser?.avatarInitial ?? 'D'}</div>
+          {!railCollapsed && (
+            <div className="rail-user-meta">
+              <strong>{authUser?.name ?? 'Demo account'}</strong>
+              <small>{authUser?.workspaceName ?? 'Workspace'}</small>
+            </div>
+          )}
+          <button className="theme-toggle" onClick={signOut} title="Sign out">
+            <LogOut size={15} />
+          </button>
+          <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme" style={{ marginLeft: 'auto' }}>
+            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+          </button>
+        </div>
+        {!railCollapsed ? (
+          <button
+            className="rail-reset-memory"
+            onClick={handleDeleteWorkspaceData}
+            title="Delete all workspace memory"
+          >
+            <Trash2 size={14} />
+            <span>
+              <strong>Delete all memory</strong>
+              <small>Clear chats, traces, graph, and durable memory.</small>
+            </span>
+          </button>
+        ) : (
+          <button
+            className="theme-toggle danger"
+            onClick={handleDeleteWorkspaceData}
+            title="Delete all workspace memory"
+            aria-label="Delete all workspace memory"
+          >
+            <Trash2 size={15} />
+          </button>
         )}
-        <button className="theme-toggle" onClick={signOut} title="Sign out">
-          <LogOut size={15} />
-        </button>
-        <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme" style={{ marginLeft: 'auto' }}>
-          {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-        </button>
       </div>
     </nav>
   );

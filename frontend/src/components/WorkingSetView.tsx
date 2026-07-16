@@ -25,10 +25,10 @@ const GROUPS = [
 ] as const;
 
 export default function WorkingSetView() {
-  const { sessionId, setView } = useApp();
+  const { sessionId, setView, memoryRefreshKey } = useApp();
   const { data, status } = useLiveData(
     () => (sessionId ? api.sessionWorkingSet(sessionId) : Promise.reject(new Error('no session'))),
-    [sessionId],
+    [sessionId, memoryRefreshKey],
   );
   const rows = (data?.items as Row[] | undefined) ?? [];
 

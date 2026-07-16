@@ -1,12 +1,17 @@
 import { GitMerge, Network, ShieldCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
+import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
 
 type Row = Record<string, unknown>;
 
 export default function CommunitiesView() {
-  const { data, status } = useLiveData(() => api.communitySummaries({ limit: 50 }), []);
+  const { memoryRefreshKey } = useApp();
+  const { data, status } = useLiveData(
+    () => api.communitySummaries({ limit: 50 }),
+    [memoryRefreshKey],
+  );
   const items = (data?.items as Row[] | undefined) ?? [];
 
   return (

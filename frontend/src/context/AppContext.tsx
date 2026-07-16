@@ -25,6 +25,7 @@ interface AppState {
   authReady: boolean;
   signInDemo: () => Promise<void>;
   signOut: () => Promise<void>;
+  deleteWorkspaceData: () => Promise<void>;
   activeThread: string;
   setActiveThread: (id: string) => void;
   useRealAgent: boolean;
@@ -35,6 +36,10 @@ interface AppState {
   setLastTraceId: (id: string | null) => void;
   railCollapsed: boolean;
   setRailCollapsed: (v: boolean) => void;
+  historyRefreshKey: number;
+  refreshHistory: () => void;
+  memoryRefreshKey: number;
+  refreshMemory: () => void;
 }
 
 const AppCtx = createContext<AppState | null>(null);
@@ -56,6 +61,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [lastTraceId, setLastTraceId] = useState<string | null>(null);
   const [railCollapsed, setRailCollapsed] = useState(false);
+  const [historyRefreshKey, setHistoryRefreshKey] = useState(0);
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -83,6 +90,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleTheme = () => setTheme(t => (t === 'dark' ? 'light' : 'dark'));
+  const refreshHistory = () => setHistoryRefreshKey(value => value + 1);
+  const refreshMemory = () => setMemoryRefreshKey(value => value + 1);
   const signInDemo = async () => {
     await api.startDemo();
     const auth = await api.authMe();
@@ -98,10 +107,19 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setView('Chat');
     setPage('auth');
   };
+  const deleteWorkspaceData = async () => {
+    await api.deleteWorkspaceData();
+    setSessionId(null);
+    setActiveThread('new');
+    setLastTraceId(null);
+    setView('Chat');
+    refreshHistory();
+    refreshMemory();
+  };
 
   return (
     <AppCtx.Provider
-      value={{ view, setView, theme, toggleTheme, page, setPage, authUser, authReady, signInDemo, signOut, activeThread, setActiveThread, useRealAgent, setUseRealAgent, sessionId, setSessionId, lastTraceId, setLastTraceId, railCollapsed, setRailCollapsed }}
+      value={{ view, setView, theme, toggleTheme, page, setPage, authUser, authReady, signInDemo, signOut, deleteWorkspaceData, activeThread, setActiveThread, useRealAgent, setUseRealAgent, sessionId, setSessionId, lastTraceId, setLastTraceId, railCollapsed, setRailCollapsed, historyRefreshKey, refreshHistory, memoryRefreshKey, refreshMemory }}
     >
       <div className="theme-root" data-theme={theme}>{children}</div>
     </AppCtx.Provider>

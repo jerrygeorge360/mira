@@ -1453,7 +1453,7 @@ input, textarea { font-family: inherit; }
 
 .rail-history-btn {
   display: block;
-  width: calc(100% - 16px);
+  width: 100%;
   margin: 1px 8px;
   padding: 8px 12px;
   border: none;
@@ -1467,7 +1467,14 @@ input, textarea { font-family: inherit; }
   overflow: hidden;
 }
 .rail-history-btn:hover { background: var(--surface-hover); color: var(--text); }
-.rail-history-btn.active { background: var(--accent-soft); color: var(--accent); }
+.rail-history-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  gap: 0;
+  padding-right: 8px;
+}
+.rail-history-row.active .rail-history-btn { background: var(--accent-soft); color: var(--accent); }
 .rail-history-btn h4 {
   font-weight: 600;
   font-size: 0.84rem;
@@ -1480,10 +1487,37 @@ input, textarea { font-family: inherit; }
   font-size: 0.75rem;
   white-space: nowrap;
 }
+.rail-history-delete {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--transition), background var(--transition), color var(--transition);
+}
+.rail-history-row:hover .rail-history-delete,
+.rail-history-delete:focus-visible {
+  opacity: 1;
+}
+.rail-history-delete:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
 
 .rail-footer {
   padding: 12px;
   border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rail-account-row {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1502,6 +1536,42 @@ input, textarea { font-family: inherit; }
 }
 .rail-user-meta strong { font-size: 0.88rem; display: block; }
 .rail-user-meta small { font-size: 0.75rem; color: var(--muted); }
+.rail-reset-memory {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.rail-reset-memory:hover {
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.rail-reset-memory svg {
+  flex-shrink: 0;
+}
+.rail-reset-memory span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.rail-reset-memory strong {
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+.rail-reset-memory small {
+  color: color-mix(in srgb, var(--danger) 68%, var(--muted));
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
 
 /* ── Main workspace ──────────────────────────────────────────────── */
 .workspace {
@@ -1830,6 +1900,58 @@ input, textarea { font-family: inherit; }
   border-radius: var(--radius-md);
   background: var(--surface);
 }
+.graph-filter-row {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+}
+.graph-search {
+  display: grid;
+  gap: 6px;
+}
+.graph-search span {
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 800;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+}
+.graph-search input {
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--text);
+  outline: none;
+}
+.graph-search input:focus {
+  border-color: var(--border-strong);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.graph-quick-actions {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.graph-quick-actions button {
+  min-height: 38px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 8px 10px;
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+.graph-quick-actions button:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--surface-hover);
+}
 .graph-filter-group {
   display: flex;
   align-items: center;
@@ -1934,8 +2056,23 @@ input, textarea { font-family: inherit; }
   height: 460px;
   display: block;
 }
-.graph-link-line {
-  transition: stroke-opacity var(--transition), stroke-width var(--transition);
+.graph-link-line,
+.graph-node {
+  transition: opacity var(--transition), stroke-opacity var(--transition), stroke-width var(--transition), filter var(--transition);
+}
+.graph-link-line.dimmed,
+.graph-node.dimmed {
+  opacity: 0.18;
+}
+.graph-link-line.highlighted {
+  stroke-width: 4px;
+  stroke-opacity: 1;
+  filter: drop-shadow(0 0 5px var(--accent-glow));
+}
+.graph-node.highlighted {
+  opacity: 1;
+  stroke-width: 4px;
+  filter: drop-shadow(0 0 8px var(--accent-glow));
 }
 .graph-link-hitbox:hover + .graph-edge-label,
 .graph-edge-label:hover {
@@ -3793,6 +3930,11 @@ input, textarea { font-family: inherit; }
   cursor: pointer;
 }
 .theme-toggle:hover { background: var(--surface-hover); color: var(--text); }
+.theme-toggle.danger { color: var(--danger); }
+.theme-toggle.danger:hover {
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+  color: var(--danger);
+}
 
 /* ── Agent status indicator ──────────────────────────────────────── */
 .agent-toggle {
@@ -3907,11 +4049,19 @@ input, textarea { font-family: inherit; }
   }
   .rail.collapsed .rail-footer {
     justify-content: center;
+    align-items: center;
+    gap: 8px;
   }
-  .rail.collapsed .rail-footer .theme-toggle,
+  .rail.collapsed .rail-account-row {
+    justify-content: center;
+  }
   .rail.collapsed .rail-section-label,
   .rail.collapsed .rail-history-btn,
+  .rail.collapsed .rail-history-row,
   .rail.collapsed .rail-history-empty {
+    display: none;
+  }
+  .rail.collapsed .rail-account-row .theme-toggle {
     display: none;
   }
   .rail-new-chat,
@@ -4143,6 +4293,15 @@ input, textarea { font-family: inherit; }
   }
   .graph-filter-panel {
     padding: 10px;
+  }
+  .graph-filter-row {
+    grid-template-columns: 1fr;
+  }
+  .graph-quick-actions {
+    justify-content: flex-start;
+  }
+  .graph-quick-actions button {
+    flex: 1 1 160px;
   }
   .graph-filter-group {
     gap: 6px;
