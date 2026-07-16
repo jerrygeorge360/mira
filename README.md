@@ -235,6 +235,26 @@ Demo accounts use short-lived demo workspaces:
 make demo-cleanup
 ```
 
+The API also exposes a self-service workspace reset for logged-in users:
+
+```text
+DELETE /workspace/data
+```
+
+It deletes sessions, observations, memory records, traces, queue state, and Chroma pointers for
+the authenticated workspace while keeping the account/workspace login intact.
+
+Local/Docker deployments include a small in-process rate limiter:
+
+```bash
+MIRA_RATE_LIMIT_ENABLED=true
+MIRA_RATE_LIMIT_REQUESTS=120
+MIRA_CHAT_RATE_LIMIT_REQUESTS=30
+MIRA_RATE_LIMIT_WINDOW_S=60
+```
+
+For a multi-instance production deployment, replace this with a shared Redis or edge limiter.
+
 ## Demo
 
 The older Streamlit UI is still useful for inspection and demos:
@@ -268,8 +288,10 @@ Useful endpoints:
 - `GET /auth/me`
 - `POST /auth/logout`
 - `POST /auth/demo`
+- `DELETE /workspace/data`
 - `POST /sessions`
 - `GET /sessions/{session_id}`
+- `DELETE /sessions/{session_id}`
 - `POST /chat`
 - `GET /sessions/{session_id}/working-set`
 - `GET /memory/graph`
@@ -546,11 +568,13 @@ Persistent Docker data:
 
 - SQLite: `.docker-data/sqlite/mira.db`
 - Chroma: `.docker-data/chroma`
+- Local embedding model cache: `.docker-data/model-cache`
 
 Inside the containers these are mounted as:
 
 - `MIRA_DB_PATH=/data/sqlite/mira.db`
 - `CHROMA_DB_PATH=/data/chroma`
+- `LOCAL_EMBEDDING_CACHE_DIR=/data/model-cache`
 
 Run checks inside Docker:
 

@@ -17,6 +17,7 @@ from api.schemas.sessions import (
 )
 from core.db.repositories import bind_workspace, list_observations, message_counts_by_session
 from core.session.read_models import active_session_items, list_session_working_set_read_model
+from core.session_deletion import delete_session_data
 
 router = APIRouter(prefix="/sessions", tags=["sessions"])
 
@@ -79,6 +80,21 @@ def get_session_messages_route(
     return SessionMessagesResponse(session_id=session_id, messages=messages)
 
 
+@router.delete("/{session_id}")
+def delete_session_route(
+    request: Request,
+    session_id: str,
+    auth: WorkspaceAuth,
+) -> dict[str, object]:
+    """Delete one chat session and deactivate memory derived only from it."""
+    require_csrf(request, auth)
+    try:
+        deleted = delete_session_data(session_id, workspace_id=auth.context.workspace_id)
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return {"status": "deleted", "session_id": session_id, "deleted": deleted}
+
+
 @router.get("/{session_id}", response_model=SessionResponse)
 def get_session_route(
     session_id: str,
@@ -114,7 +130,7 @@ def get_working_set_route(
 
 def _get_session_or_404(session_id: str, workspace_id: str) -> dict[str, object]:
     row = fetch_one(
-        "SELECT * FROM sessions WHERE id = ? AND workspace_id = ?",
+        "SELECT * FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
         (session_id, workspace_id),
     )
     if row is None:

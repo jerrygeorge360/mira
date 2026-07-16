@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     MIRA_DB_PATH=/data/sqlite/mira.db \
-    CHROMA_DB_PATH=/data/chroma
+    CHROMA_DB_PATH=/data/chroma \
+    LOCAL_EMBEDDING_CACHE_DIR=/data/model-cache
 
 WORKDIR /app
 
@@ -18,7 +19,7 @@ RUN python -m pip install --upgrade pip \
 
 COPY . .
 
-RUN mkdir -p /data/sqlite /data/chroma
+RUN mkdir -p /data/sqlite /data/chroma /data/model-cache
 
 EXPOSE 8000
 

@@ -18,6 +18,7 @@ services:
     environment:
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
+      LOCAL_EMBEDDING_CACHE_DIR: /data/model-cache
       MIRA_API_CORS_ORIGINS: ${MIRA_API_CORS_ORIGINS:-http://localhost:${FRONTEND_PORT:-5173}}
       GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-http://localhost:${API_PORT:-8000}/auth/github/callback}
       APP_BASE_URL: ${APP_BASE_URL:-http://localhost:${FRONTEND_PORT:-5173}}
@@ -27,6 +28,7 @@ services:
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
+      - ./.docker-data/model-cache:/data/model-cache
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
@@ -51,9 +53,11 @@ services:
     environment:
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
+      LOCAL_EMBEDDING_CACHE_DIR: /data/model-cache
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
+      - ./.docker-data/model-cache:/data/model-cache
     depends_on:
       api:
         condition: service_healthy
@@ -88,6 +92,8 @@ services:
     environment:
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
+      LOCAL_EMBEDDING_CACHE_DIR: /data/model-cache
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
+      - ./.docker-data/model-cache:/data/model-cache

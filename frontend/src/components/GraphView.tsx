@@ -44,6 +44,7 @@ type LabelMode = 'key' | 'entities' | 'none';
 
 export default function GraphView({ height = 460, data }: Props) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const graphGroupRef = useRef<SVGGElement | null>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [selectedNode, setSelectedNode] = useState<Node | null>(null);
   const [selectedEdge, setSelectedEdge] = useState<Link | null>(null);
@@ -70,6 +71,7 @@ export default function GraphView({ height = 460, data }: Props) {
       .force('collision', d3.forceCollide<Node>(d => d.val * 3.5));
 
     const g = svg.append('g');
+    graphGroupRef.current = g.node();
 
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.2, 4])
@@ -133,6 +135,7 @@ export default function GraphView({ height = 460, data }: Props) {
       .selectAll<SVGCircleElement, Node>('circle')
       .data(nodes)
       .join('circle')
+      .attr('class', 'graph-node')
       .attr('r', d => d.val * 2.8)
       .attr('fill', d => d.color)
       .attr('fill-opacity', 0.85)
@@ -201,8 +204,44 @@ export default function GraphView({ height = 460, data }: Props) {
     return () => {
       sim.stop();
       zoomRef.current = null;
+      graphGroupRef.current = null;
     };
   }, [height, data, labelMode]);
+
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const selectedNodeId = selectedNode?.id;
+    const selectedEdgeId = selectedEdge?.id;
+    const selectedEdgeSource = selectedEdge ? nodeId(selectedEdge.source) : null;
+    const selectedEdgeTarget = selectedEdge ? nodeId(selectedEdge.target) : null;
+
+    d3.select(el)
+      .selectAll<SVGLineElement, Link>('line.graph-link-line')
+      .classed('highlighted', d => {
+        if (selectedEdgeId) return d.id === selectedEdgeId;
+        if (selectedNodeId) return nodeId(d.source) === selectedNodeId || nodeId(d.target) === selectedNodeId;
+        return false;
+      })
+      .classed('dimmed', d => {
+        if (selectedEdgeId) return d.id !== selectedEdgeId;
+        if (selectedNodeId) return nodeId(d.source) !== selectedNodeId && nodeId(d.target) !== selectedNodeId;
+        return false;
+      });
+
+    d3.select(el)
+      .selectAll<SVGCircleElement, Node>('circle.graph-node')
+      .classed('highlighted', d => {
+        if (selectedNodeId) return d.id === selectedNodeId;
+        if (selectedEdgeId) return d.id === selectedEdgeSource || d.id === selectedEdgeTarget;
+        return false;
+      })
+      .classed('dimmed', d => {
+        if (selectedNodeId) return d.id !== selectedNodeId;
+        if (selectedEdgeId) return d.id !== selectedEdgeSource && d.id !== selectedEdgeTarget;
+        return false;
+      });
+  }, [selectedNode, selectedEdge]);
 
   function zoomBy(factor: number) {
     const el = svgRef.current;
@@ -216,6 +255,46 @@ export default function GraphView({ height = 460, data }: Props) {
     const zoom = zoomRef.current;
     if (!el || !zoom) return;
     d3.select(el).transition().duration(180).call(zoom.transform, d3.zoomIdentity);
+  }
+
+  function fitVisible() {
+    const el = svgRef.current;
+    const group = graphGroupRef.current;
+    const zoom = zoomRef.current;
+    if (!el || !group || !zoom) return;
+    const box = group.getBBox();
+    if (!box.width || !box.height) return;
+    const width = el.clientWidth || 800;
+    const scale = Math.max(0.2, Math.min(3, 0.88 / Math.max(box.width / width, box.height / height)));
+    const x = (width - box.width * scale) / 2 - box.x * scale;
+    const y = (height - box.height * scale) / 2 - box.y * scale;
+    d3.select(el)
+      .transition()
+      .duration(220)
+      .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
+  }
+
+  function fitSelection() {
+    const el = svgRef.current;
+    const zoom = zoomRef.current;
+    if (!el || !zoom) return;
+    const width = el.clientWidth || 800;
+    const point = selectedNode
+      ? { x: selectedNode.x ?? width / 2, y: selectedNode.y ?? height / 2 }
+      : selectedEdge
+        ? midpoint(selectedEdge)
+        : null;
+    if (!point) {
+      fitVisible();
+      return;
+    }
+    const scale = 1.8;
+    const x = width / 2 - point.x * scale;
+    const y = height / 2 - point.y * scale;
+    d3.select(el)
+      .transition()
+      .duration(220)
+      .call(zoom.transform, d3.zoomIdentity.translate(x, y).scale(scale));
   }
 
   const TYPE_COLORS: Record<string, string> = {
@@ -232,6 +311,8 @@ export default function GraphView({ height = 460, data }: Props) {
       <div className="graph-toolbar" aria-label="Graph controls">
         <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">+</button>
         <button type="button" onClick={() => zoomBy(0.8)} aria-label="Zoom out">−</button>
+        <button type="button" onClick={fitVisible}>Fit</button>
+        <button type="button" onClick={fitSelection}>Selection</button>
         <button type="button" onClick={resetZoom}>Reset</button>
       </div>
       <div className="graph-label-toolbar" aria-label="Graph label mode">
@@ -337,6 +418,20 @@ export default function GraphView({ height = 460, data }: Props) {
 function nodeName(node: string | number | Node | undefined): string {
   if (node && typeof node === 'object' && 'name' in node) return node.name;
   return String(node ?? 'unknown');
+}
+
+function nodeId(node: string | number | Node | undefined): string {
+  if (node && typeof node === 'object' && 'id' in node) return node.id;
+  return String(node ?? '');
+}
+
+function midpoint(edge: Link): { x: number; y: number } {
+  const source = edge.source as Node;
+  const target = edge.target as Node;
+  return {
+    x: ((source.x ?? 0) + (target.x ?? 0)) / 2,
+    y: ((source.y ?? 0) + (target.y ?? 0)) / 2,
+  };
 }
 
 function shortLabel(value: string): string {

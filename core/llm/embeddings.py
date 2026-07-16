@@ -27,6 +27,7 @@ EMBEDDING_MODE_ENV = "EMBEDDING_MODE"
 EMBEDDING_FALLBACK_ENV = "EMBEDDING_FALLBACK"
 LOCAL_EMBEDDING_PROVIDER_ENV = "LOCAL_EMBEDDING_PROVIDER"
 LOCAL_EMBEDDING_MODEL_ENV = "LOCAL_EMBEDDING_MODEL"
+LOCAL_EMBEDDING_CACHE_DIR_ENV = "LOCAL_EMBEDDING_CACHE_DIR"
 DEFAULT_EMBEDDING_MODEL = "text-embedding-v4"
 DEFAULT_EMBEDDING_MODE = "auto"
 DEFAULT_EMBEDDING_FALLBACK = "deterministic"
@@ -111,7 +112,8 @@ def _load_fastembed_model(model_name: str) -> object:
         raise LLMConfigurationError(
             "Missing dependency: install 'fastembed' to use EMBEDDING_MODE=local"
         ) from error
-    _LOCAL_EMBEDDING_MODEL = TextEmbedding(model_name=model_name)
+    cache_dir = os.environ.get(LOCAL_EMBEDDING_CACHE_DIR_ENV) or None
+    _LOCAL_EMBEDDING_MODEL = TextEmbedding(model_name=model_name, cache_dir=cache_dir)
     _LOCAL_EMBEDDING_MODEL_NAME = model_name
     return _LOCAL_EMBEDDING_MODEL
 

@@ -1,9 +1,11 @@
 import { api } from '../api/client';
 import { useLiveData, formatTime } from '../api/useLiveData';
+import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
 
 export default function ReflectionsView() {
-  const { data, status } = useLiveData(() => api.reflections({ limit: 50 }), []);
+  const { memoryRefreshKey } = useApp();
+  const { data, status } = useLiveData(() => api.reflections({ limit: 50 }), [memoryRefreshKey]);
   const items = data?.items ?? [];
 
   return (
