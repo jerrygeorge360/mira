@@ -1513,6 +1513,12 @@ input, textarea { font-family: inherit; }
   padding: 12px;
   border-top: 1px solid var(--border);
   display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.rail-account-row {
+  width: 100%;
+  display: flex;
   align-items: center;
   gap: 10px;
 }
@@ -1530,6 +1536,42 @@ input, textarea { font-family: inherit; }
 }
 .rail-user-meta strong { font-size: 0.88rem; display: block; }
 .rail-user-meta small { font-size: 0.75rem; color: var(--muted); }
+.rail-reset-memory {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid color-mix(in srgb, var(--danger) 28%, var(--border));
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--danger) 7%, transparent);
+  color: var(--danger);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.rail-reset-memory:hover {
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--border));
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
+}
+.rail-reset-memory svg {
+  flex-shrink: 0;
+}
+.rail-reset-memory span {
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+.rail-reset-memory strong {
+  font-size: 0.82rem;
+  line-height: 1.15;
+}
+.rail-reset-memory small {
+  color: color-mix(in srgb, var(--danger) 68%, var(--muted));
+  font-size: 0.72rem;
+  line-height: 1.25;
+}
 
 /* ── Main workspace ──────────────────────────────────────────────── */
 .workspace {
@@ -4007,12 +4049,19 @@ input, textarea { font-family: inherit; }
   }
   .rail.collapsed .rail-footer {
     justify-content: center;
+    align-items: center;
+    gap: 8px;
   }
-  .rail.collapsed .rail-footer .theme-toggle,
+  .rail.collapsed .rail-account-row {
+    justify-content: center;
+  }
   .rail.collapsed .rail-section-label,
   .rail.collapsed .rail-history-btn,
   .rail.collapsed .rail-history-row,
   .rail.collapsed .rail-history-empty {
+    display: none;
+  }
+  .rail.collapsed .rail-account-row .theme-toggle {
     display: none;
   }
   .rail-new-chat,
