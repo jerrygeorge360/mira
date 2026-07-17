@@ -36,7 +36,7 @@
           uses: docker/build-push-action@v6
           with:
             context: ./frontend
-            target: dev
+            target: production
             push: true
             build-args: |
               VITE_API_URL=/api
