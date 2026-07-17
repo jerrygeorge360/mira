@@ -55,24 +55,13 @@ services:
   frontend:
     image: deltronfr/mira-frontend:${IMAGE_TAG:-latest}
     expose:
-      - "5173"
-    environment:
-      VITE_API_URL: ${VITE_API_URL:-/api}
+      - "80"
     depends_on:
       api:
         condition: service_healthy
     healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:5173').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
-        ]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
       interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
 
   logs:
     image: amir20/dozzle:latest
@@ -90,9 +79,21 @@ services:
     volumes:
         - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
         - ./nginx/nginx_secrets:/etc/nginx/secrets:ro
+        - certbot-www:/var/www/certbot
+        - certbot-etc:/etc/letsencrypt:ro
     depends_on:
       api:
         condition: service_healthy
       frontend:
         condition: service_healthy
+
+  certbot:
+    image: certbot/certbot:latest
+    volumes:
+      - certbot-www:/var/www/certbot
+      - certbot-etc:/etc/letsencrypt
+
+volumes:
+  certbot-www:
+  certbot-etc:
 

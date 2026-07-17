@@ -38,6 +38,8 @@
             context: ./frontend
             target: dev
             push: true
+            build-args: |
+              VITE_API_URL=/api
             tags: |
               deltronfr/mira-frontend:${{ github.sha }}
               deltronfr/mira-frontend:latest
