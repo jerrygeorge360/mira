@@ -36,3 +36,6 @@ evaluation/ablation/results/
 # Downloaded benchmark datasets
 data/benchmarks/longmemeval.json
 data/raw/
+
+**/nginx_secrets/
+**/.htpasswd
