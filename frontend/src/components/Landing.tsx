@@ -648,6 +648,9 @@ export default function Landing() {
               <a href="https://github.com/jerrygeorge360" target="_blank" rel="noreferrer">
                 GitHub · jerrygeorge360
               </a>
+              <a href="https://github.com/deltron-fr" target="_blank" rel="noreferrer">
+                GitHub · deltron-fr
+              </a>
             </div>
           </nav>
         </footer>
