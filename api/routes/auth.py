@@ -17,6 +17,7 @@ from api.auth import (
     create_oauth_state,
     exchange_github_code,
     github_callback_target,
+    is_platform_admin,
     issue_auth_session,
     provision_github_identity,
     require_csrf,
@@ -83,6 +84,7 @@ def auth_me(
         },
         "auth_mode": auth.context.auth_mode,
         "expires_at": auth.expires_at,
+        "is_platform_admin": is_platform_admin(auth),
         "ready": True,
     }
 

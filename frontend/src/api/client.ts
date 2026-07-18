@@ -88,7 +88,31 @@ export interface AuthResponse {
   workspace: { id: string; name: string };
   auth_mode: 'github' | 'demo' | 'development';
   expires_at: string | null;
+  is_platform_admin: boolean;
   ready: boolean;
+}
+
+export interface AdminOverviewResponse {
+  generated_at: string;
+  users: {
+    registered: number;
+    new_last_7_days: number;
+    new_last_30_days: number;
+    active_last_7_days: number;
+  };
+  workspaces: Record<string, number>;
+  activity: {
+    active_web_sessions: number;
+    conversations: number;
+    observations: number;
+    retrieval_traces: number;
+  };
+  queue: Record<string, number>;
+  oauth: {
+    registered_clients: number;
+    active_access_tokens: number;
+  };
+  registrations_last_30_days: Array<{ date: string; count: number }>;
 }
 
 export const api = {
@@ -98,6 +122,8 @@ export const api = {
   },
 
   authMe: () => req<AuthResponse>('/auth/me'),
+
+  adminOverview: () => req<AdminOverviewResponse>('/admin/overview'),
 
   startDemo: () => req<{ status: string; workspace_id: string; expires_at: string }>(
     '/auth/demo',

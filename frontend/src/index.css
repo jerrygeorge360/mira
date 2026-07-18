@@ -1661,6 +1661,9 @@ select:focus-visible {
 }
 
 @media (max-width: 900px) {
+  .admin-metric-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .landing-nav {
     border-radius: 0;
     padding: 14px 18px;
@@ -2286,6 +2289,143 @@ select:focus-visible {
 .view-header { margin-bottom: 24px; }
 .view-header h2 { font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em; }
 .view-header p { color: var(--muted); font-size: 0.88rem; margin-top: 4px; }
+
+.admin-view-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+}
+.admin-view-header > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--success);
+  font-size: 0.72rem;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.admin-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.admin-metric {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 15px;
+}
+.admin-metric > div {
+  color: var(--accent);
+  margin-bottom: 18px;
+}
+.admin-metric > span {
+  display: block;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+.admin-metric > strong {
+  display: block;
+  margin: 4px 0;
+  color: var(--text);
+  font-size: 1.75rem;
+  font-weight: 780;
+}
+.admin-metric p,
+.admin-generated,
+.admin-registration-list p {
+  color: var(--faint);
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+.admin-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.admin-panel {
+  min-width: 0;
+  border-top: 1px solid var(--border-strong);
+  padding: 16px 2px 8px;
+}
+.admin-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  color: var(--accent);
+}
+.admin-panel-title h3 {
+  color: var(--text);
+  font-size: 0.92rem;
+}
+.admin-kv {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+.admin-kv span {
+  color: var(--muted);
+  text-transform: capitalize;
+}
+.admin-kv strong {
+  color: var(--text);
+}
+.admin-status {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 13px;
+  padding: 9px 11px;
+  border-left: 3px solid var(--success);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: var(--success);
+  font-size: 0.75rem;
+  font-weight: 750;
+}
+.admin-status.attention {
+  border-left-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+}
+.admin-registration-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 14px;
+}
+.admin-registration-list > div {
+  display: grid;
+  grid-template-columns: 52px minmax(80px, 1fr) 24px;
+  align-items: center;
+  gap: 9px;
+  font-size: 0.7rem;
+}
+.admin-registration-list time {
+  color: var(--faint);
+}
+.admin-registration-list > div > span {
+  height: 5px;
+  overflow: hidden;
+  background: var(--surface-soft);
+}
+.admin-registration-list i {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+.admin-registration-list strong {
+  color: var(--text);
+  text-align: right;
+}
+.admin-generated {
+  margin-top: 14px;
+}
 
 /* ── Metric row ──────────────────────────────────────────────────── */
 .metric-row {
@@ -4980,6 +5120,16 @@ select:focus-visible {
 }
 
 @media (max-width: 768px) {
+  .admin-view-header {
+    display: block;
+  }
+  .admin-view-header > span {
+    margin-top: 10px;
+  }
+  .admin-metric-grid,
+  .admin-panel-grid {
+    grid-template-columns: 1fr;
+  }
   .hero-title { font-size: clamp(1.85rem, 9vw, 2.6rem); }
   .hero-ctas { flex-direction: column; align-items: stretch; max-width: 320px; }
   .hero-sub { font-size: 0.96rem; }

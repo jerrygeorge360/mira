@@ -18,6 +18,7 @@ from core.db.schema import LEGACY_WORKSPACE_ID, seed_workspace_canonical_registr
 
 SESSION_COOKIE = "mira_session"
 CSRF_COOKIE = "mira_csrf"
+ADMIN_GITHUB_LOGINS_ENV = "MIRA_ADMIN_GITHUB_LOGINS"
 SESSION_TTL_HOURS = 24 * 7
 OAUTH_STATE_TTL_MINUTES = 10
 
@@ -110,6 +111,28 @@ def require_authenticated_workspace(request: Request) -> AuthenticatedWorkspace:
 
 
 WorkspaceAuth = Annotated[AuthenticatedWorkspace, Depends(require_authenticated_workspace)]
+
+
+def is_platform_admin(auth: AuthenticatedWorkspace) -> bool:
+    """Return whether a GitHub-authenticated user is an explicit platform administrator."""
+    if auth.context.auth_mode != "github" or not auth.github_login:
+        return False
+    configured = {
+        login.strip().casefold()
+        for login in os.environ.get(ADMIN_GITHUB_LOGINS_ENV, "").split(",")
+        if login.strip()
+    }
+    return auth.github_login.casefold() in configured
+
+
+def require_platform_admin(auth: WorkspaceAuth) -> AuthenticatedWorkspace:
+    """Fail closed unless the authenticated GitHub login is explicitly configured."""
+    if not is_platform_admin(auth):
+        raise HTTPException(status_code=403, detail="platform administrator access required")
+    return auth
+
+
+PlatformAdmin = Annotated[AuthenticatedWorkspace, Depends(require_platform_admin)]
 
 
 def require_csrf(request: Request, auth: AuthenticatedWorkspace) -> None:

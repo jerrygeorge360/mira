@@ -12,6 +12,7 @@ export interface AuthUser {
   workspaceId: string;
   workspaceName: string;
   expiresAt: string | null;
+  isPlatformAdmin: boolean;
 }
 
 interface AppState {
@@ -138,6 +139,7 @@ function toAuthUser(auth: AuthResponse): AuthUser {
     workspaceId: auth.workspace.id,
     workspaceName: auth.workspace.name,
     expiresAt: auth.expires_at,
+    isPlatformAdmin: auth.is_platform_admin,
   };
 }
 
