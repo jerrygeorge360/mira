@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from typing import Any, cast
@@ -9,9 +10,30 @@ from typing import Any, cast
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.access_logging import SuccessfulHealthCheckFilter
 from api.dependencies import load_runtime_environment
 from api.main import create_app
 from api.routes.health import health
+
+
+def _access_record(path: str, status_code: int) -> logging.LogRecord:
+    return logging.LogRecord(
+        "uvicorn.access",
+        logging.INFO,
+        __file__,
+        1,
+        '%s - "%s %s HTTP/%s" %d',
+        ("127.0.0.1:1234", "GET", path, "1.1", status_code),
+        None,
+    )
+
+
+def test_successful_health_access_logs_are_suppressed() -> None:
+    access_filter = SuccessfulHealthCheckFilter()
+
+    assert access_filter.filter(_access_record("/health", 200)) is False
+    assert access_filter.filter(_access_record("/health", 503)) is True
+    assert access_filter.filter(_access_record("/sessions", 200)) is True
 
 
 def test_health_endpoint_returns_ok() -> None:
