@@ -77,12 +77,12 @@ export const TIMELINE = [
 ];
 
 export const RESULT_ABSTRACT =
-  'The local memory suite is ten cases spanning nine memory behaviors, each replaying real interactions through the live agent and scoring the mechanism, not just the answer text. It passes 10/10 on a live model (DeepSeek, real neural embeddings), and the harder cases are confirmed as physical artifacts in the graph — edges that exist and beliefs that close.';
+  'The local memory suite is thirteen cases spanning the core memory behaviors. Each case replays interactions through the live agent and checks the mechanism, not just the answer text. The latest saved run passes 13/13, with contradiction, supersession, foresight, routing, and graph evidence inspected as concrete artifacts.';
 
 export const RESULT_STATS = [
-  { label: 'Live suite · DeepSeek', value: '10 / 10' },
+  { label: 'Local suite', value: '13 / 13' },
   { label: 'Memory behaviors', value: '9 / 9' },
-  { label: 'Contradiction reliability', value: '1/3 → 5/5' },
+  { label: 'Contradiction coverage', value: '5 / 5' },
   { label: 'Embeddings', value: 'bge-small' },
 ];
 
@@ -95,7 +95,7 @@ export const RESULT_CATEGORIES = [
   { name: 'Foresight activation', result: '1/1', checks: 'Surfaces a future commitment when it matters.' },
   { name: 'Deep-mode synthesis', result: '1/1', checks: 'Routes identity / pattern questions to Deep retrieval.' },
   { name: 'Retrieval sufficiency', result: '1/1', checks: 'Abstains when memory is insufficient to answer.' },
-  { name: 'Routing intent', result: '2/2', checks: 'Selects the right mode: direct, quick, deep, relational.' },
+  { name: 'Routing intent', result: '5/5', checks: 'Selects the right mode: direct, quick, deep, relational.' },
 ];
 
 export const RESULT_EVIDENCE = [
