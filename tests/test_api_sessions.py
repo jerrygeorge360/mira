@@ -62,9 +62,7 @@ def test_session_endpoint_creates_and_returns_session(tmp_path: Any, monkeypatch
     assert fetched.session_id == created.session_id
 
 
-def test_session_list_message_counts_are_workspace_scoped(
-    tmp_path: Any, monkeypatch: Any
-) -> None:
+def test_session_list_message_counts_are_workspace_scoped(tmp_path: Any, monkeypatch: Any) -> None:
     configure_database(tmp_path / "api-session-counts.sqlite3")
     workspace_a = create_workspace("A", "session-counts-a", "development")
     workspace_b = create_workspace("B", "session-counts-b", "development")
