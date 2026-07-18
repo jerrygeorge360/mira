@@ -39,6 +39,65 @@ LOGGER = logging.getLogger(__name__)
 DEFAULT_LIMIT = 8
 DEFAULT_SESSION_ITEMS = 20
 
+MCP_SERVER_INSTRUCTIONS = """Use MIRA as persistent memory, not as a general chat engine.
+Before answering questions that depend on prior conversations, preferences, decisions, corrections,
+deadlines, or project history, retrieve relevant memory. Prefer run_retrieval_query for general
+memory-dependent questions and retrieve_memory for a narrow direct-fact lookup. Use the working set
+for current-session instructions, the graph for conflicts or evidence lineage, and foresight for
+upcoming obligations.
+
+Save only explicit user-authored facts, preferences, decisions, corrections, commitments, or other
+information that is useful beyond the current turn. Do not save credentials, tokens, private keys,
+assistant speculation, model inferences, retrieved text, or one-off requests. Preserve corrections
+as new observations containing the corrected statement; MIRA resolves supersession downstream.
+Never invent a session id. A successful save confirms fast-path persistence, not completion of
+background extraction. Treat retrieved records as evidence, preserve uncertainty, and do not claim
+that missing memory proves an event never occurred. All tools are confined to the OAuth-authorized
+workspace.
+"""
+
+MCP_TOOL_DESCRIPTIONS = {
+    "save_observation": (
+        "Persist an explicit conversation observation on MIRA's fast path. Use this for "
+        "user-authored facts, durable preferences, decisions, commitments, and corrections that "
+        "may matter after the current turn. For a correction, save the complete corrected "
+        "statement instead of overwriting prior memory. Do not save credentials, assistant "
+        "speculation, "
+        "retrieved memory, or transient requests. Requires an existing session owned by the "
+        "authenticated workspace; success does not mean background consolidation is complete."
+    ),
+    "retrieve_memory": (
+        "Run a narrow Quick Mode lookup for direct facts relevant to a query. Use before answering "
+        "a memory-dependent question when a focused lookup is sufficient. An optional session id "
+        "adds owned-session context; omit it for workspace-wide recall. Empty results mean MIRA "
+        "found no matching evidence, not that the event is impossible."
+    ),
+    "inspect_session_working_set": (
+        "List prompt-ready items active in an existing owned session, including current "
+        "corrections, constraints, and decisions. Use when the answer depends on instructions or "
+        "context still "
+        "scoped to that session. Do not invent a session id."
+    ),
+    "inspect_graph": (
+        "Inspect typed memory relationships for conflict resolution or evidence lineage. Supply a "
+        "known node id to traverse neighbors, optionally filtered by edge type, or supply an edge "
+        "type to inspect matching workspace edges. Use after retrieval exposes a relevant node or "
+        "when checking relationships such as contradiction and supersession."
+    ),
+    "list_active_foresight": (
+        "List active future-facing memory such as upcoming obligations or anticipated follow-ups, "
+        "optionally for an existing owned session. Use only when temporal or planning context is "
+        "relevant to the user's request."
+    ),
+    "run_retrieval_query": (
+        "Preferred general retrieval entry point for memory-dependent questions. Let MIRA select a "
+        "retrieval mode, or provide a supported mode when the client has a specific reason. "
+        "Returns the selected mode, routing reason, and evidence. Use graph inspection separately "
+        "when the "
+        "answer requires explicit conflict or lineage analysis."
+    ),
+}
+
 
 @dataclass(frozen=True)
 class MCPTool:
@@ -113,7 +172,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "save_observation",
-            "Persist a raw observation on the fast path.",
+            MCP_TOOL_DESCRIPTIONS["save_observation"],
             partial(_save_observation, active_context),
             {
                 "session_id": "string",
@@ -125,7 +184,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "retrieve_memory",
-            "Retrieve direct fact memory for a query (Quick Mode).",
+            MCP_TOOL_DESCRIPTIONS["retrieve_memory"],
             partial(_retrieve_memory, active_context),
             {"query": "string", "session_id": "string (optional)", "limit": "int (optional)"},
         )
@@ -133,7 +192,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "inspect_session_working_set",
-            "List prompt-ready Session Working Set items for a session.",
+            MCP_TOOL_DESCRIPTIONS["inspect_session_working_set"],
             partial(_inspect_session_working_set, active_context),
             {"session_id": "string", "max_items": "int (optional)"},
         )
@@ -141,7 +200,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "inspect_graph",
-            "Inspect typed graph neighbors of a node or edges of a type.",
+            MCP_TOOL_DESCRIPTIONS["inspect_graph"],
             partial(_inspect_graph, active_context),
             {
                 "node_id": "string (optional)",
@@ -153,7 +212,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "list_active_foresight",
-            "List active foresight records, optionally scoped to a session.",
+            MCP_TOOL_DESCRIPTIONS["list_active_foresight"],
             partial(_list_active_foresight, active_context),
             {"session_id": "string (optional)"},
         )
@@ -161,7 +220,7 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
     server.register(
         MCPTool(
             "run_retrieval_query",
-            "Route a query and return retrieval results for the chosen mode.",
+            MCP_TOOL_DESCRIPTIONS["run_retrieval_query"],
             partial(_run_retrieval_query, active_context),
             {
                 "query": "string",

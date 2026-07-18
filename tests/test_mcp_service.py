@@ -9,7 +9,11 @@ import pytest
 
 from core.db.repositories import configure_database, create_session, create_workspace
 from integrations.mcp.auth import StaticTokenVerifier, workspace_context_for_access_token
-from integrations.mcp.server import build_mcp_server
+from integrations.mcp.server import (
+    MCP_SERVER_INSTRUCTIONS,
+    MCP_TOOL_DESCRIPTIONS,
+    build_mcp_server,
+)
 from integrations.mcp.service import create_mcp_server
 
 
@@ -28,10 +32,10 @@ def database_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[P
 async def test_mcp_service_registers_protocol_tools(database_path: Path) -> None:
     server = create_mcp_server()
 
-    tools = {tool.name for tool in await server.list_tools()}
+    tools = {tool.name: tool for tool in await server.list_tools()}
     routes = {route.path for route in server.streamable_http_app().routes}
 
-    assert tools == {
+    assert set(tools) == {
         "save_observation",
         "retrieve_memory",
         "inspect_session_working_set",
@@ -39,7 +43,20 @@ async def test_mcp_service_registers_protocol_tools(database_path: Path) -> None
         "list_active_foresight",
         "run_retrieval_query",
     }
+    assert all(
+        tools[name].description == description
+        for name, description in MCP_TOOL_DESCRIPTIONS.items()
+    )
     assert {"/mcp", "/health", "/.well-known/oauth-protected-resource/mcp"} <= routes
+
+
+def test_mcp_guidance_sets_memory_safety_boundaries() -> None:
+    instructions = " ".join(MCP_SERVER_INSTRUCTIONS.split())
+
+    assert "Before answering questions that depend on prior conversations" in instructions
+    assert "Do not save credentials" in instructions
+    assert "Preserve corrections as new observations" in instructions
+    assert "fast-path persistence" in instructions
 
 
 def test_mcp_tools_require_verified_access_token(database_path: Path) -> None:
