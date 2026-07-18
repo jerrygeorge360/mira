@@ -145,7 +145,8 @@ def _workspace_count_query(name: str, query: str) -> str:
         return (
             "SELECT COUNT(*) AS count FROM session_working_set "
             "JOIN sessions ON sessions.id = session_working_set.session_id "
-            "WHERE sessions.workspace_id = ? AND session_working_set.status = 'active'"
+            "WHERE sessions.workspace_id = ? "
+            "AND session_working_set.status IN ('provisional', 'hydrated', 'confirmed')"
         )
     if " WHERE " in query:
         return query.replace(" WHERE ", " WHERE workspace_id = ? AND ", 1)

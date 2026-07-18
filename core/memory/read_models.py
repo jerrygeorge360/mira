@@ -43,13 +43,24 @@ def get_memory_graph_read_model(
         f"""
         SELECT * FROM graph_edges
         WHERE workspace_id = ? AND invalidated_at IS NULL
-          AND source_node_id IN ({placeholders})
-          AND target_node_id IN ({placeholders})
+          AND (
+            source_node_id IN ({placeholders})
+            OR target_node_id IN ({placeholders})
+          )
         ORDER BY created_at DESC
         LIMIT ?
         """,  # nosec B608
         (workspace_id, *sorted(node_ids), *sorted(node_ids), limit),
     )
+    endpoint_ids = {
+        str(edge[key])
+        for edge in edges
+        for key in ("source_node_id", "target_node_id")
+        if edge.get(key)
+    }
+    missing_node_ids = sorted(endpoint_ids - node_ids)
+    if missing_node_ids:
+        nodes.extend(_fetch_graph_nodes_by_ids(missing_node_ids, workspace_id))
     return {"nodes": nodes, "edges": edges}
 
 
@@ -107,6 +118,21 @@ def list_community_summaries_read_model(
         (workspace_id, limit),
     )
     return _annotate_community_overlap(rows)
+
+
+def _fetch_graph_nodes_by_ids(node_ids: list[str], workspace_id: str) -> list[MemoryRecord]:
+    if not node_ids:
+        return []
+    placeholders = ", ".join("?" for _ in node_ids)
+    return _fetch_all(
+        f"""
+        SELECT *
+        FROM graph_nodes
+        WHERE workspace_id = ? AND id IN ({placeholders})
+        ORDER BY created_at DESC
+        """,  # nosec B608
+        (workspace_id, *node_ids),
+    )
 
 
 def list_memory_lifecycle_read_model(

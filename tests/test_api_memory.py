@@ -30,7 +30,8 @@ from core.db.repositories import (
     save_observation,
 )
 from core.db.schema import LEGACY_WORKSPACE_ID
-from core.memory.graph import create_graph_node
+from core.memory.graph import create_graph_edge, create_graph_node
+from core.memory.read_models import get_memory_graph_read_model
 
 AUTH = AuthenticatedWorkspace(WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="development"))
 
@@ -42,6 +43,39 @@ def test_memory_graph_endpoint_returns_shape(tmp_path: Any, monkeypatch: Any) ->
 
     assert response.nodes == []
     assert response.edges == []
+
+
+def test_memory_graph_read_model_includes_missing_edge_endpoints(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Change/conflict edges stay visible even when one endpoint falls outside the node limit."""
+    monkeypatch.setenv("MIRA_DB_PATH", str(tmp_path / "api-memory-edge-endpoints.sqlite3"))
+    session_id = create_session("user_1", workspace_id=LEGACY_WORKSPACE_ID)
+    observation_id = save_observation(session_id, "user", "I switched from MongoDB to PostgreSQL.")
+    old_node_id = create_graph_node(
+        node_type="atomic_fact",
+        label="Jerry uses MongoDB",
+        source_table="atomic_facts",
+        source_id="fact_old",
+    )
+    new_node_id = create_graph_node(
+        node_type="atomic_fact",
+        label="Jerry uses PostgreSQL",
+        source_table="atomic_facts",
+        source_id="fact_new",
+    )
+    edge_id = create_graph_edge(
+        old_node_id,
+        new_node_id,
+        "SUPERSEDED_BY",
+        0.9,
+        [observation_id],
+    )
+
+    graph = get_memory_graph_read_model(limit=1, workspace_id=LEGACY_WORKSPACE_ID)
+
+    assert [edge["id"] for edge in graph["edges"]] == [edge_id]
+    assert {node["id"] for node in graph["nodes"]} >= {old_node_id, new_node_id}
 
 
 def test_memory_surface_endpoints_return_items_shape(tmp_path: Any, monkeypatch: Any) -> None:

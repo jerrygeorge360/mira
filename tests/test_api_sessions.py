@@ -30,8 +30,10 @@ from core.db.repositories import (
     create_graph_edge,
     create_graph_node,
     create_reflection,
+    create_session,
     create_session_item,
     create_working_memory_item,
+    create_workspace,
     link_reflection_evidence,
     repository_connection,
     save_observation,
@@ -58,6 +60,27 @@ def test_session_endpoint_creates_and_returns_session(tmp_path: Any, monkeypatch
 
     fetched = get_session_route(created.session_id, AUTH)
     assert fetched.session_id == created.session_id
+
+
+def test_session_list_message_counts_are_workspace_scoped(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    configure_database(tmp_path / "api-session-counts.sqlite3")
+    workspace_a = create_workspace("A", "session-counts-a", "development")
+    workspace_b = create_workspace("B", "session-counts-b", "development")
+    session_a = create_session("a", workspace_id=workspace_a)
+    session_b = create_session("b", workspace_id=workspace_b)
+    save_observation(session_a, "user", "A message")
+    save_observation(session_b, "user", "B message")
+    save_observation(session_b, "assistant", "B response")
+
+    response = list_sessions_route(
+        AuthenticatedWorkspace(WorkspaceContext(workspace_a, auth_mode="development"))
+    )
+
+    assert [(session.session_id, session.message_count) for session in response.sessions] == [
+        (session_a, 1)
+    ]
 
 
 def test_working_set_endpoint_returns_grouped_shape(tmp_path: Any, monkeypatch: Any) -> None:

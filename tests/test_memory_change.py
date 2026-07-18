@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -16,6 +17,7 @@ from core.db.repositories import (
     configure_database,
     create_atomic_fact,
     create_session,
+    create_workspace,
     repository_connection,
     save_observation,
 )
@@ -104,10 +106,34 @@ def test_relational_mode_can_see_both_conflicting_facts(database_path: Path) -> 
 
     neighbors = get_neighbors(_atomic_fact_node_id(python_fact_id), ["CONTRADICTS"])
 
-    assert neighbors[0]["edge"]["edge_type"] == "CONTRADICTS"
-    assert neighbors[0]["node"]["source_id"] == rust_fact_id
+    edge = cast(dict[str, object], neighbors[0]["edge"])
+    node = cast(dict[str, object], neighbors[0]["node"])
+    assert edge["edge_type"] == "CONTRADICTS"
+    assert node["source_id"] == rust_fact_id
     assert _atomic_fact(python_fact_id)["object"] == "Python"
     assert _atomic_fact(rust_fact_id)["object"] == "Rust"
+
+
+def test_change_edges_are_created_in_the_fact_workspace(database_path: Path) -> None:
+    """Authenticated workspaces must see their own contradiction/supersession edges."""
+    workspace_id = create_workspace("Demo", "demo-change-edges", "development")
+    session_id = create_session("jerry", workspace_id=workspace_id)
+    python_observation_id = save_observation(session_id, "user", "I prefer Python.")
+    rust_observation_id = save_observation(session_id, "user", "I prefer Rust.")
+    python_fact_id = _create_preference_fact(python_observation_id, "Python")
+    rust_fact_id = _create_preference_fact(rust_observation_id, "Rust")
+
+    edge_id = apply_contradiction(
+        python_fact_id,
+        rust_fact_id,
+        evidence=[python_observation_id, rust_observation_id],
+    )
+
+    edges = find_edges_by_type("CONTRADICTS", workspace_id=workspace_id)
+    assert [edge["id"] for edge in edges] == [edge_id]
+    assert find_edges_by_type("CONTRADICTS") == []
+    assert _atomic_fact_node_workspace(python_fact_id) == workspace_id
+    assert _atomic_fact_node_workspace(rust_fact_id) == workspace_id
 
 
 def _create_preference_fact(observation_id: str, object_value: str) -> str:
@@ -144,3 +170,17 @@ def _atomic_fact_node_id(fact_id: str) -> str:
         ).fetchone()
     assert row is not None
     return str(row["id"])
+
+
+def _atomic_fact_node_workspace(fact_id: str) -> str:
+    with repository_connection() as connection:
+        row = connection.execute(
+            """
+            SELECT workspace_id
+            FROM graph_nodes
+            WHERE node_type = ? AND source_table = ? AND source_id = ?
+            """,
+            ("atomic_fact", "atomic_facts", fact_id),
+        ).fetchone()
+    assert row is not None
+    return str(row["workspace_id"])
