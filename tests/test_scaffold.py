@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOCAL_IMPORT_ROOTS = frozenset({"core", "ui", "slack", "evaluation", "scripts"})
+LOCAL_IMPORT_ROOTS = frozenset({"core", "ui", "slack", "integrations", "evaluation", "scripts"})
 EXPECTED_MODULES = (
     "core.agent",
     "core.llm.qwen",
