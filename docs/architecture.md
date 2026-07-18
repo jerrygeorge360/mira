@@ -426,7 +426,14 @@ HTTP request -> FastAPI route -> core.agent / repositories / memory read model
 Routes must not own memory semantics. They validate/serialize request and response payloads,
 call existing core functions, and return clean API errors. The current server exposes GitHub
 OAuth with opaque server sessions, health, chat, sessions, Session Working Set, memory graph,
-retrieval traces, foresight, reflections, community summaries, and worker status.
+retrieval traces, foresight, reflections, community summaries, worker status, and a read-only
+platform administration overview.
+
+Platform administration is separate from workspace membership. `MIRA_ADMIN_GITHUB_LOGINS`
+provides a fail-closed allowlist for GitHub-authenticated operators; demo and development sessions
+cannot qualify, and workspace `owner` or `admin` roles do not imply platform authority. The
+`/admin/overview` read model returns cross-workspace aggregate counts only. It does not expose
+conversation text, memory content, API keys, or mutation controls.
 
 In `github` mode, `/auth/github/callback` provisions one personal workspace per immutable GitHub
 user id. Product routes resolve that workspace from a hashed session cookie and ignore legacy

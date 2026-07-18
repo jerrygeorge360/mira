@@ -230,6 +230,16 @@ APP_BASE_URL=http://localhost:5173
 COOKIE_SECURE=false
 ```
 
+For the read-only platform dashboard, explicitly allow GitHub logins:
+
+```bash
+MIRA_ADMIN_GITHUB_LOGINS=jerrygeorge360,deltron-fr
+```
+
+Allowed users see **Administration** in the application rail. `/admin/overview` reports aggregate
+registration, workspace, activity, slow-path queue, and OAuth/MCP counts. It does not return user
+messages or memory content. Workspace `owner` and `admin` roles do not grant platform access.
+
 Demo accounts use short-lived demo workspaces:
 
 ```bash

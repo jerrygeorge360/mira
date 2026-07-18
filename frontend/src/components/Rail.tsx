@@ -16,6 +16,7 @@ import {
   Moon,
   LogOut,
   Trash2,
+  Gauge,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
@@ -162,6 +163,20 @@ export default function Rail() {
             {!railCollapsed && label}
           </button>
         ))}
+
+        {authUser?.isPlatformAdmin && (
+          <>
+            {!railCollapsed && <div className="rail-section-label">Platform</div>}
+            <button
+              className={`rail-nav-btn${view === 'Administration' ? ' active' : ''}`}
+              onClick={() => setView('Administration')}
+              title={railCollapsed ? 'Administration' : undefined}
+            >
+              <Gauge size={16} />
+              {!railCollapsed && 'Administration'}
+            </button>
+          </>
+        )}
 
         {/* history section */}
         {!railCollapsed && (

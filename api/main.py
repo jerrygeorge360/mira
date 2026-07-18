@@ -19,6 +19,7 @@ from api.dependencies import configure_runtime_database, load_runtime_environmen
 from api.oauth import OAuthProtocolError, sync_first_party_oauth_clients
 from api.rate_limit import rate_limit_middleware
 from api.routes import (
+    admin,
     auth,
     chat,
     evaluation,
@@ -75,6 +76,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(rate_limit_middleware)
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(admin.router)
     app.include_router(oauth.router)
     app.include_router(workspace.router)
     app.include_router(chat.router)
