@@ -13,6 +13,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.oauth import OAuthProtocolError, sync_first_party_oauth_clients
 from api.rate_limit import rate_limit_middleware
@@ -41,6 +42,7 @@ def create_app() -> FastAPI:
     load_runtime_environment()
     configure_runtime_database()
     sync_first_party_oauth_clients()
+    install_health_access_filter()
     app = FastAPI(title="MIRA API", version="0.1.0")
 
     @app.exception_handler(OAuthProtocolError)

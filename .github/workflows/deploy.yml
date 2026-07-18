@@ -57,6 +57,10 @@
               set -e
               cd ~/mira
 
+              git fetch origin main
+              git checkout main
+              git pull --ff-only origin main
+
               docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" -p "${{ secrets.DOCKERHUB_TOKEN }}"
 
               IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml pull

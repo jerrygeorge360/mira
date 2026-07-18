@@ -10,6 +10,7 @@ from pydantic import AnyHttpUrl
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
+from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.oauth import MCP_SCOPE, mcp_resource_url, oauth_issuer_url
 from integrations.mcp.auth import StaticTokenVerifier, authenticated_workspace_context
@@ -20,6 +21,7 @@ def create_mcp_server() -> FastMCP:
     """Create the authenticated MIRA MCP protocol server."""
     load_runtime_environment()
     configure_runtime_database()
+    install_health_access_filter()
     public_url = mcp_resource_url()
     issuer_url = oauth_issuer_url()
     mcp = FastMCP(
