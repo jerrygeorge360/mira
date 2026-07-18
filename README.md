@@ -647,6 +647,23 @@ docker compose run --rm devtools make check
 docker-compose run --rm devtools make check
 ```
 
+## Docker production
+
+Production Compose reads the DevOps-managed `.env` file on the remote host. The ignored local
+`.env.production` file is only a private reference for tracking the expected production values;
+Compose and the deployment workflow do not read it.
+
+```bash
+docker compose -f docker-compose.prod.yml config --quiet
+docker compose -f docker-compose.prod.yml pull
+docker compose -f docker-compose.prod.yml up -d --remove-orphans
+```
+
+The remote `.env` should use `https://mira.ninja` for `APP_BASE_URL` and
+`MIRA_OAUTH_ISSUER_URL`, `https://mira.ninja/mcp` for `MIRA_MCP_PUBLIC_URL`, and
+`https://mira.ninja/api/auth/github/callback` for `GITHUB_CALLBACK_URL`. Production Compose
+persists SQLite, Chroma, and the FastEmbed model cache under `.docker-data/`.
+
 ## Tests and checks
 
 ```bash
