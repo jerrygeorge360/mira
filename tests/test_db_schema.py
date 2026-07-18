@@ -23,6 +23,10 @@ REQUIRED_TABLES = {
     "workspace_members",
     "auth_sessions",
     "oauth_states",
+    "oauth_clients",
+    "oauth_authorization_requests",
+    "oauth_access_tokens",
+    "oauth_refresh_tokens",
     "sessions",
     "observations",
     "slow_path_queue",
@@ -249,6 +253,19 @@ def test_database_initializes_from_clean_file(tmp_path: Path) -> None:
     assert database_path.is_file()
     with connect_sqlite(database_path) as connection:
         assert _names(connection, "table") >= REQUIRED_TABLES
+
+
+def test_sqlite_connections_are_configured_for_worker_concurrency(tmp_path: Path) -> None:
+    """API and worker processes share SQLite, so connections must tolerate contention."""
+    database_path = tmp_path / "mira.sqlite3"
+    initialize_database(database_path)
+
+    with connect_sqlite(database_path) as connection:
+        busy_timeout = connection.execute("PRAGMA busy_timeout").fetchone()[0]
+        journal_mode = connection.execute("PRAGMA journal_mode").fetchone()[0]
+
+    assert busy_timeout == 30000
+    assert str(journal_mode).casefold() == "wal"
 
 
 def test_all_required_indexes_exist(tmp_path: Path) -> None:

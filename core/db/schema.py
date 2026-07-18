@@ -90,6 +90,78 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS oauth_clients (
+        client_id TEXT PRIMARY KEY,
+        client_name TEXT NOT NULL,
+        redirect_uris_json TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        token_endpoint_auth_method TEXT NOT NULL DEFAULT 'none',
+        client_type TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        disabled_at TEXT
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_authorization_requests (
+        id TEXT PRIMARY KEY,
+        request_token_hash TEXT NOT NULL UNIQUE,
+        code_hash TEXT UNIQUE,
+        client_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        redirect_uri TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        state TEXT,
+        code_challenge TEXT NOT NULL,
+        code_challenge_method TEXT NOT NULL,
+        status TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        code_expires_at TEXT,
+        consumed_at TEXT,
+        FOREIGN KEY (client_id) REFERENCES oauth_clients (client_id),
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        FOREIGN KEY (client_id) REFERENCES oauth_clients (client_id),
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+        id TEXT PRIMARY KEY,
+        token_hash TEXT NOT NULL UNIQUE,
+        client_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        scope TEXT NOT NULL,
+        resource TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        rotated_at TEXT,
+        revoked_at TEXT,
+        FOREIGN KEY (client_id) REFERENCES oauth_clients (client_id),
+        FOREIGN KEY (user_id) REFERENCES users (id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS demo_issuances (
         id TEXT PRIMARY KEY,
         requester_hash TEXT NOT NULL,
@@ -407,6 +479,12 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "WHERE workspace_type = 'personal' AND owner_user_id IS NOT NULL",
     "CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members (user_id)",
     "CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions (user_id, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_authorization_client "
+    "ON oauth_authorization_requests (client_id, status, expires_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_access_workspace "
+    "ON oauth_access_tokens (workspace_id, expires_at, revoked_at)",
+    "CREATE INDEX IF NOT EXISTS idx_oauth_refresh_client "
+    "ON oauth_refresh_tokens (client_id, expires_at, revoked_at)",
     "CREATE INDEX IF NOT EXISTS idx_demo_issuances_requester "
     "ON demo_issuances (requester_hash, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_sessions_workspace_updated "

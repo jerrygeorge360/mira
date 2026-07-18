@@ -1,7 +1,7 @@
-.PHONY: help install run api slack worker provider-check graph-inspect slow-path-status memory-search demo-cleanup local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
+.PHONY: help install run api slack mcp worker provider-check graph-inspect slow-path-status memory-search demo-cleanup local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
 
 PYTHON ?= python3
-SOURCES := core ui slack evaluation scripts api
+SOURCES := core ui slack evaluation scripts api integrations
 LONGMEMEVAL_DATASET ?= data/benchmarks/longmemeval.json
 
 help:
@@ -12,6 +12,7 @@ help:
 		'  run        Run the UI entry point' \
 		'  api        Run the MIRA FastAPI server' \
 		'  slack      Run the Slack bot entry point' \
+		'  mcp        Run the standalone MCP memory service' \
 		'  worker     Run the slow-path background memory worker' \
 		'  provider-check  Smoke-check configured chat and embedding providers' \
 		'  graph-inspect   Print a JSON snapshot of the memory graph' \
@@ -56,6 +57,9 @@ frontend-build:
 
 slack:
 	$(PYTHON) -m slack.bot
+
+mcp:
+	uvicorn integrations.mcp.service:app --reload --host 0.0.0.0 --port $${MCP_PORT:-8090}
 
 test:
 	$(PYTHON) -m pytest --no-cov || [ $$? -eq 5 ]

@@ -5,6 +5,7 @@ __pycache__/
 venv/
 env/
 .env
+.env.production
 *.db
 *.sqlite
 *.sqlite3
@@ -32,6 +33,7 @@ evaluation/ablation/results/
 *.debug.md
 *-run.log
 .llm-cache/
+.model-cache/
 
 # Downloaded benchmark datasets
 data/benchmarks/longmemeval.json

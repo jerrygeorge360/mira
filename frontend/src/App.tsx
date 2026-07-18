@@ -13,6 +13,7 @@ import ReflectionsView from './components/ReflectionsView';
 import CommunitiesView from './components/CommunitiesView';
 import TimelineView from './components/TimelineView';
 import ResultsView from './components/ResultsView';
+import DemoWalkthrough from './components/DemoWalkthrough';
 
 function ViewRouter() {
   const { view } = useApp();
@@ -45,6 +46,7 @@ export default function App() {
         <Topbar />
         <ViewRouter />
       </div>
+      <DemoWalkthrough />
     </div>
   );
 }

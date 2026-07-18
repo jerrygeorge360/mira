@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import os
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from api.dependencies import configure_runtime_database, load_runtime_environment
+from api.oauth import OAuthProtocolError, sync_first_party_oauth_clients
 from api.rate_limit import rate_limit_middleware
 from api.routes import (
     auth,
@@ -20,6 +22,7 @@ from api.routes import (
     evaluation,
     health,
     memory,
+    oauth,
     retrieval,
     sessions,
     worker,
@@ -37,7 +40,13 @@ def create_app() -> FastAPI:
     """Create and configure the MIRA FastAPI app."""
     load_runtime_environment()
     configure_runtime_database()
+    sync_first_party_oauth_clients()
     app = FastAPI(title="MIRA API", version="0.1.0")
+
+    @app.exception_handler(OAuthProtocolError)
+    def oauth_protocol_error(_request: Request, error: OAuthProtocolError) -> JSONResponse:
+        return oauth.oauth_error_response(error)
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=_cors_origins(),
@@ -48,6 +57,7 @@ def create_app() -> FastAPI:
     app.middleware("http")(rate_limit_middleware)
     app.include_router(health.router)
     app.include_router(auth.router)
+    app.include_router(oauth.router)
     app.include_router(workspace.router)
     app.include_router(chat.router)
     app.include_router(sessions.router)

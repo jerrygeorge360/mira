@@ -12,9 +12,11 @@ from fastapi.responses import RedirectResponse
 from api.auth import (
     WorkspaceAuth,
     allowed_app_redirect,
+    allowed_github_return,
     consume_oauth_state,
     create_oauth_state,
     exchange_github_code,
+    github_callback_target,
     issue_auth_session,
     provision_github_identity,
     require_csrf,
@@ -28,8 +30,11 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.get("/github/start")
-def github_start(redirect: str | None = None) -> RedirectResponse:
-    target = allowed_app_redirect(redirect)
+def github_start(
+    redirect: str | None = None,
+    return_to: str | None = None,
+) -> RedirectResponse:
+    target = allowed_github_return(return_to) if return_to else allowed_app_redirect(redirect)
     client_id = os.environ.get("GITHUB_CLIENT_ID", "").strip()
     callback = os.environ.get("GITHUB_CALLBACK_URL", "").strip()
     if not client_id or not callback:
@@ -55,7 +60,7 @@ def github_callback(
     redirect = consume_oauth_state(state)
     profile = exchange_github_code(code)
     user_id, workspace_id = provision_github_identity(profile)
-    response = RedirectResponse(f"{redirect}/?auth=success")
+    response = RedirectResponse(github_callback_target(redirect))
     revoke_request_session(request)
     issue_auth_session(response, user_id, workspace_id)
     return response

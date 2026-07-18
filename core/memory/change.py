@@ -119,19 +119,24 @@ def resolve_retrieved_contradictions(fact_ids: list[str]) -> list[dict[str, obje
 
 
 def _contradicting_fact_ids(fact_id: str) -> list[str]:
+    fact = _fetch_atomic_fact(fact_id)
+    workspace_id = str(fact["workspace_id"])
     with repository_connection() as connection:
         node = connection.execute(
             "SELECT id FROM graph_nodes "
-            "WHERE node_type = 'atomic_fact' AND source_table = 'atomic_facts' AND source_id = ?",
-            (fact_id,),
+            "WHERE workspace_id = ? AND node_type = 'atomic_fact' "
+            "AND source_table = 'atomic_facts' AND source_id = ?",
+            (workspace_id, fact_id),
         ).fetchone()
         if node is None:
             return []
         node_id = str(node["id"])
         edges = connection.execute(
             "SELECT source_node_id, target_node_id FROM graph_edges "
-            "WHERE edge_type = 'CONTRADICTS' AND (source_node_id = ? OR target_node_id = ?)",
-            (node_id, node_id),
+            "WHERE workspace_id = ? AND edge_type = 'CONTRADICTS' "
+            "AND invalidated_at IS NULL "
+            "AND (source_node_id = ? OR target_node_id = ?)",
+            (workspace_id, node_id, node_id),
         ).fetchall()
         other_node_ids = [
             str(edge["target_node_id"])
@@ -144,8 +149,8 @@ def _contradicting_fact_ids(fact_id: str) -> list[str]:
         placeholders = ", ".join("?" for _ in other_node_ids)
         rows = connection.execute(
             "SELECT source_id FROM graph_nodes "  # nosec B608
-            f"WHERE id IN ({placeholders}) AND node_type = 'atomic_fact'",
-            tuple(other_node_ids),
+            f"WHERE workspace_id = ? AND id IN ({placeholders}) AND node_type = 'atomic_fact'",
+            (workspace_id, *other_node_ids),
         ).fetchall()
     return [str(row["source_id"]) for row in rows if row["source_id"]]
 
@@ -178,18 +183,21 @@ def _create_fact_relation_edge(
         raise ValueError("evidence must not be empty")
     source_node_id = _graph_node_for_fact(source_fact)
     target_node_id = _graph_node_for_fact(target_fact)
+    workspace_id = str(source_fact["workspace_id"])
     return create_graph_edge(
         source_node_id,
         target_node_id,
         edge_type,
         confidence=_minimum_confidence(source_fact, target_fact),
         source_observations=evidence,
+        workspace_id=workspace_id,
     )
 
 
 def _graph_node_for_fact(fact: AtomicFactRecord) -> str:
     fact_id = str(fact["id"])
-    existing_node_id = _existing_fact_node_id(fact_id)
+    workspace_id = str(fact["workspace_id"])
+    existing_node_id = _existing_fact_node_id(fact_id, workspace_id)
     if existing_node_id is not None:
         return existing_node_id
     return create_graph_node(
@@ -197,20 +205,21 @@ def _graph_node_for_fact(fact: AtomicFactRecord) -> str:
         label=_fact_label(fact),
         source_table="atomic_facts",
         source_id=fact_id,
+        workspace_id=workspace_id,
     )
 
 
-def _existing_fact_node_id(fact_id: str) -> str | None:
+def _existing_fact_node_id(fact_id: str, workspace_id: str) -> str | None:
     with repository_connection() as connection:
         row = connection.execute(
             """
             SELECT id
             FROM graph_nodes
-            WHERE node_type = ? AND source_table = ? AND source_id = ?
+            WHERE workspace_id = ? AND node_type = ? AND source_table = ? AND source_id = ?
             ORDER BY created_at ASC
             LIMIT 1
             """,
-            ("atomic_fact", "atomic_facts", fact_id),
+            (workspace_id, "atomic_fact", "atomic_facts", fact_id),
         ).fetchone()
     return None if row is None else str(row["id"])
 

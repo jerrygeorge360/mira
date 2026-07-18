@@ -44,7 +44,7 @@ def list_sessions_route(
     limit: int = 50,
 ) -> SessionListResponse:
     """List sessions (most recently updated first) for the conversation-history sidebar."""
-    counts = message_counts_by_session()
+    counts = message_counts_by_session(workspace_id=auth.context.workspace_id)
     sessions = [
         SessionSummary(
             session_id=str(row["id"]),

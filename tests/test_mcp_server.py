@@ -1,4 +1,4 @@
-"""Verify ISSUE-042 MCP memory server skeleton.
+"""Verify ISSUE-042 MCP memory tool registry.
 
 Ownership: MIRA contributors.
 Related issue: ISSUE-042.
@@ -43,7 +43,7 @@ def database_path(tmp_path: Path) -> Iterator[Path]:
 
 
 def test_server_starts() -> None:
-    """The server can be built and started without a real transport."""
+    """The registry can be built and started independently of its transport."""
     server = run_mcp_server(build_mcp_server(MCP_CONTEXT))
     assert server.running is True
 
@@ -85,8 +85,9 @@ def test_inspect_session_working_set_tool_shape(database_path: Path) -> None:
     assert response["result"]["items"] == []
 
 
-def test_retrieve_memory_tool_shape(database_path: Path) -> None:
+def test_retrieve_memory_tool_shape(database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The retrieve_memory tool returns a results/count envelope."""
+    monkeypatch.setattr("integrations.mcp.server.retrieve_quick", lambda *args, **kwargs: [])
     server = build_mcp_server(MCP_CONTEXT)
     session_id = create_session("jerry")
     save_observation(session_id, "user", "The deploy key lives in the vault.")

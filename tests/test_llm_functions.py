@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -71,6 +72,30 @@ def test_inspect_memory_returns_structured_snapshot(database_path: Path) -> None
     assert isinstance(result["vector_store"], dict)
 
 
+def test_inspect_memory_counts_prompt_eligible_working_set_statuses(
+    database_path: Path,
+) -> None:
+    """Memory inspection counts real working-set states, not a stale active alias."""
+    session_id = create_session("jerry")
+    upsert_session_item(
+        session_id,
+        {
+            "type": "active_constraint",
+            "content": "Use structured explanations.",
+            "scope": "current_session",
+            "status": "provisional",
+            "priority": 0.8,
+            "explicitness_label": "direct_instruction",
+            "source_observations": [],
+        },
+    )
+
+    result = inspect_memory(session_id, query="what memory do you have")
+    counts = cast(dict[str, int], result["counts"])
+
+    assert counts["session_working_set"] == 1
+
+
 def test_structured_function_dispatch_validates_name(database_path: Path) -> None:
     """Unsupported functions fail closed instead of silently no-oping."""
     session_id = create_session("jerry")
@@ -102,5 +127,6 @@ def test_structured_memory_inspection_is_workspace_scoped(database_path: Path) -
     repo_b.save_observation(session_b, "user", "B private memory")
 
     result = inspect_memory(session_a, query="show memory")
+    counts = cast(dict[str, int], result["counts"])
 
-    assert result["counts"]["observations"] == 1
+    assert counts["observations"] == 1

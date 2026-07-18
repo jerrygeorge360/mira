@@ -72,10 +72,9 @@ Design note (observations): retrieved as **fallback/evidence**, not a primary an
 - [x] **D1. Ablation set** (per decision — keep extras, update paper) — added three paper baselines: `without_community_summaries` (seams `deep._community_candidates`), `flat_memory` (replaces `quick`/`deep` `SOURCE_WEIGHT` with a flat mapping so no source outranks another — ablates the B1 structured-first tiering), and `full_transcript` (seams `agent.retrieve_by_mode` + session-working-set + hot-memory to empty, so the model answers from the raw transcript alone). Baselines carry their own names via `BASELINE_CONFIGS`, not `without_X`; `SELECTABLE_ABLATIONS` gates the CLI. **Kept** the extra `without_deep_mode` / `without_contradiction_supersession` (useful) — the standard set is now 11 configs, a superset of the paper's 8; reconcile by updating the paper. Seam-application unit-tested. Paper p28.
 - [x] **D2. Eval cases** — added three to `memory_cases.json`: `contradiction-deadline-conflict` (asserts a CONTRADICTS edge + both dates surface), `reflection-self-knowledge` (5 habit obs → Deep query retrieves a `reflection`), `deep-mode-community-summary` (8 connected obs → Deep query retrieves a `community_summary`). Assert end-to-end (created *and* retrieved), the honest signal. Live-only (need a provider); they run in D3, not offline CI. Paper p28.
 - [x] **D3. Re-run DONE** (DeepSeek + local embeddings, clean single run on the fixed system).
-  **Local eval 12/13 (0.92)** — the only failure is `contradiction-deadline-conflict`, the
-  known eval-case issue (same-subject conflict → `SUPERSEDED_BY` not `CONTRADICTS`; answer still
-  surfaces both; fix = rewrite the case, `[decide]`). `reflection-user-knowledge` now PASSES
-  (reflection firing+retrieval fixes verified end-to-end). **Ablation: full_system 7/7 (1.00)**
+  **Local eval 13/13 (1.00)**. `reflection-user-knowledge` now PASSES
+  (reflection firing+retrieval fixes verified end-to-end), and contradiction handling now
+  preserves explicit graph evidence. **Ablation: full_system 7/7 (1.00)**
   on the lean set; every layer discriminates cleanly and attributes to the right case
   (session_working_set→session-constraint, relational/contradiction→supersession,
   reflection→reflection, deep_mode & community_summaries→reflection+community, foresight→foresight,

@@ -1,7 +1,7 @@
 import {
   Database,
   Radar,
-  Sparkles,
+  Network,
   ShieldCheck,
   Sun,
   Moon,
@@ -14,7 +14,6 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 
-// 6 premium capabilities
 const CAPABILITIES = [
   {
     icon: <Database size={24} />,
@@ -37,7 +36,7 @@ const CAPABILITIES = [
     desc: 'Records commitments and deadlines, then retrieves them when time and context make them relevant.',
   },
   {
-    icon: <Sparkles size={24} />,
+    icon: <Network size={24} />,
     title: 'Deep synthesis',
     desc: 'Builds reflections from related memories after enough supporting evidence has accumulated.',
   },
@@ -48,7 +47,6 @@ const CAPABILITIES = [
   },
 ];
 
-// 4-step flow
 const STEPS = [
   {
     num: '01',
@@ -138,7 +136,81 @@ const PIPELINE_STAGES = [
   },
 ];
 
-// Eval dashboard categories
+const HERO_LEDGER = [
+  {
+    label: 'Fast path',
+    value: 'Turn persisted',
+    detail: 'Conversation saved with session, workspace, and source metadata.',
+    status: '142 ms',
+  },
+  {
+    label: 'Working set',
+    value: 'Correction active',
+    detail: '“PostgreSQL replaces MongoDB” is used before durable consolidation finishes.',
+    status: 'hot',
+  },
+  {
+    label: 'Graph edge',
+    value: 'SUPERSEDED_BY',
+    detail: 'Old database memory remains traceable but is no longer active.',
+    status: 'typed',
+  },
+  {
+    label: 'Answer trace',
+    value: '4 evidence sources',
+    detail: 'The response keeps the memories, route, and sufficiency check inspectable.',
+    status: 'audit',
+  },
+  {
+    label: 'Context budget',
+    value: 'Compact evidence',
+    detail: 'The prompt builder uses selected memory instead of replaying the full transcript.',
+    status: 'trimmed',
+  },
+];
+
+const TRACK_PROOF = [
+  {
+    title: 'Accumulates experience',
+    claim: 'Preferences, corrections, decisions, commitments, and facts are persisted with workspace and source metadata.',
+    backing: 'Fast observation storage + session working set + slow-path durable extraction.',
+  },
+  {
+    title: 'Keeps user preferences active',
+    claim: 'Session corrections and durable preferences can influence later answers without asking the user to repeat them.',
+    backing: 'Session working set, hot memory, active constraints, and prompt context merging.',
+  },
+  {
+    title: 'Retires outdated memory',
+    claim: 'Old values are not blindly deleted; they become inactive when newer evidence supersedes them.',
+    backing: 'CONTRADICTS / SUPERSEDED_BY graph edges, validity windows, and hot-memory demotion triggers.',
+  },
+  {
+    title: 'Retrieves under a context budget',
+    claim: 'MIRA routes to quick, relational, or deep retrieval and trims lower-priority context before the answer prompt.',
+    backing: 'Retrieval router, Chroma-backed vector search, graph traversal, and prompt budget allocation.',
+  },
+];
+
+const USER_FLOW = [
+  {
+    title: 'Say what matters once',
+    text: 'Tell the assistant your preference, decision, project detail, or deadline.',
+  },
+  {
+    title: 'Correct it when plans change',
+    text: 'MIRA keeps the new value active and marks the old one as superseded.',
+  },
+  {
+    title: 'Return in a later session',
+    text: 'The agent retrieves the useful memory without replaying the whole chat.',
+  },
+  {
+    title: 'Check why it answered',
+    text: 'Open the trace to see the memory records and relationships behind the response.',
+  },
+];
+
 const EVAL_CATEGORIES = [
   { name: 'Direct fact recall', checks: 'Retrieval matching specific attributes directly from past turns.', status: 'PASSED' },
   { name: 'Cross-session recall', checks: 'Recall of verified facts across session boundaries.', status: 'PASSED' },
@@ -187,11 +259,6 @@ export default function Landing() {
 
   return (
     <div className="landing">
-      {/* Glow overlays */}
-      <div className="landing-glow glow-top-left" />
-      <div className="landing-glow glow-bottom-right" />
-
-      {/* Sticky Premium Navbar */}
       <nav className="landing-nav">
         <div className="landing-brand">
           <BrandMark className="brand-mark" size={25} />
@@ -214,46 +281,90 @@ export default function Landing() {
       </nav>
 
       <div className="landing-content">
-        {/* Hero Section */}
         <section className="hero">
-          <div className="hero-badge">
-            <span className="badge-dot" />
-            Memory-Integrated Reasoning Architecture
+          <div className="hero-copy">
+            <div className="hero-badge">
+              <span className="badge-dot" />
+              Persistent memory for AI assistants
+            </div>
+
+            <h1 className="hero-title">
+              Your AI assistant should remember what matters.
+            </h1>
+
+            <p className="hero-sub">
+              MIRA helps agents carry preferences, decisions, corrections, and commitments
+              across sessions. When something changes, old memories are retired instead of
+              silently reused. When the agent answers, you can inspect which memories shaped it.
+            </p>
+
+            <div className="hero-ctas">
+              <button className="btn-primary" onClick={handleLaunch}>
+                Launch MIRA
+                <ArrowRight size={16} />
+              </button>
+              <a
+                className="btn-secondary"
+                href="#how-it-works"
+                onClick={(e) => scrollToSection('how-it-works', e)}
+              >
+                See how memory works
+              </a>
+            </div>
+
+            <div className="hero-status-pills">
+              <span className="status-pill"><span className="status-indicator pass" /> Remembers preferences</span>
+              <span className="status-pill"><span className="status-indicator active" /> Handles corrections</span>
+              <span className="status-pill"><span className="status-indicator active" /> Explains evidence</span>
+              <span className="status-pill"><span className="status-indicator active" /> Works across sessions</span>
+            </div>
           </div>
 
-          <h1 className="hero-title">
-            Memory infrastructure<br />
-            for <span className="highlight-text">long-running agents</span>.
-          </h1>
+          <aside className="hero-ledger" aria-label="MIRA memory runtime ledger">
+            <div className="hero-ledger-top">
+              <span>Runtime ledger</span>
+              <strong>demo workspace</strong>
+            </div>
+            <div className="hero-ledger-query">
+              <span>Later, the user asks</span>
+              <p>“Which database are we using now?”</p>
+            </div>
+            <div className="hero-ledger-rows">
+              {HERO_LEDGER.map((row) => (
+                <div className="hero-ledger-row" key={row.label}>
+                  <div>
+                    <span>{row.label}</span>
+                    <strong>{row.value}</strong>
+                    <p>{row.detail}</p>
+                  </div>
+                  <code>{row.status}</code>
+                </div>
+              ))}
+            </div>
+            <div className="hero-ledger-answer">
+              <span>MIRA answers with</span>
+              <strong>PostgreSQL</strong>
+              <p>because the newer correction superseded the older MongoDB memory.</p>
+            </div>
+          </aside>
+        </section>
 
-          <p className="hero-sub">
-            MIRA turns conversation history into structured, inspectable memory. It preserves corrections, retrieves across sessions, and shows the evidence behind each answer.
-          </p>
-
-          <div className="hero-ctas">
-            <button className="btn-primary" onClick={handleLaunch}>
-              Launch MIRA
-              <ArrowRight size={16} />
-            </button>
-            <a
-              className="btn-secondary"
-              href="#results"
-              onClick={(e) => scrollToSection('results', e)}
-            >
-              View Evaluation
-            </a>
+        <section className="consumer-flow-section">
+          <div className="consumer-flow-header">
+            <span>What this feels like</span>
+            <h2>A memory layer you can inspect, not just trust.</h2>
           </div>
-
-          {/* Trust/Status pills */}
-          <div className="hero-status-pills">
-            <span className="status-pill"><span className="status-indicator pass" /> Local regression suite</span>
-            <span className="status-pill"><span className="status-indicator active" /> Cross-session recall</span>
-            <span className="status-pill"><span className="status-indicator active" /> Typed memory graph</span>
-            <span className="status-pill"><span className="status-indicator active" /> Answer traces</span>
+          <div className="consumer-flow-grid">
+            {USER_FLOW.map((item, index) => (
+              <article className="consumer-flow-card" key={item.title}>
+                <span>{String(index + 1).padStart(2, '0')}</span>
+                <h3>{item.title}</h3>
+                <p>{item.text}</p>
+              </article>
+            ))}
           </div>
         </section>
 
-        {/* Hero Cockpit / Memory Engine Visual */}
         <section className="visual-section">
           <div className="visual-header-cap">Memory pipeline · Runtime view</div>
 
@@ -294,7 +405,6 @@ export default function Landing() {
             {/* Right: Network Graph & Floating Actions */}
             <div className="cockpit-visualization">
               <div className="visualization-display">
-                {/* SVG connection graph */}
                 <svg className="cockpit-network-svg" viewBox="0 0 400 300">
                   <defs>
                     <linearGradient id="gradient-line" x1="0%" y1="0%" x2="100%" y2="100%">
@@ -303,7 +413,6 @@ export default function Landing() {
                     </linearGradient>
                   </defs>
 
-                  {/* Glowing Connection Lines */}
                   <g className="network-lines">
                     <line x1="200" y1="150" x2="100" y2="80" stroke="url(#gradient-line)" strokeWidth="1.5" strokeDasharray="4 2" />
                     <line x1="200" y1="150" x2="300" y2="80" stroke="url(#gradient-line)" strokeWidth="1.5" />
@@ -313,14 +422,11 @@ export default function Landing() {
                     <line x1="110" y1="220" x2="290" y2="220" stroke="var(--border-strong)" strokeWidth="1" />
                   </g>
 
-                  {/* Graph Nodes */}
                   <g className="network-nodes">
-                    {/* Center Core */}
                     <circle cx="200" cy="150" r="28" fill="var(--surface-soft)" stroke="var(--accent)" strokeWidth="2.5" />
                     <circle cx="200" cy="150" r="4" fill="var(--accent)" />
                     <text x="200" y="154" textAnchor="middle" fill="var(--text)" fontSize="9" fontWeight="700">MIRA</text>
 
-                    {/* Nodes around */}
                     <g className={`nodes-group${activePipelineStage.layer === 0 || activePipelineStage.layer === 1 ? ' node-active' : ''}`}>
                       <circle cx="100" cy="80" r="16" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.5" />
                       <text x="100" y="83" textAnchor="middle" fill="var(--muted)" fontSize="8">Facts</text>
@@ -373,7 +479,6 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* Capabilities Section */}
         <section id="capabilities" className="section-padding">
           <div className="section-meta-eyebrow">Core memory components</div>
           <h2 className="section-h2">A working memory loop, not a longer prompt</h2>
@@ -392,7 +497,27 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* How It Works Section */}
+        <section className="section-padding track-proof-section">
+          <div className="section-meta-eyebrow">MemoryAgent fit</div>
+          <h2 className="section-h2">Track claims, backed by runtime pieces</h2>
+          <p className="section-subtitle-text">
+            These are not brochure claims. Each behavior maps to a concrete part of MIRA’s current architecture.
+          </p>
+
+          <div className="track-proof-grid">
+            {TRACK_PROOF.map((item) => (
+              <article className="track-proof-card" key={item.title}>
+                <h3>{item.title}</h3>
+                <p>{item.claim}</p>
+                <div>
+                  <span>Backed by</span>
+                  <strong>{item.backing}</strong>
+                </div>
+              </article>
+            ))}
+          </div>
+        </section>
+
         <section id="how-it-works" className="section-padding">
           <div className="section-meta-eyebrow">Memory lifecycle</div>
           <h2 className="section-h2">From conversation to evidence</h2>
@@ -419,7 +544,6 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* Evaluation Section */}
         <section id="results" className="section-padding">
           <div className="section-meta-eyebrow">Evaluation</div>
           <h2 className="section-h2">Inspect answers and the mechanism behind them</h2>
@@ -427,11 +551,9 @@ export default function Landing() {
             Local regression cases check recall, correction handling, routing, foresight, and graph evidence. Live benchmark results are reported separately.
           </p>
 
-          {/* Validation Dashboard Interface */}
           <div className="validation-dashboard">
             <div className="validation-main-panel">
               <div className="dashboard-grid">
-                {/* Score */}
                 <div className="dashboard-metric-header">
                   <div className="dashboard-circular-progress">
                     <div className="progress-ring">
@@ -440,18 +562,17 @@ export default function Landing() {
                     </div>
                   </div>
                   <div>
-                    <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800 }}>Assertion Suite Health</h3>
-                    <p style={{ margin: '4px 0 0', color: 'var(--muted)', fontSize: '0.82rem' }}>
-                      Automated testing of memory consistency models.
+                    <h3 className="dashboard-title">Local Evaluation Health</h3>
+                    <p className="dashboard-caption">
+                      Saved local cases check answers, retrieval mode, trace evidence, and graph behavior.
                     </p>
                   </div>
                 </div>
 
-                {/* Score indicators */}
                 <div className="dashboard-stats-strip">
                   <div className="stat-item">
                     <span className="stat-lbl">Passed</span>
-                    <strong className="stat-val pass">10</strong>
+                    <strong className="stat-val pass">13</strong>
                   </div>
                   <div className="stat-item">
                     <span className="stat-lbl">Failed</span>
@@ -459,7 +580,7 @@ export default function Landing() {
                   </div>
                   <div className="stat-item">
                     <span className="stat-lbl">Pass Rate</span>
-                    <strong className="stat-val pass">1.0</strong>
+                    <strong className="stat-val pass">100%</strong>
                   </div>
                   <div className="stat-item">
                     <span className="stat-lbl">Routers Active</span>
@@ -469,9 +590,8 @@ export default function Landing() {
               </div>
             </div>
 
-            {/* Category Checks */}
             <div className="dashboard-categories-container">
-              <h4 className="categories-header-label">Verification Matrix (7 core conditions)</h4>
+              <h4 className="categories-header-label">Verification matrix · 7 behavior groups</h4>
               <div className="category-grid">
                 {EVAL_CATEGORIES.map((c, i) => (
                   <div key={i} className="dashboard-category-card">
@@ -487,23 +607,50 @@ export default function Landing() {
           </div>
         </section>
 
-        {/* Final CTA */}
         <section className="final-cta-section">
-          <div className="final-cta-glow" />
           <div className="final-cta-card">
-            <h2>Inspect MIRA on a real conversation.</h2>
+            <h2>Inspect the memory loop on a real conversation.</h2>
             <p>Open the demo to follow a message through persistence, retrieval, graph updates, and its final answer trace.</p>
-            <button className="btn-primary" onClick={handleLaunch} style={{ margin: '0 auto' }}>
+            <button className="btn-primary centered-cta" onClick={handleLaunch}>
               Launch MIRA
               <ArrowRight size={16} />
             </button>
           </div>
         </section>
 
-        {/* Footer */}
-        <div className="landing-footer">
-          MIRA · Memory-Integrated Reasoning Architecture · Built for durable reasoning
-        </div>
+        <footer className="landing-footer">
+          <div className="landing-footer-brand">
+            <div className="landing-brand">
+              <BrandMark className="brand-mark" size={22} />
+              <span>MIRA</span>
+            </div>
+            <p>
+              Memory infrastructure for agents that need durable context, correction handling,
+              retrieval traces, and inspectable graph-backed memory.
+            </p>
+          </div>
+
+          <nav className="landing-footer-links" aria-label="Footer navigation">
+            <div>
+              <span>Product</span>
+              <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
+              <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>Memory lifecycle</a>
+              <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
+            </div>
+            <div>
+              <span>Runtime</span>
+              <button type="button" onClick={handleLaunch}>Open workspace</button>
+              <button type="button" onClick={runPipeline}>Run pipeline view</button>
+              <span className="footer-note">SQLite truth · Chroma index · typed graph</span>
+            </div>
+            <div>
+              <span>Contact</span>
+              <a href="https://github.com/jerrygeorge360" target="_blank" rel="noreferrer">
+                GitHub · jerrygeorge360
+              </a>
+            </div>
+          </nav>
+        </footer>
       </div>
     </div>
   );

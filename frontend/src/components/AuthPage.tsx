@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowRight, GitBranch, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowRight, Eye, GitBranch, ShieldCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
@@ -53,7 +53,7 @@ export default function AuthPage() {
             <ArrowRight size={16} />
           </button>
           <button className="auth-button secondary" onClick={continueWithDemo} disabled={busy}>
-            <Sparkles size={18} />
+            <Eye size={18} />
             {busy ? 'Preparing demo…' : 'Use demo account'}
           </button>
         </div>

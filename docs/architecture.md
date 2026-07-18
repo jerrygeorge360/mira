@@ -386,10 +386,26 @@ stops the application instead of falling back to the legacy workspace.
 
 Slack parses `MIRA_SLACK_TEAM_WORKSPACES` as a JSON mapping from immutable Slack `team_id` values
 to MIRA workspace IDs. Unknown teams are rejected, and Slack user identity remains separate from
-GitHub identity. Local MCP is constructed with one `WorkspaceContext` (or
-`MIRA_MCP_WORKSPACE_ID`); tool arguments can select records and sessions but cannot change the
-server's workspace. Remote MCP authentication remains out of scope because no remote transport
-is implemented.
+GitHub identity.
+
+MCP has two runtime layers. `integrations/mcp/server.py` is the transport-independent tool registry
+over the core memory modules. `integrations/mcp/service.py` exposes those tools through the
+official MCP SDK's Streamable HTTP transport at `/mcp`. Tool arguments can select records and
+owned sessions but cannot change the authenticated workspace.
+
+The FastAPI service is MIRA's OAuth 2.1 authorization server. GitHub authenticates the person,
+but MIRA issues its own opaque, resource-bound MCP tokens. Authorization codes require PKCE
+`S256`, are short-lived and single-use, and follow an explicit workspace consent page. Access and
+refresh tokens are stored only as SHA-256 hashes; refresh tokens rotate on use. The MCP token
+verifier resolves the token to an active user membership and constructs the trusted
+`WorkspaceContext`. The relevant source-of-truth tables are `oauth_clients`,
+`oauth_authorization_requests`, `oauth_access_tokens`, and `oauth_refresh_tokens`.
+
+First-party public clients are seeded from `MIRA_OAUTH_FIRST_PARTY_CLIENTS`. Open clients discover
+the authorization server through RFC 9728/RFC 8414 metadata and may use the dynamic registration
+endpoint. Registration accepts only public clients, exact HTTPS redirects or HTTP loopback
+redirects, authorization code and refresh grants, and the `mira:memory` scope. Static
+`MIRA_MCP_API_KEY` bindings remain as a trusted administrative compatibility path.
 
 Operational inspection and seed scripts require `--workspace-id` or `WORKSPACE_ID`. The worker,
 demo cleanup, migrations, and isolated evaluation runners are explicitly administrative/system

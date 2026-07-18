@@ -776,16 +776,25 @@ def list_sessions(user_id: str | None = None, limit: int = 50) -> list[Repositor
     )
 
 
-def message_counts_by_session() -> dict[str, int]:
+def message_counts_by_session(*, workspace_id: str | None = None) -> dict[str, int]:
     """Return {session_id: number of user/assistant turns} in one query (for the sidebar)."""
+    workspace_filter = ""
+    parameters: tuple[object, ...] = ()
+    if workspace_id is not None:
+        workspace_filter = "AND sessions.workspace_id = ?"
+        parameters = (workspace_id,)
     with repository_connection() as connection:
         rows = connection.execute(
-            "SELECT session_id, COUNT(*) AS n FROM observations "
-            """
+            f"""
+            SELECT observations.session_id, COUNT(*) AS n
+            FROM observations
+            JOIN sessions ON sessions.id = observations.session_id
             WHERE role IN ('user', 'assistant')
-              AND session_id IN (SELECT id FROM sessions WHERE status != 'deleted')
-            GROUP BY session_id
-            """
+              AND sessions.status != 'deleted'
+              {workspace_filter}
+            GROUP BY observations.session_id
+            """,  # nosec B608
+            parameters,
         ).fetchall()
     return {str(row["session_id"]): int(row["n"]) for row in rows}
 
