@@ -1,5 +1,9 @@
 # MIRA - Memory-Integrated Reasoning Architecture
 
+<p align="center">
+  <img src="docs/assets/mira-readme-banner.png" alt="MIRA - inspectable memory for AI agents" width="100%" />
+</p>
+
 MIRA is a memory layer for AI agents. It turns conversations into structured,
 inspectable memory that can survive across sessions.
 

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="460" viewBox="0 0 1600 460" role="img" aria-labelledby="title description">
+  <title id="title">MIRA - Inspectable memory for AI agents</title>
+  <desc id="description">MIRA turns conversations into session memory, durable facts, typed relationships, and traceable retrieval.</desc>
+  <rect width="1600" height="460" fill="#f6f2ea"/>
+  <rect x="1050" width="550" height="460" fill="#282623"/>
+  <path d="M0 0H1600V8H0Z" fill="#c96f4f"/>
+
+  <g transform="translate(88 62) scale(1.35)">
+    <path d="M32 9C28 20 20 28 9 32c11 4 19 12 23 23 4-11 12-19 23-23C44 28 36 20 32 9Z" fill="none" stroke="#282623" stroke-linecap="round" stroke-linejoin="round" stroke-width="5"/>
+    <circle cx="32" cy="8" r="5" fill="#282623"/>
+    <circle cx="56" cy="32" r="5" fill="#282623"/>
+    <circle cx="32" cy="56" r="5" fill="#282623"/>
+    <circle cx="8" cy="32" r="5" fill="#282623"/>
+    <path d="M32 22c1.7 5.2 4.8 8.3 10 10-5.2 1.7-8.3 4.8-10 10-1.7-5.2-4.8-8.3-10-10 5.2-1.7 8.3-4.8 10-10Z" fill="#c96f4f"/>
+  </g>
+
+  <text x="198" y="126" fill="#282623" font-family="Arial, Helvetica, sans-serif" font-size="70" font-weight="750">MIRA</text>
+  <text x="88" y="231" fill="#282623" font-family="Arial, Helvetica, sans-serif" font-size="50" font-weight="700">Inspectable memory for AI agents.</text>
+  <text x="88" y="280" fill="#746f68" font-family="Arial, Helvetica, sans-serif" font-size="24">Conversations become scoped memory, durable facts,</text>
+  <text x="88" y="314" fill="#746f68" font-family="Arial, Helvetica, sans-serif" font-size="24">typed relationships, and traceable retrieval.</text>
+
+  <g font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700">
+    <rect x="88" y="364" width="186" height="48" rx="6" fill="#eee6dc" stroke="#d8cbbd"/>
+    <text x="181" y="395" fill="#504b45" text-anchor="middle">SESSION MEMORY</text>
+    <rect x="290" y="364" width="174" height="48" rx="6" fill="#eee6dc" stroke="#d8cbbd"/>
+    <text x="377" y="395" fill="#504b45" text-anchor="middle">DURABLE FACTS</text>
+    <rect x="480" y="364" width="160" height="48" rx="6" fill="#eee6dc" stroke="#d8cbbd"/>
+    <text x="560" y="395" fill="#504b45" text-anchor="middle">TYPED GRAPH</text>
+    <rect x="656" y="364" width="174" height="48" rx="6" fill="#eee6dc" stroke="#d8cbbd"/>
+    <text x="743" y="395" fill="#504b45" text-anchor="middle">ANSWER TRACES</text>
+  </g>
+
+  <g stroke="#918a82" stroke-width="4" fill="none">
+    <line x1="1160" y1="105" x2="1360" y2="125"/>
+    <line x1="1360" y1="125" x2="1185" y2="335"/>
+    <line x1="1360" y1="125" x2="1460" y2="325"/>
+    <line x1="1185" y1="335" x2="1460" y2="325"/>
+  </g>
+  <g font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700">
+    <text x="1215" y="48" fill="#aaa39a">DERIVED_FROM</text>
+    <text x="1195" y="224" fill="#df8a6a">SUPERSEDES</text>
+    <text x="1438" y="207" fill="#aaa39a">MENTIONS</text>
+    <text x="1307" y="312" fill="#aaa39a">EVIDENCE</text>
+  </g>
+
+  <g font-family="Arial, Helvetica, sans-serif" text-anchor="middle">
+    <circle cx="1160" cy="105" r="50" fill="#f6f2ea" stroke="#b8b0a7" stroke-width="4"/>
+    <text x="1160" y="101" fill="#3a3733" font-size="20" font-weight="700">Session</text>
+    <text x="1160" y="126" fill="#817a72" font-size="15">source</text>
+
+    <circle cx="1360" cy="125" r="62" fill="#f6f2ea" stroke="#c96f4f" stroke-width="6"/>
+    <text x="1360" y="121" fill="#3a3733" font-size="21" font-weight="700">Atomic fact</text>
+    <text x="1360" y="148" fill="#817a72" font-size="16">active</text>
+
+    <circle cx="1185" cy="335" r="55" fill="#363330" stroke="#aaa39a" stroke-width="4"/>
+    <text x="1185" y="331" fill="#eee8df" font-size="19" font-weight="700">Previous</text>
+    <text x="1185" y="356" fill="#aaa39a" font-size="15">superseded</text>
+
+    <circle cx="1460" cy="325" r="60" fill="#c96f4f" stroke="#efb39c" stroke-width="4"/>
+    <text x="1460" y="321" fill="#fffaf4" font-size="20" font-weight="700">Retrieval</text>
+    <text x="1460" y="347" fill="#ffe2d6" font-size="16">trace</text>
+  </g>
+</svg>
