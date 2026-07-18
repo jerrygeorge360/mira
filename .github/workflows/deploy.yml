@@ -65,7 +65,9 @@
 
               IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml pull
               IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml up -d --remove-orphans
-              docker compose exec -T nginx nginx -s reload
+              # Git can replace a bind-mounted file's inode. Recreate only Nginx so
+              # the container always mounts the freshly pulled proxy configuration.
+              IMAGE_TAG=${{ github.sha }} docker compose -f docker-compose.prod.yml up -d --no-deps --force-recreate nginx
 
               docker image prune -f
             EOF
