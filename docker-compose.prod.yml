@@ -21,6 +21,11 @@ services:
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       MIRA_SESSION_TTL_MINUTES: ${MIRA_SESSION_TTL_MINUTES:-120}
       MIRA_PROMPT_TOKEN_BUDGET: ${MIRA_PROMPT_TOKEN_BUDGET:-32000}
+      MIRA_OAUTH_ISSUER_URL: ${MIRA_OAUTH_ISSUER_URL:-https://mira.ninja}
+      MIRA_MCP_PUBLIC_URL: ${MIRA_MCP_PUBLIC_URL:-https://mira.ninja/mcp}
+      MIRA_OAUTH_FIRST_PARTY_CLIENTS: ${MIRA_OAUTH_FIRST_PARTY_CLIENTS:-[]}
+      MIRA_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MIRA_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
+      MIRA_OAUTH_REFRESH_TOKEN_TTL_DAYS: ${MIRA_OAUTH_REFRESH_TOKEN_TTL_DAYS:-30}
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
@@ -51,6 +56,36 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+  mcp:
+    image: deltronfr/mira-api:${IMAGE_TAG:-latest}
+    command:
+      - uvicorn
+      - integrations.mcp.service:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8090"
+    expose:
+      - "8090"
+    env_file:
+      - .env
+    environment:
+      MIRA_DB_PATH: /data/sqlite/mira.db
+      CHROMA_DB_PATH: /data/chroma
+      MIRA_MCP_API_KEY: ${MIRA_MCP_API_KEY:-}
+      MIRA_MCP_WORKSPACE_ID: ${MIRA_MCP_WORKSPACE_ID:-workspace_legacy_default}
+      MIRA_MCP_TOKEN_WORKSPACES: ${MIRA_MCP_TOKEN_WORKSPACES:-}
+      MIRA_MCP_PUBLIC_URL: ${MIRA_MCP_PUBLIC_URL:-https://mira.ninja/mcp}
+      MIRA_OAUTH_ISSUER_URL: ${MIRA_OAUTH_ISSUER_URL:-https://mira.ninja}
+    volumes:
+      - ./.docker-data/sqlite:/data/sqlite
+      - ./.docker-data/chroma:/data/chroma
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   frontend:
     image: deltronfr/mira-frontend:${IMAGE_TAG:-latest}
@@ -85,6 +120,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      mcp:
+        condition: service_healthy
       frontend:
         condition: service_healthy
 
@@ -99,4 +136,3 @@ services:
 volumes:
   certbot-www:
   certbot-etc:
-

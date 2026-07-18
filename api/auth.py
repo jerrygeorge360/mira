@@ -8,6 +8,7 @@ import secrets
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, cast
+from urllib.parse import urlparse
 
 import httpx
 from fastapi import Depends, HTTPException, Request, Response
@@ -118,6 +119,17 @@ def require_csrf(request: Request, auth: AuthenticatedWorkspace) -> None:
     validate_request_origin(request)
     supplied = request.headers.get("X-CSRF-Token")
     cookie = request.cookies.get(CSRF_COOKIE)
+    validate_csrf_value(auth, supplied, cookie)
+
+
+def validate_csrf_value(
+    auth: AuthenticatedWorkspace,
+    supplied: str | None,
+    cookie: str | None,
+) -> None:
+    """Validate a CSRF value for browser forms that cannot set custom headers."""
+    if auth.context.auth_mode == "development":
+        return
     if not supplied or not cookie or not secrets.compare_digest(supplied, cookie):
         raise HTTPException(status_code=403, detail="CSRF validation failed")
     with repository_connection() as connection:
@@ -362,6 +374,33 @@ def allowed_app_redirect(candidate: str | None = None) -> str:
     if candidate and candidate.rstrip("/") != configured:
         raise HTTPException(status_code=400, detail="redirect target is not allowed")
     return configured
+
+
+def allowed_github_return(candidate: str | None) -> str:
+    """Allow GitHub login to return to the app or MIRA's own OAuth authorize route."""
+    if not candidate:
+        return allowed_app_redirect()
+    app_url = allowed_app_redirect().rstrip("/")
+    if candidate.rstrip("/") == app_url:
+        return app_url
+    issuer = os.environ.get("MIRA_OAUTH_ISSUER_URL", "http://localhost:8000").rstrip("/")
+    parsed_candidate = urlparse(candidate)
+    parsed_issuer = urlparse(issuer)
+    if (
+        parsed_candidate.scheme == parsed_issuer.scheme
+        and parsed_candidate.netloc == parsed_issuer.netloc
+        and parsed_candidate.path == "/oauth/authorize"
+        and not parsed_candidate.fragment
+    ):
+        return candidate
+    raise HTTPException(status_code=400, detail="GitHub return target is not allowed")
+
+
+def github_callback_target(target: str) -> str:
+    """Preserve OAuth authorization queries while keeping the existing app callback."""
+    if urlparse(target).path == "/oauth/authorize":
+        return target
+    return f"{target.rstrip('/')}/?auth=success"
 
 
 def _required_env(name: str) -> str:

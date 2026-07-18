@@ -24,16 +24,28 @@ def test_dockerfile_exists_and_starts_api() -> None:
     assert "EXPOSE 8000" in text
 
 
-def test_compose_services_expose_api_worker_and_frontend() -> None:
-    """Docker Compose defines the product API, worker, and frontend services."""
+def test_compose_services_expose_api_worker_mcp_and_frontend() -> None:
+    """Docker Compose defines the product API, worker, MCP, and frontend services."""
     compose = (PROJECT_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
     assert "api:" in compose
     assert "worker:" in compose
+    assert "mcp:" in compose
     assert "frontend:" in compose
     assert "${API_PORT:-8000}:8000" in compose
     assert "${FRONTEND_PORT:-5173}:5173" in compose
     assert "http://localhost:8000/health" in compose
+    assert "integrations.mcp.service:app" in compose
+
+
+def test_production_proxy_exposes_mcp_oauth_discovery() -> None:
+    """The public proxy routes MCP and both OAuth discovery documents."""
+    nginx = (PROJECT_ROOT / "nginx/default.conf").read_text(encoding="utf-8")
+
+    assert "location = /mcp" in nginx
+    assert "location ^~ /oauth/" in nginx
+    assert "location = /.well-known/oauth-authorization-server" in nginx
+    assert "location = /.well-known/oauth-protected-resource/mcp" in nginx
 
 
 def test_compose_mounts_sqlite_and_chroma_paths() -> None:
