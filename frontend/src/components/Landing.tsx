@@ -9,6 +9,7 @@ import {
   ArrowRight,
   RefreshCw,
   Play,
+  Cable,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
@@ -497,6 +498,36 @@ export default function Landing() {
           </div>
         </section>
 
+        <section id="mcp" className="mcp-access-section" aria-labelledby="mcp-access-title">
+          <div className="mcp-access-copy">
+            <div className="mcp-access-eyebrow">
+              <Cable size={15} />
+              Agent integration
+            </div>
+            <h2 id="mcp-access-title">Use MIRA's memory tools from an MCP client.</h2>
+            <p>
+              MIRA exposes its active retrieval, graph, foresight, and session-memory operations
+              through an authenticated MCP endpoint. OAuth binds each client to the user's
+              workspace before any memory tool runs.
+            </p>
+          </div>
+          <div className="mcp-access-details" aria-label="MCP service details">
+            <div>
+              <span>Transport</span>
+              <strong>Streamable HTTP</strong>
+            </div>
+            <div>
+              <span>Authorization</span>
+              <strong>OAuth 2.1 + PKCE</strong>
+            </div>
+            <div>
+              <span>Data boundary</span>
+              <strong>Workspace-scoped</strong>
+            </div>
+            <code>https://mira.ninja/mcp</code>
+          </div>
+        </section>
+
         <section className="section-padding track-proof-section">
           <div className="section-meta-eyebrow">MemoryAgent fit</div>
           <h2 className="section-h2">Track claims, backed by runtime pieces</h2>
@@ -636,11 +667,13 @@ export default function Landing() {
               <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
               <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>Memory lifecycle</a>
               <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
+              <a href="/sitemap.xml">Sitemap</a>
             </div>
             <div>
               <span>Runtime</span>
               <button type="button" onClick={handleLaunch}>Open workspace</button>
               <button type="button" onClick={runPipeline}>Run pipeline view</button>
+              <a href="#mcp" onClick={(e) => scrollToSection('mcp', e)}>MCP access</a>
               <span className="footer-note">SQLite truth · Chroma index · typed graph</span>
             </div>
             <div>
