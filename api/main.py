@@ -8,10 +8,11 @@ Architecture area: API/server.
 from __future__ import annotations
 
 import os
+from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 
 from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
@@ -35,6 +36,20 @@ DEFAULT_CORS_ORIGINS = (
     "http://localhost:3000",
     "http://localhost:5173",
 )
+PUBLIC_OAUTH_PATHS = frozenset(
+    {
+        "/.well-known/oauth-authorization-server",
+        "/oauth/register",
+        "/oauth/token",
+        "/oauth/revoke",
+    }
+)
+PUBLIC_OAUTH_CORS_HEADERS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Accept, Authorization, Content-Type",
+    "Access-Control-Max-Age": "600",
+}
 
 
 def create_app() -> FastAPI:
@@ -56,6 +71,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.middleware("http")(public_oauth_cors_middleware)
     app.middleware("http")(rate_limit_middleware)
     app.include_router(health.router)
     app.include_router(auth.router)
@@ -68,6 +84,23 @@ def create_app() -> FastAPI:
     app.include_router(worker.router)
     app.include_router(evaluation.router)
     return app
+
+
+async def public_oauth_cors_middleware(
+    request: Request,
+    call_next: Callable[[Request], Awaitable[Response]],
+) -> Response:
+    """Allow browser-based public OAuth clients without widening API CORS."""
+    if request.url.path not in PUBLIC_OAUTH_PATHS:
+        return await call_next(request)
+    if request.method == "OPTIONS":
+        return Response(status_code=204, headers=PUBLIC_OAUTH_CORS_HEADERS)
+
+    response = await call_next(request)
+    if "access-control-allow-credentials" in response.headers:
+        del response.headers["access-control-allow-credentials"]
+    response.headers.update(PUBLIC_OAUTH_CORS_HEADERS)
+    return response
 
 
 def _cors_origins() -> list[str]:
