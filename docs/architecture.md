@@ -393,6 +393,13 @@ over the core memory modules. `integrations/mcp/service.py` exposes those tools 
 official MCP SDK's Streamable HTTP transport at `/mcp`. Tool arguments can select records and
 owned sessions but cannot change the authenticated workspace.
 
+Both layers publish the same model-facing usage policy and tool descriptions. The policy directs
+clients to retrieve before memory-dependent answers, separates direct retrieval from working-set,
+graph, and foresight inspection, and limits writes to explicit durable user observations. It also
+states that corrections are append-only observations and that fast-path acceptance does not imply
+completed slow-path consolidation. These are discovery instructions for external models; core
+validation, ownership, persistence, and retrieval remain the enforcement boundaries.
+
 The FastAPI service is MIRA's OAuth 2.1 authorization server. GitHub authenticates the person,
 but MIRA issues its own opaque, resource-bound MCP tokens. Authorization codes require PKCE
 `S256`, are short-lived and single-use, and follow an explicit workspace consent page. Access and

@@ -14,7 +14,7 @@ from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.oauth import MCP_SCOPE, mcp_resource_url, oauth_issuer_url
 from integrations.mcp.auth import StaticTokenVerifier, authenticated_workspace_context
-from integrations.mcp.server import build_mcp_server
+from integrations.mcp.server import MCP_SERVER_INSTRUCTIONS, MCP_TOOL_DESCRIPTIONS, build_mcp_server
 
 
 def create_mcp_server() -> FastMCP:
@@ -26,10 +26,7 @@ def create_mcp_server() -> FastMCP:
     issuer_url = oauth_issuer_url()
     mcp = FastMCP(
         "MIRA Memory",
-        instructions=(
-            "Persistent, workspace-isolated memory tools backed by MIRA's session, "
-            "retrieval, graph, and foresight runtime."
-        ),
+        instructions=MCP_SERVER_INSTRUCTIONS,
         token_verifier=StaticTokenVerifier(),
         auth=AuthSettings(
             issuer_url=AnyHttpUrl(issuer_url),
@@ -47,62 +44,56 @@ def create_mcp_server() -> FastMCP:
         context = authenticated_workspace_context()
         return build_mcp_server(context).call_tool(tool, params)
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["save_observation"])
     def save_observation(session_id: str, content: str, role: str = "user") -> dict[str, object]:
-        """Persist a raw observation on MIRA's fast path."""
         return call(
             "save_observation",
             {"session_id": session_id, "content": content, "role": role},
         )
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["retrieve_memory"])
     def retrieve_memory(
         query: str,
         session_id: str | None = None,
         limit: int = 8,
     ) -> dict[str, object]:
-        """Retrieve direct fact memory for a query using Quick Mode."""
         return call(
             "retrieve_memory",
             {"query": query, "session_id": session_id, "limit": limit},
         )
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["inspect_session_working_set"])
     def inspect_session_working_set(
         session_id: str,
         max_items: int = 20,
     ) -> dict[str, object]:
-        """List prompt-ready Session Working Set items for a session."""
         return call(
             "inspect_session_working_set",
             {"session_id": session_id, "max_items": max_items},
         )
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["inspect_graph"])
     def inspect_graph(
         node_id: str | None = None,
         edge_type: str | None = None,
         depth: int = 1,
     ) -> dict[str, object]:
-        """Inspect typed graph neighbors of a node or edges of a type."""
         return call(
             "inspect_graph",
             {"node_id": node_id, "edge_type": edge_type, "depth": depth},
         )
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["list_active_foresight"])
     def list_active_foresight(session_id: str | None = None) -> dict[str, object]:
-        """List active foresight records, optionally scoped to a session."""
         return call("list_active_foresight", {"session_id": session_id})
 
-    @mcp.tool()
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["run_retrieval_query"])
     def run_retrieval_query(
         query: str,
         session_id: str | None = None,
         mode: str | None = None,
         limit: int = 8,
     ) -> dict[str, object]:
-        """Route a query and return MIRA retrieval results for the chosen mode."""
         return call(
             "run_retrieval_query",
             {

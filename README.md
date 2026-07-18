@@ -399,6 +399,20 @@ Nginx routes `/mcp`, `/oauth/*`, the two discovery documents, and the GitHub aut
 handoff to the correct containers. Static MCP keys remain available for administrative and
 backward-compatible integrations; OAuth is the consumer-facing path.
 
+### MCP model behavior
+
+MIRA publishes usage policy with its MCP server and tool descriptions. A connected model is told
+to retrieve before answering questions that depend on conversation history, use the Session
+Working Set for active session constraints, inspect the graph for conflicts or evidence lineage,
+and consult foresight only for relevant temporal requests. `run_retrieval_query` is the general
+retrieval entry point; `retrieve_memory` is the narrower direct-fact lookup.
+
+The model is also told to save only explicit user-authored facts, durable preferences, decisions,
+commitments, and corrections. It must not store credentials, its own speculation, retrieved text,
+or transient requests. Corrections are appended as new observations so MIRA's slow path can retain
+provenance and resolve supersession. A successful `save_observation` call confirms immediate
+fast-path persistence; it does not claim that background extraction has finished.
+
 ## Runtime inspection
 
 Graph snapshot:

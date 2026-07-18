@@ -21,6 +21,7 @@ from core.db.repositories import (
     save_observation,
 )
 from core.db.schema import LEGACY_WORKSPACE_ID
+from integrations.mcp.server import MCP_TOOL_DESCRIPTIONS
 from slack.mcp_server import build_mcp_server, run_mcp_server
 
 EXPECTED_TOOLS = {
@@ -53,9 +54,12 @@ def test_tools_are_registered() -> None:
     server = build_mcp_server(MCP_CONTEXT)
 
     assert set(server.tool_names()) == EXPECTED_TOOLS
-    definitions = {definition["name"] for definition in server.tool_definitions()}
-    assert definitions == EXPECTED_TOOLS
-    assert all(definition["description"] for definition in server.tool_definitions())
+    definitions = {definition["name"]: definition for definition in server.tool_definitions()}
+    assert set(definitions) == EXPECTED_TOOLS
+    assert all(
+        definitions[name]["description"] == description
+        for name, description in MCP_TOOL_DESCRIPTIONS.items()
+    )
 
 
 def test_save_observation_tool_returns_expected_shape(database_path: Path) -> None:
