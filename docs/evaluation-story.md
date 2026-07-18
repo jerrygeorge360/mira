@@ -124,15 +124,11 @@ nothing" or "this layer never ran." Only inspecting the mechanism tells you whic
 
 ## 5. The results (clean run, DeepSeek + local embeddings)
 
-### Local eval — 12 / 13 (0.92)
+### Local eval — 13 / 13 (1.00)
 
-Every behavior passes except one. `reflection-user-knowledge` now passes end-to-end (fires
-*and* is retrieved via Deep). The single failure, `contradiction-deadline-conflict`, is a
-**case-design issue, not a system bug**: two same-subject deadline claims canonicalize
-together, so the deterministic path treats the second as an *update* (`SUPERSEDED_BY`)
-rather than an unresolved *conflict* (`CONTRADICTS`). The answer still surfaces both dates;
-only the edge-type assertion fails. The fix is to rewrite the case with two distinct
-sources so it elicits a genuine contradiction.
+Every saved local-eval behavior passes. `reflection-user-knowledge` now passes end-to-end
+(fires *and* is retrieved via Deep), and the contradiction cases preserve explicit graph
+evidence instead of only landing on the right surface answer.
 
 ### Ablation — full_system 7 / 7 (1.00), every layer load-bearing
 

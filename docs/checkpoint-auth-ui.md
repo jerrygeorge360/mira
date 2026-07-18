@@ -29,10 +29,15 @@ frontend), `5083e97` (CI align), `1a43cfd`/`68c57d3` (docs).
 - `GET /auth/me` (current identity + `auth_mode`), `POST /auth/logout`.
 - **`MIRA_AUTH_MODE`**: `github` (default, real OAuth) | `development` (binds a fixed dev workspace,
   no login — for local work).
+- **MCP OAuth 2.1**: FastAPI publishes authorization-server discovery, dynamic public-client
+  registration, GitHub-backed consent, PKCE authorization codes, rotating refresh tokens, and
+  revocation. The standalone MCP service publishes protected-resource metadata and resolves each
+  opaque access token to the authorized user and workspace.
 
 ### Multi-tenant workspace model — `core/db/schema.py`, `core/db/repositories.py`
-- New tables: `users`, `workspaces`, `workspace_members`, `auth_sessions`, `oauth_states`,
-  `demo_issuances`.
+- Auth tables: `users`, `workspaces`, `workspace_members`, `auth_sessions`, `oauth_states`,
+  `oauth_clients`, `oauth_authorization_requests`, `oauth_access_tokens`,
+  `oauth_refresh_tokens`, and `demo_issuances`.
 - **Memory is now workspace-isolated.** `_WORKSPACE_OWNED_TABLES` lists the scoped tables;
   `bind_workspace(context)` returns a repository whose reads/writes are filtered to that workspace.
 - Every data route follows one pattern:
@@ -60,7 +65,7 @@ Also: Docker for api/worker/frontend (`515c543`).
 
 ## 2. What Claude built (this session)
 
-- **Eval/benchmark**: local eval 12/13, ablation full_system 7/7 (every layer load-bearing),
+- **Eval/benchmark**: local eval 13/13, ablation full_system 7/7 (every layer load-bearing),
   benchmark parallel + isolation + DeepSeek pricing, hybrid-routing hardening. All committed.
   See `docs/session-checkpoint.md`, `docs/evaluation-story.md`, `docs/paper-reconciliation.md`.
 - **Product UI wiring (frontend, UNCOMMITTED)**: replaced mock data in all views with live API

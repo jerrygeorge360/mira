@@ -81,8 +81,8 @@ queued observation
   durable memory.
 - **Provider profiles**: DashScope/Qwen, SiliconFlow, DeepSeek, Gemini, and local FastEmbed
   embeddings can be configured through `.env`.
-- **Interfaces**: FastAPI backend, web interface, Streamlit inspection UI, Slack bot, and MCP
-  server skeleton.
+- **Interfaces**: FastAPI backend, web interface, Streamlit inspection UI, Slack bot, and an
+  authenticated MCP Streamable HTTP service.
 - **Evaluation**: local regression cases, ablation runs, and LongMemEval-style benchmark tools.
 
 ## Example
@@ -121,7 +121,8 @@ core/
 api/                FastAPI backend
 frontend/           web interface
 ui/                 Streamlit inspection app
-slack/              Slack and MCP entry points
+slack/              Slack entry point
+integrations/mcp/   MCP tool registry, authentication, and Streamable HTTP service
 evaluation/         local eval, ablation, benchmark adapters
 scripts/            provider checks, worker, demo seeding, inspection commands
 docs/               architecture notes, ADRs, paper, demo script
@@ -322,6 +323,68 @@ MIRA_SLACK_TEAM_WORKSPACES={"T01234567":"workspace_legacy_default"}
 
 Slack user IDs stay inside the workspace selected by the verified Slack team mapping.
 
+The MCP service is a separate process and uses the standard Streamable HTTP transport. For local
+trusted use, generate a static bearer token and bind it to one workspace:
+
+```bash
+export MIRA_MCP_API_KEY="$(openssl rand -hex 32)"
+export MIRA_MCP_WORKSPACE_ID=workspace_legacy_default
+make mcp
+```
+
+The MCP endpoint is `http://localhost:8090/mcp`; `http://localhost:8090/health` is public for
+container health checks. For Docker Compose:
+
+```bash
+docker compose up -d mcp
+docker compose logs -f mcp
+```
+
+Configure an MCP client with the endpoint URL and an `Authorization: Bearer <token>` header. For
+multiple clients, set `MIRA_MCP_TOKEN_WORKSPACES` to a JSON token-to-workspace map instead of the
+single-token variables. The workspace comes from the authenticated token, not tool arguments, so
+clients cannot select another workspace in a call.
+
+### MCP OAuth
+
+For a first-party MCP client, pre-register its exact callback URI in `.env`:
+
+```env
+MIRA_AUTH_MODE=github
+MIRA_OAUTH_ISSUER_URL=http://localhost:8000
+MIRA_MCP_PUBLIC_URL=http://localhost:8090/mcp
+MIRA_OAUTH_FIRST_PARTY_CLIENTS=[{"client_id":"mira-desktop","client_name":"MIRA Desktop","redirect_uris":["http://127.0.0.1:43110/callback"]}]
+```
+
+Start the API and MCP service, then configure the client with
+`http://localhost:8090/mcp`. The MCP client discovers MIRA's authorization server, opens GitHub
+login and a workspace consent page, uses an authorization code with PKCE, and receives a
+workspace-bound access token. Access tokens expire after 15 minutes by default; refresh tokens
+are single-use and rotate on every refresh.
+
+Open consumer clients can register themselves through the advertised dynamic registration
+endpoint. MIRA accepts public clients only, requires PKCE with `S256`, requires HTTPS callback
+URIs except for local loopback addresses, and exposes only the `mira:memory` scope. Discovery is
+available at:
+
+```text
+GET /.well-known/oauth-authorization-server
+GET /.well-known/oauth-protected-resource/mcp
+```
+
+For the bundled production Nginx topology, use public HTTPS values:
+
+```env
+MIRA_OAUTH_ISSUER_URL=https://mira.ninja
+MIRA_MCP_PUBLIC_URL=https://mira.ninja/mcp
+COOKIE_SECURE=true
+GITHUB_CALLBACK_URL=https://mira.ninja/api/auth/github/callback
+```
+
+Nginx routes `/mcp`, `/oauth/*`, the two discovery documents, and the GitHub authorization
+handoff to the correct containers. Static MCP keys remain available for administrative and
+backward-compatible integrations; OAuth is the consumer-facing path.
+
 ## Runtime inspection
 
 Graph snapshot:
@@ -376,8 +439,8 @@ Useful notes:
 
 ### Latest local evaluation story
 
-The latest saved local run is in `evaluation/local/memory_cases.results.json`. It passed 12 of
-13 cases, or 92.31%. The run is useful because it checks both final answers and mechanism
+The latest saved local run is in `evaluation/local/memory_cases.results.json`. It passed 13 of
+13 cases, or 100%. The run is useful because it checks both final answers and mechanism
 evidence such as routing mode, retrieved sources, session items, and graph edges.
 
 | Area | Passed | Total | What it showed |
@@ -390,8 +453,8 @@ evidence such as routing mode, retrieved sources, session items, and graph edges
 | Deep mode synthesis | 3 | 3 | Deep retrieval surfaced reflections, community summaries, and broader identity/context records. |
 | Retrieval sufficiency | 1 | 1 | The system could answer from available memory when retrieval was sufficient. |
 | Routing intent | 2 | 2 | General questions bypassed memory, while personal-memory questions used memory. |
-| Contradiction handling | 1 | 2 | Preference correction worked; one deadline-conflict case still needs stricter `CONTRADICTS` behavior. |
-| **Total** | **12** | **13** | **The core memory loop works, with contradiction classification still the clearest gap.** |
+| Contradiction handling | 2 | 2 | Preference correction and deadline-conflict checks both preserve explicit graph evidence. |
+| **Total** | **13** | **13** | **The core memory loop passes the saved local suite.** |
 
 The most important signal is not only the pass rate. The mechanism checks show that the system is
 not just getting lucky from prompt text: relational retrieval returned graph evidence, Deep Mode
