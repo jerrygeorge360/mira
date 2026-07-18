@@ -8,9 +8,11 @@ from urllib.parse import urlencode
 
 import pytest
 from fastapi import HTTPException
+from fastapi.responses import JSONResponse
 from starlette.requests import Request
 
 from api.auth import allowed_github_return
+from api.main import public_oauth_cors_middleware
 from api.oauth import MCP_SCOPE, sync_first_party_oauth_clients
 from api.routes.oauth import (
     OAuthClientRegistration,
@@ -59,6 +61,45 @@ def test_discovery_metadata_exposes_pkce_and_registration(oauth_api_database: Pa
     assert payload["code_challenge_methods_supported"] == ["S256"]
     assert payload["scopes_supported"] == [MCP_SCOPE]
     assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.asyncio
+async def test_public_oauth_routes_allow_browser_clients(
+    oauth_api_database: Path,
+) -> None:
+    async def discovery_endpoint(_request: Request) -> JSONResponse:
+        return JSONResponse({"issuer": "http://localhost:8000"})
+
+    discovery = await public_oauth_cors_middleware(
+        _request("GET", "/.well-known/oauth-authorization-server"),
+        discovery_endpoint,
+    )
+    assert discovery.status_code == 200
+    assert discovery.headers["access-control-allow-origin"] == "*"
+    assert "access-control-allow-credentials" not in discovery.headers
+
+    preflight = await public_oauth_cors_middleware(
+        _request("OPTIONS", "/oauth/register"),
+        discovery_endpoint,
+    )
+    assert preflight.status_code == 204
+    assert preflight.headers["access-control-allow-origin"] == "*"
+    assert "POST" in preflight.headers["access-control-allow-methods"]
+    assert "Content-Type" in preflight.headers["access-control-allow-headers"]
+
+
+def _request(method: str, path: str) -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": method,
+            "scheme": "http",
+            "server": ("localhost", 8000),
+            "path": path,
+            "query_string": b"",
+            "headers": [(b"origin", b"http://localhost:6274")],
+        }
+    )
 
 
 def test_unauthenticated_authorize_starts_github_login(oauth_api_database: Path) -> None:
