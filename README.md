@@ -745,6 +745,12 @@ Major decisions are tracked in [docs/adr](docs/adr):
 - [ADR-0008: Foresight Lifecycle](docs/adr/0008-foresight-lifecycle.md)
 - [ADR-0009: Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
 - [ADR-0010: Sensa-Style Ambient Context as Prompt Signal, Not Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
+- [ADR-0011: Structured-First Retrieval Weighting](docs/adr/0011-structured-first-retrieval-weighting.md)
+- [ADR-0012: Hybrid Contradiction and Supersession Detection](docs/adr/0012-hybrid-contradiction-supersession-detection.md)
+- [ADR-0013: Workspace-Bound Data Ownership](docs/adr/0013-workspace-bound-data-ownership.md)
+- [ADR-0014: Provenance-Aware Conversation Deletion](docs/adr/0014-provenance-aware-conversation-deletion.md)
+- [ADR-0015: Provider Profiles and Capability-Aware Structured Output](docs/adr/0015-provider-profiles-and-structured-output.md)
+- [ADR-0016: Authenticated Standalone MCP Service](docs/adr/0016-authenticated-standalone-mcp-service.md)
 
 ## Further reading
 
