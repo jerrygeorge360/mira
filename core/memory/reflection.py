@@ -70,6 +70,34 @@ WORLD_KNOWLEDGE_MARKERS = frozenset(
         "generally means",
     }
 )
+FACT_RESTATEMENT_PREFIXES = (
+    "chromadb is ",
+    "mira distinguishes ",
+    "mira exposes ",
+    "mira is ",
+    "mira keeps ",
+    "mira shows ",
+    "mira stores ",
+    "mira supports ",
+    "mira uses ",
+    "quick retrieval ",
+    "raw observations ",
+    "sqlite is ",
+    "the prompt is ",
+    "the session working set ",
+)
+REFLECTION_PATTERN_MARKERS = frozenset(
+    {
+        "across",
+        "approach",
+        "consistently",
+        "pattern",
+        "strategy",
+        "tendency",
+        "tends",
+        "tradeoff",
+    }
+)
 
 
 def should_reflect(observation_ids: list[str], importance_scores: dict[str, float]) -> bool:
@@ -109,7 +137,7 @@ def synthesize_reflections(observation_ids: list[str]) -> list[Reflection]:
     for raw_reflection in raw_reflections:
         if not isinstance(raw_reflection, dict):
             continue
-        reflection = _normalize_reflection(raw_reflection, valid_evidence_ids)
+        reflection = _normalize_reflection(raw_reflection, valid_evidence_ids, observations)
         if reflection is not None:
             reflections.append(reflection)
     return reflections
@@ -319,6 +347,7 @@ def _now() -> str:
 def _normalize_reflection(
     raw_reflection: dict[object, object],
     valid_evidence_ids: set[str],
+    observations: dict[str, str],
 ) -> Reflection | None:
     reflection_type = _string(raw_reflection.get("reflection_type"))
     content = _string(raw_reflection.get("content"))
@@ -333,8 +362,14 @@ def _normalize_reflection(
         if reflection_type == "world_knowledge":
             LOGGER.info("Rejected world-knowledge reflection: %s", content)
         return None
-    if not evidence_ids:
-        LOGGER.info("Rejected ungrounded reflection: %s", content)
+    if len(evidence_ids) < 2:
+        LOGGER.info("Rejected thin reflection with fewer than two evidence records: %s", content)
+        return None
+    if not _has_diverse_evidence(evidence_ids, observations):
+        LOGGER.info("Rejected reflection backed by near-duplicate evidence: %s", content)
+        return None
+    if _too_similar_to_any_evidence(content, evidence_ids, observations):
+        LOGGER.info("Rejected reflection too similar to source evidence: %s", content)
         return None
     if confidence <= 0.0:
         LOGGER.info("Rejected zero-confidence reflection: %s", content)
@@ -344,6 +379,9 @@ def _normalize_reflection(
         return None
     if _looks_like_world_knowledge(content):
         LOGGER.info("Rejected fact-like reflection: %s", content)
+        return None
+    if _looks_like_atomic_fact_restatement(content):
+        LOGGER.info("Rejected atomic-fact restatement reflection: %s", content)
         return None
 
     return {
@@ -425,6 +463,52 @@ def _looks_unsupported(content: str) -> bool:
 def _looks_like_world_knowledge(content: str) -> bool:
     normalized = _normalize(content)
     return any(marker in normalized for marker in WORLD_KNOWLEDGE_MARKERS)
+
+
+def _looks_like_atomic_fact_restatement(content: str) -> bool:
+    normalized = _normalize(content)
+    if any(marker in normalized for marker in REFLECTION_PATTERN_MARKERS):
+        return False
+    return normalized.startswith(FACT_RESTATEMENT_PREFIXES)
+
+
+def _has_diverse_evidence(evidence_ids: list[str], observations: dict[str, str]) -> bool:
+    normalized_evidence = [
+        _normalize(observations.get(evidence_id, "")) for evidence_id in evidence_ids
+    ]
+    unique_evidence = {evidence for evidence in normalized_evidence if evidence}
+    if len(unique_evidence) < 2:
+        return False
+    for index, left in enumerate(normalized_evidence):
+        for right in normalized_evidence[index + 1 :]:
+            if left and right and _token_jaccard(left, right) < 0.82:
+                return True
+    return False
+
+
+def _too_similar_to_any_evidence(
+    content: str,
+    evidence_ids: list[str],
+    observations: dict[str, str],
+) -> bool:
+    normalized_content = _normalize(content)
+    for evidence_id in evidence_ids:
+        evidence = _normalize(observations.get(evidence_id, ""))
+        if not evidence:
+            continue
+        if normalized_content == evidence:
+            return True
+        if _token_jaccard(normalized_content, evidence) >= 0.86:
+            return True
+    return False
+
+
+def _token_jaccard(left: str, right: str) -> float:
+    left_tokens = set(left.split())
+    right_tokens = set(right.split())
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / len(left_tokens | right_tokens)
 
 
 def _label(content: str) -> str:

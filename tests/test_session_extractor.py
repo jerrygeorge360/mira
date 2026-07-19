@@ -49,6 +49,35 @@ def test_actually_preference_extracts_direct_correction() -> None:
     assert operations[0]["explicitness_label"] == "direct_correction"
 
 
+def test_architecture_sentence_about_corrections_is_no_op() -> None:
+    """Mentioning correction handling is not itself a correction."""
+    operations = extract_session_operations(
+        "obs_architecture",
+        (
+            "The Session Working Set immediately tracks current goals, corrections, "
+            "constraints, decisions, and open questions."
+        ),
+        [],
+        [],
+    )
+
+    assert operations[0]["op"] == "no_op"
+    assert operations[0]["reason"] == "no_session_state_operation_detected"
+
+
+def test_negative_architecture_sentence_is_no_op() -> None:
+    """Ordinary negative facts should be left for durable slow-path extraction."""
+    operations = extract_session_operations(
+        "obs_prompt",
+        "The prompt is an execution buffer, not the memory store.",
+        [],
+        [],
+    )
+
+    assert operations[0]["op"] == "no_op"
+    assert operations[0]["reason"] == "no_session_state_operation_detected"
+
+
 def test_community_summary_distinction_extracts_decision_or_constraint() -> None:
     """Explicit architecture distinctions become decision-like session items."""
     operations = extract_session_operations(

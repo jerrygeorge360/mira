@@ -112,6 +112,10 @@ SQLite is the source of truth. ChromaDB is a rebuildable vector index over SQLit
 NetworkX is used as a read-only graph projection when graph algorithms need it; it is not the
 main storage layer.
 
+<p align="center">
+  <img src="docs/assets/mira-c4-achitecturaldiagram.png" alt="MIRA architecture diagram" width="100%" />
+</p>
+
 ```text
 core/
   agent.py          main runtime loop
