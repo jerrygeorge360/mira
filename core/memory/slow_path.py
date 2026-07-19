@@ -796,7 +796,23 @@ def _apply_changes(
 _LLM_CHANGE_CANDIDATE_SCAN = 25
 _LLM_CHANGE_SHORTLIST_LIMIT = 5
 _LLM_CHANGE_SHORTLIST_THRESHOLD = 0.5
-_LLM_CHANGE_CONFIDENCE_GATE = 0.5
+_LLM_CHANGE_CONFIDENCE_GATE = 0.75
+_ADDITIVE_CHANGE_PREDICATES = frozenset(
+    {
+        "has",
+        "include",
+        "includes",
+        "provides",
+        "store",
+        "stores",
+        "support",
+        "supports",
+        "track",
+        "tracks",
+        "use",
+        "uses",
+    }
+)
 
 
 def _shortlist_candidate_facts(fact: dict[str, object]) -> list[dict[str, object]]:
@@ -856,6 +872,7 @@ def _llm_verify_changes(
     """
     new_id = str(fact["id"])
     valid_ids = {new_id} | {str(candidate["id"]) for candidate in candidates}
+    fact_by_id = {new_id: fact} | {str(candidate["id"]): candidate for candidate in candidates}
     observation_by_fact = {new_id: _optional_str(fact.get("source_observation_id"))}
     for candidate in candidates:
         observation_by_fact[str(candidate["id"])] = _optional_str(
@@ -890,6 +907,12 @@ def _llm_verify_changes(
             continue
         if _confidence_value(relation.get("confidence")) < _LLM_CHANGE_CONFIDENCE_GATE:
             continue
+        if not _llm_change_is_locally_plausible(
+            fact_by_id[source_id],
+            fact_by_id[target_id],
+            relation_type,
+        ):
+            continue
         evidence = [
             observation
             for observation in (
@@ -917,6 +940,60 @@ def _llm_verify_changes(
         applied=len(changes),
     )
     return changes
+
+
+def _llm_change_is_locally_plausible(
+    source_fact: dict[str, object],
+    target_fact: dict[str, object],
+    relation_type: str,
+) -> bool:
+    """Reject verifier relations that join independent properties under one subject."""
+    if _normalized_predicate(source_fact) in _ADDITIVE_CHANGE_PREDICATES:
+        return False
+    if _normalized_predicate(target_fact) in _ADDITIVE_CHANGE_PREDICATES:
+        return False
+    if _predicate_key(source_fact) == _predicate_key(target_fact):
+        return True
+    if _property_tokens(source_fact) & _property_tokens(target_fact):
+        return True
+    if relation_type == "SUPERSEDED_BY":
+        observation_id = _optional_str(target_fact.get("source_observation_id"))
+        if not observation_id:
+            return False
+        observation = _load_observation(observation_id)
+        content = _normalize_change_text(str(observation.get("content", ""))) if observation else ""
+        return any(marker in content for marker in ("actually", "correction", "instead"))
+    return False
+
+
+def _predicate_key(fact: dict[str, object]) -> str:
+    canonical_predicate_id = _optional_str(fact.get("canonical_predicate_id"))
+    if canonical_predicate_id:
+        return f"cp:{canonical_predicate_id}"
+    return _normalized_predicate(fact)
+
+
+def _normalized_predicate(fact: dict[str, object]) -> str:
+    return _normalize_change_text(_optional_str(fact.get("predicate")) or "")
+
+
+def _normalize_change_text(value: str) -> str:
+    return " ".join(value.casefold().split())
+
+
+def _property_tokens(fact: dict[str, object]) -> set[str]:
+    stopwords = {"a", "an", "has", "have", "is", "of", "the"}
+    text = _normalize_change_text(
+        " ".join(
+            part
+            for part in (
+                _optional_str(fact.get("subject")),
+                _optional_str(fact.get("predicate")),
+            )
+            if part
+        )
+    )
+    return {token for token in text.split() if token not in stopwords}
 
 
 def _fact_text(fact: dict[str, object]) -> str:

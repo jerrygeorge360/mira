@@ -27,6 +27,7 @@ REQUIRED_PROMPTS = {
     "reflection_synthesis",
     "community_summary_generation",
     "retrieval_router_classification",
+    "turn_purpose_classification",
     "sufficiency_check",
     "answer_generation",
 }
@@ -97,3 +98,19 @@ def test_session_extraction_prompt_includes_operation_taxonomy() -> None:
         assert operation_type in rendered_prompt
     for operation_name in ("upsert", "supersede", "resolve", "expire", "reject"):
         assert operation_name in rendered_prompt
+
+
+def test_answer_generation_prompt_handles_declarative_updates() -> None:
+    """Answer generation should not dump unrelated memory for plain updates."""
+    rendered_prompt = render_prompt(
+        "answer_generation",
+        {
+            "user_message": "MIRA uses SQLite as the source of truth.",
+            "answer_mode": "memory_grounded",
+            "prompt_context": [],
+        },
+    )
+
+    assert "declarative update" in rendered_prompt
+    assert "do not summarize unrelated memories" in rendered_prompt
+    assert "Retrieved context is optional evidence" in rendered_prompt

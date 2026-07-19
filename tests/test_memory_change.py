@@ -25,6 +25,7 @@ from core.memory.change import (
     apply_contradiction,
     apply_supersession,
     detect_memory_change,
+    resolve_retrieved_contradictions,
 )
 from core.memory.graph import find_edges_by_type, get_neighbors
 
@@ -91,6 +92,80 @@ def test_later_preference_without_transition_creates_contradiction(database_path
     assert edges[0]["id"] == edge_id
 
 
+def test_additive_project_facts_do_not_conflict(database_path: Path) -> None:
+    """Shared project subject is not enough to create a contradiction."""
+    session_id = create_session("jerry")
+    sqlite_observation_id = save_observation(
+        session_id,
+        "user",
+        "SQLite is MIRA's source of truth.",
+    )
+    router_observation_id = save_observation(
+        session_id,
+        "user",
+        "MIRA uses a hybrid retrieval router.",
+    )
+    sqlite_fact_id = create_atomic_fact(
+        {
+            "subject": "MIRA",
+            "predicate": "USES",
+            "object": "SQLite as source of truth",
+            "confidence": 0.9,
+            "source_observation_id": sqlite_observation_id,
+        }
+    )
+    router_fact_id = create_atomic_fact(
+        {
+            "subject": "MIRA",
+            "predicate": "USES",
+            "object": "a hybrid retrieval router",
+            "confidence": 0.9,
+            "source_observation_id": router_observation_id,
+        }
+    )
+
+    changes = detect_memory_change(router_fact_id, [sqlite_fact_id])
+
+    assert changes == []
+
+
+def test_distinct_project_properties_do_not_conflict(database_path: Path) -> None:
+    """Different properties under the same subject are independent memories."""
+    session_id = create_session("jerry")
+    source_observation_id = save_observation(
+        session_id,
+        "user",
+        "SQLite is MIRA's source of truth.",
+    )
+    trace_observation_id = save_observation(
+        session_id,
+        "user",
+        "MIRA exposes answer traces.",
+    )
+    source_fact_id = create_atomic_fact(
+        {
+            "subject": "MIRA",
+            "predicate": "SOURCE_OF_TRUTH",
+            "object": "SQLite",
+            "confidence": 0.9,
+            "source_observation_id": source_observation_id,
+        }
+    )
+    trace_fact_id = create_atomic_fact(
+        {
+            "subject": "MIRA",
+            "predicate": "EXPOSES",
+            "object": "answer traces",
+            "confidence": 0.9,
+            "source_observation_id": trace_observation_id,
+        }
+    )
+
+    changes = detect_memory_change(trace_fact_id, [source_fact_id])
+
+    assert changes == []
+
+
 def test_relational_mode_can_see_both_conflicting_facts(database_path: Path) -> None:
     """Graph traversal exposes both sides of an unresolved contradiction."""
     session_id = create_session("jerry")
@@ -112,6 +187,33 @@ def test_relational_mode_can_see_both_conflicting_facts(database_path: Path) -> 
     assert node["source_id"] == rust_fact_id
     assert _atomic_fact(python_fact_id)["object"] == "Python"
     assert _atomic_fact(rust_fact_id)["object"] == "Rust"
+
+
+def test_contradiction_notes_are_query_aware(database_path: Path) -> None:
+    """Unrelated answers should not be polluted by retrieved conflict notes."""
+    session_id = create_session("jerry")
+    python_observation_id = save_observation(session_id, "user", "I prefer Python.")
+    rust_observation_id = save_observation(session_id, "user", "I prefer Rust.")
+    python_fact_id = _create_preference_fact(python_observation_id, "Python")
+    rust_fact_id = _create_preference_fact(rust_observation_id, "Rust")
+    apply_contradiction(
+        python_fact_id,
+        rust_fact_id,
+        evidence=[python_observation_id, rust_observation_id],
+    )
+
+    unrelated = resolve_retrieved_contradictions(
+        [python_fact_id],
+        query="How does MIRA routing work?",
+    )
+    relevant = resolve_retrieved_contradictions(
+        [python_fact_id],
+        query="What programming language do I prefer?",
+    )
+
+    assert unrelated == []
+    assert relevant
+    assert relevant[0]["source"] == "contradiction"
 
 
 def test_change_edges_are_created_in_the_fact_workspace(database_path: Path) -> None:

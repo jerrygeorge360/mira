@@ -12,6 +12,7 @@ assistant turn -> trace logs -> structured response.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Callable
 
 from core.context.ambient import build_ambient_context
@@ -24,7 +25,8 @@ from core.db.repositories import (
     list_observations,
 )
 from core.llm.functions import maybe_structured_tool_call, tool_result_context_record
-from core.llm.qwen import call_qwen_json
+from core.llm.prompts import render_prompt
+from core.llm.qwen import LLMClientError, call_qwen_json
 from core.memory.change import resolve_retrieved_contradictions
 from core.memory.observation import persist_turn_fast_path
 from core.memory.tiers import list_hot_memory_for_context
@@ -76,6 +78,67 @@ CONTINUE_MARKERS = (
 GENERAL_KNOWLEDGE_MODE = "general_knowledge"
 MEMORY_GROUNDED_MODE = "memory_grounded"
 GENERAL_RETRIEVAL_MODE = "general"
+QUESTION_PREFIXES = (
+    "am ",
+    "are ",
+    "can ",
+    "could ",
+    "did ",
+    "do ",
+    "does ",
+    "explain",
+    "how ",
+    "is ",
+    "should ",
+    "summarize",
+    "tell me",
+    "what ",
+    "when ",
+    "where ",
+    "which ",
+    "who ",
+    "why ",
+    "will ",
+    "would ",
+)
+REQUEST_MARKERS = (
+    "can you",
+    "could you",
+    "do this",
+    "fix ",
+    "give me",
+    "help ",
+    "implement",
+    "please",
+    "run ",
+    "show me",
+)
+CASUAL_MARKERS = (
+    "alright",
+    "cool",
+    "got it",
+    "hello",
+    "hi",
+    "nice",
+    "ok",
+    "okay",
+    "thanks",
+    "thank you",
+)
+CORRECTION_TURN_MARKERS = (
+    "actually",
+    "correction:",
+    "instead",
+    "no longer",
+    "switched from",
+    "moved from",
+    "migrated from",
+    "changed from",
+)
+USE_NOT_CORRECTION_RE = re.compile(
+    r"^\s*(use|set|make|call|treat|store|prefer|reply|answer|assume)\b.+\bnot\b.+",
+    re.IGNORECASE,
+)
 
 
 class AgentTurnCancelled(RuntimeError):
@@ -116,6 +179,18 @@ def handle_user_message(
     _emit_progress(progress_callback, "session", "Updating session context.")
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
     _raise_if_cancelled(should_cancel)
+
+    turn_purpose = _classify_turn_purpose(user_message)
+    if turn_purpose == "informational_update":
+        return _acknowledge_informational_update(
+            session_id=session_id,
+            user_message=user_message,
+            user_observation_id=user_observation_id,
+            trace=trace,
+            recent_turns=recent_turns,
+            progress_callback=progress_callback,
+            should_cancel=should_cancel,
+        )
 
     # Bring durable memory back into a new or continuing session.
     if routing_strategy not in {"fast", "hybrid", "accurate"}:
@@ -169,7 +244,9 @@ def handle_user_message(
     # Surface any unresolved contradiction among the retrieved facts so the answer flags
     # the conflict instead of asserting one contested value as settled.
     _emit_progress(progress_callback, "verification", "Checking corrections and conflicts.")
-    retrieved.extend(resolve_retrieved_contradictions(_retrieved_fact_ids(retrieved)))
+    retrieved.extend(
+        resolve_retrieved_contradictions(_retrieved_fact_ids(retrieved), query=user_message)
+    )
     trace.record_retrieval(retrieval_mode, retrieved)
     _raise_if_cancelled(should_cancel)
 
@@ -249,6 +326,68 @@ def handle_user_message(
         "routing_decision": dict(decision),
         "retrieval_trace": _retrieval_trace(decision, retrieval_mode, retrieved),
         "tool_calls": tool_calls,
+        "trace_id": trace_id,
+    }
+
+
+def _acknowledge_informational_update(
+    *,
+    session_id: str,
+    user_message: str,
+    user_observation_id: str,
+    trace: TraceBuilder,
+    recent_turns: list[dict[str, object]],
+    progress_callback: ProgressCallback | None,
+    should_cancel: CancelCheck | None,
+) -> Response:
+    """Persist a brief acknowledgement for declarative updates without retrieval."""
+    _emit_progress(progress_callback, "acknowledgement", "Saving the update.")
+    _raise_if_cancelled(should_cancel)
+    retrieval_mode = GENERAL_RETRIEVAL_MODE
+    decision = {
+        "mode": retrieval_mode,
+        "route": "acknowledge_and_store",
+        "intent": "informational_update",
+        "reason": "declarative update; saved for slow-path processing without retrieval",
+        "confidence": 0.9,
+        "used_memory": False,
+    }
+    retrieved: list[dict[str, object]] = []
+    session_items = export_prompt_ready_session_items(session_id, SESSION_ITEMS_MAX)
+    trace.record_session_items(session_items)
+    trace.record_retrieval(retrieval_mode, retrieved)
+    trace.record_prompt_sections([])
+    answer = "Noted."
+    assistant_observation_id = persist_turn_fast_path(session_id, "assistant", answer)
+    trace.assistant_observation_id = assistant_observation_id
+    used_session_items = [str(item["id"]) for item in session_items if item.get("id")]
+    retrieval_log_id, prompt_log_id = _log_traces(
+        session_id=session_id,
+        user_observation_id=user_observation_id,
+        query=user_message,
+        retrieval_mode=retrieval_mode,
+        retrieved=retrieved,
+        routing_decision=decision,
+        used_session_items=used_session_items,
+        used_memory_items=[],
+        recent_turns=recent_turns,
+        prompt="",
+    )
+    trace.link_retrieval_log(retrieval_log_id)
+    trace.link_prompt_log(prompt_log_id)
+    _emit_progress(progress_callback, "trace", "Writing the answer trace.")
+    trace_id = trace.build()
+    return {
+        "answer": answer,
+        "session_id": session_id,
+        "user_observation_id": user_observation_id,
+        "assistant_observation_id": assistant_observation_id,
+        "retrieval_mode": retrieval_mode,
+        "used_session_items": used_session_items,
+        "used_memory_items": [],
+        "routing_decision": decision,
+        "retrieval_trace": _retrieval_trace(decision, retrieval_mode, retrieved),
+        "tool_calls": [],
         "trace_id": trace_id,
     }
 
@@ -358,6 +497,128 @@ def _answer_mode_from_decision(
 
 def _decision_uses_memory(decision: dict[str, object]) -> bool:
     return bool(decision.get("used_memory", decision.get("mode") != GENERAL_RETRIEVAL_MODE))
+
+
+def _classify_turn_purpose(user_message: str) -> str:
+    normalized = _normalize_turn(user_message)
+    if not normalized:
+        return "casual_message"
+    if normalized.strip(".!, ") in CASUAL_MARKERS:
+        return "casual_message"
+    if normalized.startswith(("hello ", "hi ")):
+        return "casual_message"
+    if _looks_like_question_or_request(normalized, user_message):
+        return "question"
+    if USE_NOT_CORRECTION_RE.search(normalized):
+        return "correction"
+    if any(marker in normalized for marker in CORRECTION_TURN_MARKERS):
+        return "correction"
+    if _looks_like_declarative_update(normalized):
+        return "informational_update"
+    if _should_ask_llm_turn_classifier(normalized):
+        return _llm_classify_turn_purpose(user_message) or "casual_message"
+    return "casual_message"
+
+
+def _llm_classify_turn_purpose(user_message: str) -> str | None:
+    prompt = render_prompt(
+        "turn_purpose_classification",
+        {"recent_turns": [], "user_message": user_message},
+    )
+    try:
+        response = call_qwen_json(
+            [{"role": "user", "content": prompt}],
+            schema_name="turn_purpose_classification",
+        )
+    except LLMClientError:
+        return None
+    payload = response.get("json", {})
+    if not isinstance(payload, dict):
+        return None
+    purpose = str(payload.get("purpose", "")).casefold()
+    if purpose in {
+        "question",
+        "informational_update",
+        "instruction",
+        "correction",
+        "decision",
+        "resolution",
+        "casual_message",
+    }:
+        return purpose
+    return None
+
+
+def _looks_like_question_or_request(normalized: str, original: str) -> bool:
+    return (
+        "?" in original
+        or normalized.startswith(QUESTION_PREFIXES)
+        or any(marker in normalized for marker in REQUEST_MARKERS)
+    )
+
+
+def _looks_like_declarative_update(normalized: str) -> bool:
+    if not _looks_like_architecture_note(normalized):
+        return False
+    declarative_markers = (
+        " is ",
+        " are ",
+        " uses ",
+        " use ",
+        " keeps ",
+        " tracks ",
+        " stores ",
+        " supports ",
+        " exposes ",
+        " prioritizes ",
+        " represents ",
+        " distinguishes ",
+        " means ",
+        " should ",
+        " must ",
+        " prefers ",
+        " prefer ",
+    )
+    if normalized.startswith(("i ", "my ", "our ", "the ", "mira ", "sqlite ", "chromadb ")):
+        return any(marker in f" {normalized} " for marker in declarative_markers)
+    return (
+        any(marker in f" {normalized} " for marker in declarative_markers)
+        and len(normalized.split()) >= 4
+    )
+
+
+def _looks_like_architecture_note(normalized: str) -> bool:
+    architecture_markers = (
+        "chromadb",
+        "contradicts",
+        "durable memory",
+        "memory store",
+        "mira",
+        "prompt",
+        "quick retrieval",
+        "raw observations",
+        "session working set",
+        "sqlite",
+        "superseded_by",
+    )
+    return any(marker in normalized for marker in architecture_markers)
+
+
+def _should_ask_llm_turn_classifier(normalized: str) -> bool:
+    llm_assist_markers = (
+        "architecture",
+        "context",
+        "memoryagent",
+        "mira",
+        "note",
+        "project note",
+        "submission",
+    )
+    return any(marker in normalized for marker in llm_assist_markers)
+
+
+def _normalize_turn(value: str) -> str:
+    return " ".join(value.casefold().split())
 
 
 def _retrieved_fact_ids(retrieved: list[dict[str, object]]) -> list[str]:

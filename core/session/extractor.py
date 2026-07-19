@@ -27,7 +27,15 @@ AMBIGUOUS_MARKERS = frozenset({"maybe", "might", "possibly", "probably", "i gues
 SARCASM_MARKERS = frozenset({"yeah right", "as if", "/s", "sarcasm", "sure, jan"})
 RESOLUTION_MARKERS = frozenset({"ignore that", "never mind", "nevermind", "drop that"})
 EXPIRATION_MARKERS = frozenset({"for now", "temporary", "just this response", "next reply only"})
-CORRECTION_MARKERS = frozenset({"actually", "correction", "instead", " not "})
+CORRECTION_PREFIX_RE = re.compile(r"^\s*(actually|correction)\b[:,-]?", re.IGNORECASE)
+TRANSITION_RE = re.compile(
+    r"\b(switched|switch|moved|move|migrated|migrate|changed|change)\s+from\b",
+    re.IGNORECASE,
+)
+CORRECTION_NOT_RE = re.compile(
+    r"\b(use|set|make|call|treat|store|prefer|reply|answer|assume)\b.+\bnot\b.+",
+    re.IGNORECASE,
+)
 
 
 def extract_session_operations(
@@ -75,8 +83,7 @@ def _extract_correction(
     current_working_set: list[dict[str, object]],
 ) -> SessionOperation | None:
     normalized_message = _normalize(message)
-    padded_message = f" {normalized_message} "
-    if not any(marker in padded_message for marker in CORRECTION_MARKERS):
+    if not _looks_like_correction(normalized_message, current_working_set):
         return None
     superseded_items = _matching_working_set_ids(normalized_message, current_working_set)
     return _operation(
@@ -89,6 +96,25 @@ def _extract_correction(
         explicitness_label="direct_correction",
         supersedes=superseded_items,
     )
+
+
+def _looks_like_correction(
+    normalized_message: str,
+    current_working_set: list[dict[str, object]],
+) -> bool:
+    """Require explicit correction structure, not incidental words like "not"."""
+    if CORRECTION_PREFIX_RE.search(normalized_message):
+        return True
+    if TRANSITION_RE.search(normalized_message):
+        return True
+    if CORRECTION_NOT_RE.search(normalized_message):
+        return True
+    if " instead" in normalized_message or "instead " in normalized_message:
+        return bool(current_working_set) or _contains_any(
+            normalized_message,
+            (" use ", " set ", " store ", " prefer ", " answer ", " reply "),
+        )
+    return False
 
 
 def _extract_decision_or_constraint(

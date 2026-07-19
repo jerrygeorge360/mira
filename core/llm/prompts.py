@@ -227,6 +227,26 @@ RETRIEVAL_ROUTER_SCHEMA: JsonSchema = {
     },
 }
 
+TURN_PURPOSE_SCHEMA: JsonSchema = {
+    "type": "object",
+    "required": ["purpose", "reason"],
+    "additionalProperties": False,
+    "properties": {
+        "purpose": {
+            "enum": [
+                "question",
+                "informational_update",
+                "instruction",
+                "correction",
+                "decision",
+                "resolution",
+                "casual_message",
+            ]
+        },
+        "reason": {"type": "string"},
+    },
+}
+
 SUFFICIENCY_SCHEMA: JsonSchema = {
     "type": "object",
     "required": ["sufficient", "missing"],
@@ -519,6 +539,49 @@ Available context:
 {context}
 """,
     ),
+    "turn_purpose_classification": PromptTemplate(
+        name="turn_purpose_classification",
+        output_schema=TURN_PURPOSE_SCHEMA,
+        example_output={
+            "purpose": "informational_update",
+            "reason": "The user is teaching the system an architecture fact.",
+        },
+        template="""Task definition:
+Classify the user's latest chat turn by purpose.
+
+Labels:
+- question: asks for an answer, explanation, recall, comparison, or action.
+- informational_update: states a fact or project note to remember; no answer is requested.
+- instruction: tells the assistant how to behave or what to do.
+- correction: explicitly corrects or replaces a previous value.
+- decision: records a chosen decision.
+- resolution: asks to ignore, resolve, expire, or close prior context.
+- casual_message: greeting, thanks, acknowledgement, or small talk.
+
+Rules:
+- "The prompt is not the memory store" is informational_update, not correction.
+- "MIRA supports correction handling" is informational_update, not correction.
+- "Use 2026, not 2025" is correction.
+- "Actually, I prefer Rust" is correction.
+- When uncertain, prefer question only if the user asks for an answer or action.
+
+Non-goals:
+- Do not answer the user.
+- {overclaiming_guardrail}
+
+Strict JSON schema:
+{schema}
+
+Example:
+{example}
+
+Recent turns:
+{recent_turns}
+
+Latest user message:
+{user_message}
+""",
+    ),
     "sufficiency_check": PromptTemplate(
         name="sufficiency_check",
         output_schema=SUFFICIENCY_SCHEMA,
@@ -558,6 +621,12 @@ Non-goals:
 - In memory_grounded mode, do not claim memory not present in context.
 - In general_knowledge mode, answer from ordinary model knowledge; use prompt context only
   for local conversation continuity and do not pretend the answer came from memory.
+- Respond primarily to the latest user message. Retrieved context is optional evidence,
+  not a checklist to mention.
+- If the user message is a declarative update rather than a question, acknowledge it
+  briefly and do not summarize unrelated memories.
+- Do not ask a generic follow-up such as "How can I assist?" after every update.
+- Do not surface contradiction notes unless they directly affect the latest answer.
 - {overclaiming_guardrail}
 
 Strict JSON schema:

@@ -135,6 +135,76 @@ def test_general_knowledge_question_skips_memory_retrieval(
     assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[0]
 
 
+def test_declarative_update_skips_retrieval_and_generation(
+    database_path: Path, fake_qwen: _CapturingQwen, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plain informational updates are saved without dumping old memory into an answer."""
+    session_id = create_session("jerry")
+
+    def fail_retrieval(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("informational updates should not retrieve memory")
+
+    monkeypatch.setattr(agent, "retrieve_by_mode", fail_retrieval)
+    response = handle_user_message(
+        session_id,
+        "The prompt is an execution buffer, not the memory store.",
+    )
+
+    assert response["answer"] == "Noted."
+    assert response["retrieval_mode"] == "general"
+    assert response["used_memory_items"] == []
+    assert response["routing_decision"]["route"] == "acknowledge_and_store"
+    assert response["retrieval_trace"]["used_memory"] is False
+    assert fake_qwen.prompts == []
+    assert _roles(session_id) == ["user", "assistant"]
+
+
+def test_informational_update_about_corrections_does_not_enter_sws(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """Architecture descriptions that mention corrections do not become hot corrections."""
+    session_id = create_session("jerry")
+
+    response = handle_user_message(
+        session_id,
+        (
+            "The Session Working Set immediately tracks current goals, corrections, "
+            "constraints, decisions, and open questions."
+        ),
+    )
+
+    assert response["answer"] == "Noted."
+    assert response["retrieval_mode"] == "general"
+    assert response["used_session_items"] == []
+    assert fake_qwen.prompts == []
+
+
+def test_ambiguous_turn_can_use_llm_purpose_classifier(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The LLM classifier can turn ambiguous notes into store-only updates."""
+    session_id = create_session("jerry")
+    calls: list[str] = []
+
+    def classify(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        calls.append(schema_name)
+        assert schema_name == "turn_purpose_classification"
+        assert "MemoryAgent track" in messages[0]["content"]
+        return {
+            "json": {
+                "purpose": "informational_update",
+                "reason": "Project note without an answer request.",
+            }
+        }
+
+    monkeypatch.setattr(agent, "call_qwen_json", classify)
+    response = handle_user_message(session_id, "MIRA MemoryAgent track submission context")
+
+    assert response["answer"] == "Noted."
+    assert response["routing_decision"]["route"] == "acknowledge_and_store"
+    assert calls == ["turn_purpose_classification"]
+
+
 def test_followup_general_question_stays_general(
     database_path: Path, fake_qwen: _CapturingQwen
 ) -> None:

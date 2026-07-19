@@ -7,6 +7,7 @@ Architecture area: slow path.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime, timezone
 
 from core.db.repositories import repository_connection
@@ -34,6 +35,23 @@ TRANSITION_MARKERS = frozenset(
         "now",
         "no longer",
         "instead",
+    }
+)
+
+MULTI_VALUE_PREDICATES = frozenset(
+    {
+        "has",
+        "include",
+        "includes",
+        "provides",
+        "store",
+        "stores",
+        "support",
+        "supports",
+        "track",
+        "tracks",
+        "use",
+        "uses",
     }
 )
 
@@ -95,7 +113,11 @@ def apply_contradiction(fact_a_id: str, fact_b_id: str, evidence: list[str]) -> 
     return edge_id
 
 
-def resolve_retrieved_contradictions(fact_ids: list[str]) -> list[dict[str, object]]:
+def resolve_retrieved_contradictions(
+    fact_ids: list[str],
+    *,
+    query: str | None = None,
+) -> list[dict[str, object]]:
     """Emit unresolved-conflict notes for retrieved facts under an active CONTRADICTS edge.
 
     The prompt builder injects these so the model surfaces the conflict -- and, for a
@@ -112,10 +134,46 @@ def resolve_retrieved_contradictions(fact_ids: list[str]) -> list[dict[str, obje
             if pair in seen:
                 continue
             seen.add(pair)
+            if query is not None and not _conflict_relevant_to_query(query, fact_id, other_id):
+                continue
             note = _contradiction_note(fact_id, other_id)
             if note is not None:
                 notes.append(note)
     return notes
+
+
+def _conflict_relevant_to_query(query: str, fact_a_id: str, fact_b_id: str) -> bool:
+    normalized_query = _normalize(query)
+    if any(
+        marker in normalized_query
+        for marker in (
+            "conflict",
+            "contradict",
+            "contradiction",
+            "inconsistent",
+            "current",
+            "now",
+            "which one",
+            "what changed",
+            "use now",
+            "using now",
+        )
+    ):
+        return True
+    try:
+        fact_a = _fetch_atomic_fact(fact_a_id)
+        fact_b = _fetch_atomic_fact(fact_b_id)
+    except ValueError:
+        return False
+    query_tokens = _meaningful_tokens(normalized_query)
+    if not query_tokens:
+        return False
+    subject_tokens = _meaningful_tokens(f"{fact_a['subject']} {fact_b['subject']}")
+    predicate_tokens = _meaningful_tokens(f"{fact_a['predicate']} {fact_b['predicate']}")
+    object_tokens = _meaningful_tokens(f"{fact_a['object']} {fact_b['object']}")
+    property_overlap = bool(query_tokens & (subject_tokens | predicate_tokens))
+    value_overlap = bool(query_tokens & object_tokens)
+    return property_overlap or value_overlap
 
 
 def _contradicting_fact_ids(fact_id: str) -> list[str]:
@@ -271,6 +329,8 @@ def _facts_are_comparable(
     prior_fact: AtomicFactRecord,
     new_fact: AtomicFactRecord,
 ) -> bool:
+    if _predicate_allows_multiple_values(prior_fact) or _predicate_allows_multiple_values(new_fact):
+        return _has_explicit_transition(prior_fact, new_fact)
     return _fact_comparison_key(prior_fact) == _fact_comparison_key(new_fact)
 
 
@@ -294,20 +354,28 @@ def _has_explicit_transition(
 
 
 def _fact_comparison_key(fact: AtomicFactRecord) -> tuple[str, str]:
-    """Pair facts by their canonical subject only.
+    """Pair facts by canonical subject and canonical predicate/property.
 
-    Candidate selection in the slow path already constrains predicate relevance: the
-    exact query matches the same canonical predicate, and the embedding-similarity
-    fallback matches a similar predicate under the same canonical subject. Comparing on
-    the subject alone therefore lets fallback candidates (which by design have a
-    different canonical predicate id) through instead of silently re-dropping them,
-    while the curated candidate list keeps unrelated relations out. Facts predating the
-    canonical registry (NULL id) fall back to the normalized raw subject.
+    A shared subject alone is not enough for contradiction detection. A project can use
+    SQLite, expose traces, support MCP, and target a benchmark at the same time. Those
+    are separate properties, not competing values. Facts predating the canonical
+    registry fall back to normalized raw text.
     """
     canonical_subject_id = fact.get("canonical_subject_id")
+    canonical_predicate_id = fact.get("canonical_predicate_id")
+    predicate_key = (
+        f"cp:{canonical_predicate_id}"
+        if canonical_predicate_id
+        else _normalize(str(fact["predicate"]))
+    )
     if canonical_subject_id:
-        return (f"cs:{canonical_subject_id}", "")
-    return (_normalize(str(fact["subject"])), "")
+        return (f"cs:{canonical_subject_id}", predicate_key)
+    return (_normalize(str(fact["subject"])), predicate_key)
+
+
+def _predicate_allows_multiple_values(fact: AtomicFactRecord) -> bool:
+    """Return true for broad additive predicates that do not imply exclusivity."""
+    return _normalize(str(fact["predicate"])) in MULTI_VALUE_PREDICATES
 
 
 def _has_correction_marker(normalized_text: str) -> bool:
@@ -377,3 +445,43 @@ def _fact_label(fact: AtomicFactRecord) -> str:
 
 def _normalize(value: str) -> str:
     return " ".join(value.casefold().split())
+
+
+def _meaningful_tokens(value: str) -> set[str]:
+    value = _normalize(value)
+    stopwords = {
+        "a",
+        "about",
+        "am",
+        "an",
+        "and",
+        "are",
+        "do",
+        "does",
+        "for",
+        "i",
+        "in",
+        "is",
+        "it",
+        "me",
+        "my",
+        "of",
+        "on",
+        "or",
+        "our",
+        "the",
+        "to",
+        "use",
+        "uses",
+        "what",
+        "which",
+        "with",
+    }
+    tokens: set[str] = set()
+    for token in re.findall(r"[a-z0-9_]+", value):
+        if token in stopwords:
+            continue
+        tokens.add(token)
+        if len(token) > 3 and token.endswith("s"):
+            tokens.add(token[:-1])
+    return tokens
