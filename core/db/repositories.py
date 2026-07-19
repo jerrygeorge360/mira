@@ -151,6 +151,7 @@ UPDATED_AT_TABLES: frozenset[str] = frozenset(
 )
 
 TABLE_COLUMNS: dict[str, frozenset[str]] = {
+    "runtime_settings": frozenset({"key", "value", "updated_at"}),
     "sessions": frozenset(
         {"id", "user_id", "title", "status", "created_at", "updated_at", "ended_at"}
     ),
@@ -424,6 +425,38 @@ def enum_values(enum_name: str) -> frozenset[str]:
     if allowed_values is None:
         raise KeyError(f"Unknown repository enum: {enum_name}")
     return allowed_values
+
+
+def get_runtime_setting(key: str) -> str | None:
+    """Return a platform runtime setting value, if one has been configured."""
+    if not key:
+        raise ValueError("setting key must not be empty")
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT value FROM runtime_settings WHERE key = ?",
+            (key,),
+        ).fetchone()
+    return None if row is None else str(row["value"])
+
+
+def set_runtime_setting(key: str, value: str) -> None:
+    """Upsert a platform runtime setting."""
+    if not key:
+        raise ValueError("setting key must not be empty")
+    if not value:
+        raise ValueError("setting value must not be empty")
+    now = _now()
+    with repository_connection() as connection:
+        connection.execute(
+            """
+            INSERT INTO runtime_settings (key, value, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = excluded.updated_at
+            """,
+            (key, value, now),
+        )
 
 
 def create_user(

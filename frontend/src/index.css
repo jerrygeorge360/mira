@@ -2426,6 +2426,55 @@ select:focus-visible {
 .admin-generated {
   margin-top: 14px;
 }
+.admin-provider-panel {
+  grid-column: 1 / -1;
+}
+.admin-provider-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+.admin-provider-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 10px 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.admin-provider-option:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.admin-provider-option.active {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 8%, var(--surface));
+}
+.admin-provider-option:disabled {
+  cursor: default;
+}
+.admin-provider-option span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.admin-provider-option strong {
+  font-size: 0.82rem;
+  text-transform: capitalize;
+}
+.admin-provider-option small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.68rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ── Metric row ──────────────────────────────────────────────────── */
 .metric-row {

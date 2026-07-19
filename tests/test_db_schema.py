@@ -18,6 +18,7 @@ from core.db.sqlite import connect_sqlite
 
 REQUIRED_TABLES = {
     "schema_migrations",
+    "runtime_settings",
     "users",
     "workspaces",
     "workspace_members",
@@ -59,6 +60,11 @@ REQUIRED_INDEXES = {
 }
 
 REQUIRED_COLUMNS = {
+    "runtime_settings": {
+        "key",
+        "value",
+        "updated_at",
+    },
     "sessions": {
         "id",
         "workspace_id",

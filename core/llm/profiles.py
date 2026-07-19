@@ -5,7 +5,10 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 
+from core.db.repositories import DATABASE_PATH_ENV, current_database_path, get_runtime_setting
+
 LLM_PROFILE_ENV = "LLM_PROFILE"
+LLM_PROFILE_SETTING = "llm_profile"
 
 
 @dataclass(frozen=True)
@@ -60,7 +63,27 @@ PROVIDER_PROFILES: dict[str, ProviderProfile] = {
 
 def active_profile(provider: str | None = None) -> ProviderProfile | None:
     """Return the configured provider preset, if one is known."""
-    profile_name = provider or os.environ.get(LLM_PROFILE_ENV) or os.environ.get("LLM_PROVIDER")
+    profile_name = (
+        provider
+        or _runtime_profile_name()
+        or os.environ.get(LLM_PROFILE_ENV)
+        or os.environ.get("LLM_PROVIDER")
+    )
     if not profile_name:
         return None
     return PROVIDER_PROFILES.get(profile_name.casefold())
+
+
+def active_profile_name() -> tuple[str | None, str]:
+    """Return the selected provider profile name and where it came from."""
+    configured = _runtime_profile_name()
+    if configured:
+        return configured.casefold(), "dashboard"
+    env_profile = os.environ.get(LLM_PROFILE_ENV) or os.environ.get("LLM_PROVIDER")
+    return (env_profile.casefold(), "env") if env_profile else (None, "default")
+
+
+def _runtime_profile_name() -> str | None:
+    if current_database_path() is None and DATABASE_PATH_ENV not in os.environ:
+        return None
+    return get_runtime_setting(LLM_PROFILE_SETTING)

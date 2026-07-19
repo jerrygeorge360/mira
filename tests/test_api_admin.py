@@ -9,6 +9,7 @@ import pytest
 from fastapi import HTTPException
 
 from api.auth import AuthenticatedWorkspace, is_platform_admin, require_platform_admin
+from api.routes.admin import admin_provider, update_admin_provider
 from core.db.admin import get_admin_overview
 from core.db.repositories import (
     WorkspaceContext,
@@ -107,6 +108,31 @@ def test_admin_overview_counts_registered_people_without_exposing_content(
     assert overview["workspaces"] == {"demo": 1, "legacy": 1, "personal": 1}
     assert overview["activity"]["conversations"] == 1  # type: ignore[index]
     assert "registered-user" not in str(overview)
+
+
+def test_admin_provider_uses_env_until_dashboard_override(
+    admin_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del admin_database
+    monkeypatch.setenv("LLM_PROFILE", "deepseek")
+    admin = _auth("jerrygeorge360")
+
+    initial = admin_provider(admin)
+    updated = update_admin_provider({"profile": "gemini"}, admin)
+
+    assert initial["active"] == "deepseek"
+    assert initial["source"] == "env"
+    assert updated["active"] == "gemini"
+    assert updated["source"] == "dashboard"
+    assert updated["model"] == "gemini-3.5-flash"
+
+
+def test_admin_provider_rejects_unknown_profile(admin_database: Path) -> None:
+    del admin_database
+
+    with pytest.raises(HTTPException, match="unknown provider profile"):
+        update_admin_provider({"profile": "unknown"}, _auth("jerrygeorge360"))
 
 
 def _auth(login: str, *, auth_mode: str = "github") -> AuthenticatedWorkspace:

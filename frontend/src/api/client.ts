@@ -115,6 +115,18 @@ export interface AdminOverviewResponse {
   registrations_last_30_days: Array<{ date: string; count: number }>;
 }
 
+export interface AdminProviderResponse {
+  active: string | null;
+  source: 'dashboard' | 'env' | 'default';
+  model: string | null;
+  providers: Array<{
+    name: string;
+    model: string;
+    endpoint: string;
+    has_cloud_embeddings: boolean;
+  }>;
+}
+
 export const api = {
   githubAuthUrl: () => {
     const redirect = encodeURIComponent(window.location.origin);
@@ -124,6 +136,14 @@ export const api = {
   authMe: () => req<AuthResponse>('/auth/me'),
 
   adminOverview: () => req<AdminOverviewResponse>('/admin/overview'),
+
+  adminProvider: () => req<AdminProviderResponse>('/admin/provider'),
+
+  updateAdminProvider: (profile: string) =>
+    req<AdminProviderResponse>('/admin/provider', {
+      method: 'PUT',
+      body: JSON.stringify({ profile }),
+    }),
 
   startDemo: () => req<{ status: string; workspace_id: string; expires_at: string }>(
     '/auth/demo',

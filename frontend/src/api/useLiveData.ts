@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Dispatch, type SetStateAction } from 'react';
 
 export type LiveStatus = 'loading' | 'live' | 'offline';
 
 export interface LiveState<T> {
   data: T | null;
+  setData: Dispatch<SetStateAction<T | null>>;
   status: LiveStatus;
 }
 
@@ -34,7 +35,7 @@ export function useLiveData<T>(fetcher: () => Promise<T>, deps: unknown[] = []):
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, deps);
 
-  return { data, status };
+  return { data, setData, status };
 }
 
 /** Format a stored ISO timestamp for compact display; passes through non-ISO strings. */
