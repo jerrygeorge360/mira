@@ -471,9 +471,14 @@ Useful notes:
 
 ### Latest local evaluation story
 
-The latest saved local run is in `evaluation/local/memory_cases.results.json`. It passed 13 of
-13 cases, or 100%. The run is useful because it checks both final answers and mechanism
-evidence such as routing mode, retrieved sources, session items, and graph edges.
+The latest saved local run is published in `evaluation/local/published_summary.json`. It passed
+13 of 13 cases, or 100%. Fresh local runs still write the generated artifact
+`evaluation/local/memory_cases.results.json`; when that file exists, the API dashboard reads it
+first. In Docker or production, where generated artifacts are intentionally ignored, the dashboard
+falls back to the tracked published summary so the Evaluation screen remains available.
+
+The run is useful because it checks both final answers and mechanism evidence such as routing mode,
+retrieved sources, session items, and graph edges.
 
 | Area | Passed | Total | What it showed |
 | --- | ---: | ---: | --- |

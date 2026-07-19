@@ -1,0 +1,385 @@
+{
+  "by_category": {
+    "contradiction_handling": {
+      "passed": 2,
+      "total": 2
+    },
+    "cross_session_recall": {
+      "passed": 1,
+      "total": 1
+    },
+    "deep_mode_synthesis": {
+      "passed": 3,
+      "total": 3
+    },
+    "direct_fact_recall": {
+      "passed": 1,
+      "total": 1
+    },
+    "foresight_activation": {
+      "passed": 1,
+      "total": 1
+    },
+    "retrieval_sufficiency": {
+      "passed": 1,
+      "total": 1
+    },
+    "routing_intent": {
+      "passed": 2,
+      "total": 2
+    },
+    "session_correction_handling": {
+      "passed": 1,
+      "total": 1
+    },
+    "supersession_handling": {
+      "passed": 1,
+      "total": 1
+    }
+  },
+  "failed": 0,
+  "generated_at": "2026-07-12T00:15:14.476589+00:00",
+  "pass_rate": 1.0,
+  "passed": 13,
+  "results": [
+    {
+      "answer": "Your project deadline is Friday, July 11, 2026.",
+      "category": "direct_fact_recall",
+      "checks": [
+        {
+          "name": "answer_contains:Friday",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "retrieval_mode==quick",
+          "observed": "quick",
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "fact-recall-deadline",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "Use 2026, not 2025, for all dates.",
+      "category": "session_correction_handling",
+      "checks": [
+        {
+          "name": "used_session_items_nonempty",
+          "observed": true,
+          "passed": true
+        },
+        {
+          "name": "active_session_item_label:type:correction",
+          "observed": [
+            "explicitness_label:direct_correction",
+            "type:correction"
+          ],
+          "passed": true
+        },
+        {
+          "name": "active_session_item_label:explicitness_label:direct_correction",
+          "observed": [
+            "explicitness_label:direct_correction",
+            "type:correction"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "session-correction-year",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "Yes, let's continue. The key principle is that MIRA session memory must be kept separate from durable tiers to ensure proper data isolation and integrity within the system.",
+      "category": "cross_session_recall",
+      "checks": [
+        {
+          "name": "answer_contains:MIRA",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "answer_excludes:deadline",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "answer_excludes:Friday",
+          "observed": null,
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "cross-session-continue",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "You prefer Rust.",
+      "category": "contradiction_handling",
+      "checks": [
+        {
+          "name": "answer_contains:Rust",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "slow_path_created_edge_type:SUPERSEDED_BY",
+          "observed": [
+            "MENTIONS",
+            "SUPERSEDED_BY"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "contradiction-preferences",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "The project is due Monday.",
+      "category": "contradiction_handling",
+      "checks": [
+        {
+          "name": "answer_contains:Friday",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "answer_contains:Monday",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "slow_path_created_edge_type:CONTRADICTS",
+          "observed": [
+            "MENTIONS",
+            "SUPERSEDED_BY",
+            "CONTRADICTS"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "contradiction-deadline-conflict",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "Based on your habits, documenting design decisions, reviewing diffs before pushing, preferring small frequent commits, and refactoring aggressively after tests pass, you display the traits of a disciplined, quality-oriented software engineer who follows test-driven development (TDD) and values maintainability and incremental progress.",
+      "category": "deep_mode_synthesis",
+      "checks": [
+        {
+          "name": "retrieval_mode==deep",
+          "observed": "deep",
+          "passed": true
+        },
+        {
+          "name": "retrieved_sources_include:reflection",
+          "observed": [
+            "community_summary",
+            "observation",
+            "reflection"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "reflection-user-knowledge",
+      "passed": true,
+      "retrieval_mode": "deep",
+      "score": 1.0
+    },
+    {
+      "answer": "MIRA employs a dual-path architecture: a fast path (quick retrieval mode) that uses Chroma vector search to answer queries within the same session, and a slow path (deep retrieval mode) that extracts atomic facts from observations to build a temporal knowledge graph. It also offers relational mode for querying graph evidence and Deep Mode for synthesis through reflections and community summaries.",
+      "category": "deep_mode_synthesis",
+      "checks": [
+        {
+          "name": "retrieval_mode==deep",
+          "observed": "deep",
+          "passed": true
+        },
+        {
+          "name": "retrieved_sources_include:community_summary",
+          "observed": [
+            "community_summary"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "deep-mode-community-summary",
+      "passed": true,
+      "retrieval_mode": "deep",
+      "score": 1.0
+    },
+    {
+      "answer": "You now use PostgreSQL.",
+      "category": "supersession_handling",
+      "checks": [
+        {
+          "name": "answer_contains:PostgreSQL",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "retrieval_mode==relational",
+          "observed": "relational",
+          "passed": true
+        },
+        {
+          "name": "min_retrieved_records>=1",
+          "observed": 1,
+          "passed": true
+        },
+        {
+          "name": "retrieved_sources_include:graph_edge",
+          "observed": [
+            "graph_edge"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "supersession-migration",
+      "passed": true,
+      "retrieval_mode": "relational",
+      "score": 1.0
+    },
+    {
+      "answer": "Your hackathon submission is due next Friday, 2026-07-17. Make sure to prepare beforehand.",
+      "category": "foresight_activation",
+      "checks": [
+        {
+          "name": "answer_contains:hackathon",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "retrieved_sources_include:foresight_records",
+          "observed": [
+            "atomic_facts",
+            "foresight_records",
+            "observations"
+          ],
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "foresight-hackathon",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "You are a developer building MIRA memory infrastructure with PostgreSQL-backed storage. You prefer Rust for systems work and Python for tooling.",
+      "category": "deep_mode_synthesis",
+      "checks": [
+        {
+          "name": "answer_contains:PostgreSQL",
+          "observed": null,
+          "passed": true
+        },
+        {
+          "name": "retrieval_mode==deep",
+          "observed": "deep",
+          "passed": true
+        },
+        {
+          "name": "min_retrieved_records>=1",
+          "observed": 9,
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "deep-developer-identity",
+      "passed": true,
+      "retrieval_mode": "deep",
+      "score": 1.0
+    },
+    {
+      "answer": "Based on our previous discussion, you decided to adopt Kubernetes for container orchestration in production, using Helm for package management and implementing a GitOps workflow with ArgoCD.",
+      "category": "retrieval_sufficiency",
+      "checks": [
+        {
+          "name": "answer_contains:Kubernetes",
+          "observed": null,
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "sufficiency-unknown-entity",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    },
+    {
+      "answer": "An apple is a round fruit with red, green, or yellow skin and a crisp white interior. It grows on apple trees and is commonly eaten fresh or used in cooking and baking.",
+      "category": "routing_intent",
+      "checks": [
+        {
+          "name": "retrieval_mode==general",
+          "observed": "general",
+          "passed": true
+        },
+        {
+          "name": "intent==general_knowledge",
+          "observed": "general_knowledge",
+          "passed": true
+        },
+        {
+          "name": "used_memory",
+          "observed": false,
+          "passed": true
+        },
+        {
+          "name": "route==direct_llm",
+          "observed": "direct_llm",
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "general-knowledge-no-memory",
+      "passed": true,
+      "retrieval_mode": "general",
+      "score": 1.0
+    },
+    {
+      "answer": "Your favorite fruit is orange.",
+      "category": "routing_intent",
+      "checks": [
+        {
+          "name": "retrieval_mode==quick",
+          "observed": "quick",
+          "passed": true
+        },
+        {
+          "name": "intent==personal_memory",
+          "observed": "personal_memory",
+          "passed": true
+        },
+        {
+          "name": "used_memory",
+          "observed": true,
+          "passed": true
+        }
+      ],
+      "error": null,
+      "id": "personal-memory-uses-memory",
+      "passed": true,
+      "retrieval_mode": "quick",
+      "score": 1.0
+    }
+  ],
+  "total": 13
+}
