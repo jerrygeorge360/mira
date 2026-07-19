@@ -1,9 +1,16 @@
-import { Activity, Boxes, Cable, Clock3, ShieldCheck, Users } from 'lucide-react';
+import { Activity, Boxes, Cable, Check, Clock3, Cpu, ShieldCheck, Users } from 'lucide-react';
+import { useState } from 'react';
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
 
 export default function AdminView() {
   const { data, status } = useLiveData(() => api.adminOverview(), []);
+  const {
+    data: providerData,
+    status: providerStatus,
+    setData: setProviderData,
+  } = useLiveData(() => api.adminProvider(), []);
+  const [switchingProvider, setSwitchingProvider] = useState<string | null>(null);
 
   if (status === 'loading') {
     return <div className="view-empty"><div className="view-empty-msg">Loading platform overview...</div></div>;
@@ -42,6 +49,47 @@ export default function AdminView() {
       </div>
 
       <div className="admin-panel-grid">
+        <section className="admin-panel admin-provider-panel">
+          <div className="admin-panel-title"><Cpu size={17} /><h3>Model provider</h3></div>
+          {providerStatus === 'loading' || !providerData ? (
+            <p className="admin-generated">Loading provider profiles...</p>
+          ) : (
+            <>
+              <div className="admin-kv"><span>Active profile</span><strong>{providerData.active ?? 'none'}</strong></div>
+              <div className="admin-kv"><span>Source</span><strong>{providerData.source}</strong></div>
+              <div className="admin-kv"><span>Model</span><strong>{providerData.model ?? 'not configured'}</strong></div>
+              <div className="admin-provider-list">
+                {providerData.providers.map(provider => {
+                  const active = provider.name === providerData.active;
+                  const switching = switchingProvider === provider.name;
+                  return (
+                    <button
+                      type="button"
+                      key={provider.name}
+                      className={`admin-provider-option${active ? ' active' : ''}`}
+                      disabled={active || switchingProvider !== null}
+                      onClick={async () => {
+                        setSwitchingProvider(provider.name);
+                        try {
+                          setProviderData(await api.updateAdminProvider(provider.name));
+                        } finally {
+                          setSwitchingProvider(null);
+                        }
+                      }}
+                    >
+                      <span>
+                        <strong>{provider.name}</strong>
+                        <small>{provider.model}</small>
+                      </span>
+                      {active ? <Check size={16} /> : switching ? 'Switching' : 'Use'}
+                    </button>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </section>
+
         <section className="admin-panel">
           <div className="admin-panel-title"><Users size={17} /><h3>Registration</h3></div>
           <div className="admin-kv"><span>Last 7 days</span><strong>{data.users.new_last_7_days}</strong></div>
