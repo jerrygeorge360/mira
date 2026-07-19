@@ -24,7 +24,7 @@ JudgeResult = dict[str, object]
 JudgeCall = Callable[[list[dict[str, str]], str], dict[str, object]]
 
 JUDGE_PROMPT_VERSION = "v1"
-DEFAULT_JUDGE_MODEL = "qwen-plus"
+DEFAULT_JUDGE_MODEL = "qwen-plus-2025-07-28"
 
 ERROR_TYPES = frozenset(
     {

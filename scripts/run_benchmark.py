@@ -40,7 +40,7 @@ DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DEFAULT_DATASET = "data/benchmarks/longmemeval.json"
 DEFAULT_OUT = "evaluation/results/benchmarks"
 DEFAULT_BUDGET_USD = 15.0
-DEFAULT_MODEL = "qwen-plus"
+DEFAULT_MODEL = "qwen-plus-2025-07-28"
 DEFAULT_MAX_INPUT_TOKENS = 8000
 DEFAULT_MAX_OUTPUT_TOKENS = 512
 SUITES = ("longmemeval", "locomo_style")
@@ -52,6 +52,7 @@ JUDGE_MODES = ("deterministic", "llm", "hybrid")
 # and much cheaper cache-hit input, so real spend tends to come in under this estimate.
 PRICING: dict[str, tuple[float, float]] = {
     "qwen-plus": (0.0004, 0.0012),
+    "qwen-plus-2025-07-28": (0.0004, 0.0012),
     "qwen-flash": (0.0001, 0.0003),
     "qwen-max": (0.0024, 0.0096),
     "deepseek-chat": (0.00027, 0.0011),
