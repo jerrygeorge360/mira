@@ -4468,6 +4468,36 @@ select:focus-visible {
   color: #ef4444;
   border: 1px solid color-mix(in srgb, #ef4444 35%, var(--border));
 }
+.baseline-compare {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.baseline-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px;
+  background: var(--surface);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.baseline-card.is-full {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 6%, var(--surface));
+}
+.baseline-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.baseline-card-name { font-size: 0.85rem; font-weight: 700; color: var(--text); }
+.baseline-card.is-full .baseline-card-name { color: var(--accent); }
+.baseline-card-rate { font-size: 1.3rem; font-weight: 800; color: var(--text); }
+.baseline-card-sub { font-size: 0.75rem; font-weight: 700; color: var(--muted); }
+.baseline-card-blurb { font-size: 0.72rem; color: var(--muted); line-height: 1.4; }
 .ablation-case-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));

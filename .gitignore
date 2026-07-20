@@ -27,7 +27,11 @@ build/
 *.pdf
 
 # Generated ablation/evaluation outputs
-evaluation/results/
+evaluation/results/*
+# Publish the ablation baseline + summary so the dashboard renders them on hosts
+# that only have the git checkout (they cannot run the live harness).
+!evaluation/results/ablation_results.json
+!evaluation/results/ablation_summary.md
 evaluation/ablation/results/
 *.results.json
 *.debug.md
