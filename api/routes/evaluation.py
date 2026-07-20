@@ -24,6 +24,7 @@ router = APIRouter(tags=["evaluation"])
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _LOCAL_CASES = _REPO_ROOT / "evaluation" / "local" / "memory_cases.json"
 _LOCAL_EVAL = _REPO_ROOT / "evaluation" / "local" / "memory_cases.results.json"
+_LOCAL_EVAL_SNAPSHOT = _REPO_ROOT / "evaluation" / "local" / "published_summary.json"
 _ABLATION = _REPO_ROOT / "evaluation" / "results" / "ablation_results.json"
 _BENCHMARK = _REPO_ROOT / "evaluation" / "results" / "benchmarks" / "benchmark_results.json"
 
@@ -37,7 +38,7 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 
 def _local_eval_summary() -> dict[str, Any] | None:
-    data = _read_json(_LOCAL_EVAL)
+    data = _read_json(_LOCAL_EVAL) or _read_json(_LOCAL_EVAL_SNAPSHOT)
     if data is None:
         return None
     definitions = _local_case_definitions()
