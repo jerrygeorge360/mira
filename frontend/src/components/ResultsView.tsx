@@ -10,6 +10,25 @@ import { ViewStatus } from './ViewStatus';
 
 type CountMap = Record<string, { passed: number; total: number }>;
 
+// The paper's baseline comparison points, in presentation order (strongest to
+// weakest architecture). These read as themselves rather than "without_X" and are
+// shown as a dedicated head-to-head, separate from the per-component ablation list.
+const BASELINE_ORDER = ['full_system', 'vector_only_baseline', 'full_transcript'] as const;
+// Baselines other than full_system are pulled out of the component-ablation list
+// (full_system stays there as the reference row).
+const BASELINE_ONLY = new Set<string>(['vector_only_baseline', 'full_transcript', 'flat_memory']);
+
+const BASELINE_LABELS: Record<string, string> = {
+  full_system: 'Full MIRA',
+  vector_only_baseline: 'Vector-only',
+  full_transcript: 'Full transcript',
+};
+const BASELINE_BLURBS: Record<string, string> = {
+  full_system: 'Complete architecture: structured memory, tiering, and routed retrieval.',
+  vector_only_baseline: 'Quick semantic retrieval alone — every higher memory layer disabled.',
+  full_transcript: 'No derived or retrieved memory; the model answers from the raw conversation.',
+};
+
 export default function ResultsView() {
   const [summary, setSummary] = useState<EvaluationSummary | null>(null);
   const [status, setStatus] = useState<'loading' | 'live' | 'offline'>('loading');
@@ -76,6 +95,14 @@ function LiveResults({
   const vectorOnly = ablation?.rows.find((row) => row.name === 'vector_only_baseline');
   const transcript = ablation?.rows.find((row) => row.name === 'full_transcript');
 
+  // Baselines are the paper's head-to-head comparison points (full MIRA vs naive
+  // retrieval strategies). They read as themselves, not "without_X", so they get
+  // their own section and are kept out of the per-component ablation list below.
+  const baselineRows = BASELINE_ORDER
+    .map((name) => ablation?.rows.find((row) => row.name === name))
+    .filter(Boolean) as AblationRow[];
+  const componentRows = (ablation?.rows ?? []).filter((row) => !BASELINE_ONLY.has(row.name));
+
   const stats = [
     { label: 'Local suite', value: `${localEval.passed}/${localEval.total}` },
     { label: 'Local pass rate', value: pct(localEval.pass_rate) },
@@ -129,7 +156,40 @@ function LiveResults({
         {selectedCase && <LocalCaseDetail caseRow={selectedCase} />}
       </div>
 
-      {ablation && ablation.rows.length > 0 && (
+      {baselineRows.length > 0 && (
+        <>
+          <h3 className="results-section-title">Baseline comparison — architecture vs. naive memory</h3>
+          <p className="results-note">
+            The same cases answered by the full architecture versus two naive baselines:
+            vector-only retrieval (Quick alone, every higher layer stripped) and the full
+            raw transcript (no derived or retrieved memory). This is the head-to-head that
+            shows what the memory architecture buys over dumping context at the model.
+          </p>
+          <div className="baseline-compare">
+            {baselineRows.map((row) => (
+              <div
+                key={row.name}
+                className={`baseline-card ${row.name === 'full_system' ? 'is-full' : ''}`}
+              >
+                <div className="baseline-card-head">
+                  <span className="baseline-card-name">{BASELINE_LABELS[row.name] ?? pretty(row.name)}</span>
+                  <span className="baseline-card-rate">{row.passed}/{row.total}</span>
+                </div>
+                <div className="ablation-bar-track">
+                  <div
+                    className="ablation-bar-fill"
+                    style={{ width: `${Math.round(row.pass_rate * 100)}%` }}
+                  />
+                </div>
+                <div className="baseline-card-sub">{pct(row.pass_rate)}</div>
+                <p className="baseline-card-blurb">{BASELINE_BLURBS[row.name] ?? ''}</p>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {componentRows.length > 0 && (
         <>
           <h3 className="results-section-title">Component ablation — architecture value</h3>
           <p className="results-note">
@@ -137,7 +197,7 @@ function LiveResults({
             is not only the score; it is which behavior disappears.
           </p>
           <div className="ablation-table rich">
-            {ablation.rows.map((row) => (
+            {componentRows.map((row) => (
               <button
                 type="button"
                 key={row.name}
