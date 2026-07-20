@@ -1,0 +1,719 @@
+{
+  "cases_path": "evaluation/ablation/ablation_cases.json",
+  "llm_mode": "live",
+  "parallel": 4,
+  "rows": [
+    {
+      "applied": [],
+      "disabled": [],
+      "name": "full_system",
+      "note": "",
+      "pass_rate": 1.0,
+      "passed": 7,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "session_working_set"
+      ],
+      "disabled": [
+        "session_working_set"
+      ],
+      "name": "without_session_working_set",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": false,
+          "score": 0.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "relational_mode"
+      ],
+      "disabled": [
+        "relational_mode"
+      ],
+      "name": "without_relational_mode",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": false,
+          "score": 0.3333
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "deep_mode"
+      ],
+      "disabled": [
+        "deep_mode"
+      ],
+      "name": "without_deep_mode",
+      "note": "",
+      "pass_rate": 0.7143,
+      "passed": 5,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": false,
+          "score": 0.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": false,
+          "score": 0.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "foresight"
+      ],
+      "disabled": [
+        "foresight"
+      ],
+      "name": "without_foresight",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "reflection"
+      ],
+      "disabled": [
+        "reflection"
+      ],
+      "name": "without_reflection",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "community_summaries"
+      ],
+      "disabled": [
+        "community_summaries"
+      ],
+      "name": "without_community_summaries",
+      "note": "",
+      "pass_rate": 0.7143,
+      "passed": 5,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": false,
+          "score": 0.5
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "contradiction_supersession"
+      ],
+      "disabled": [
+        "contradiction_supersession"
+      ],
+      "name": "without_contradiction_supersession",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": false,
+          "score": 0.6667
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "community_summaries",
+        "deep_mode",
+        "foresight",
+        "reflection",
+        "relational_mode",
+        "session_working_set"
+      ],
+      "disabled": [
+        "community_summaries",
+        "deep_mode",
+        "foresight",
+        "reflection",
+        "relational_mode",
+        "session_working_set"
+      ],
+      "name": "vector_only_baseline",
+      "note": "",
+      "pass_rate": 0.2857,
+      "passed": 2,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": false,
+          "score": 0.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": false,
+          "score": 0.3333
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": false,
+          "score": 0.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": false,
+          "score": 0.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "flat_memory"
+      ],
+      "disabled": [
+        "flat_memory"
+      ],
+      "name": "flat_memory",
+      "note": "",
+      "pass_rate": 0.8571,
+      "passed": 6,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": true,
+          "score": 1.0
+        }
+      ],
+      "total": 7
+    },
+    {
+      "applied": [
+        "full_transcript"
+      ],
+      "disabled": [
+        "full_transcript"
+      ],
+      "name": "full_transcript",
+      "note": "",
+      "pass_rate": 0.1429,
+      "passed": 1,
+      "results": [
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-fact-recall",
+          "passed": true,
+          "score": 1.0
+        },
+        {
+          "category": "session_correction_handling",
+          "error": null,
+          "id": "abl-session-constraint",
+          "passed": false,
+          "score": 0.0
+        },
+        {
+          "category": "direct_fact_recall",
+          "error": null,
+          "id": "abl-structured-first",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "supersession_handling",
+          "error": null,
+          "id": "abl-supersession",
+          "passed": false,
+          "score": 0.6667
+        },
+        {
+          "category": "foresight_activation",
+          "error": null,
+          "id": "abl-foresight",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-reflection",
+          "passed": false,
+          "score": 0.5
+        },
+        {
+          "category": "deep_mode_synthesis",
+          "error": null,
+          "id": "abl-community",
+          "passed": false,
+          "score": 0.5
+        }
+      ],
+      "total": 7
+    }
+  ],
+  "run_slow_path": true,
+  "table": "| Config | Disabled | Cases | Passed | Pass rate | Note |\n| --- | --- | --- | --- | --- | --- |\n| full_system | none | 7 | 7 | 1.00 |  |\n| without_session_working_set | session_working_set | 7 | 6 | 0.86 |  |\n| without_relational_mode | relational_mode | 7 | 6 | 0.86 |  |\n| without_deep_mode | deep_mode | 7 | 5 | 0.71 |  |\n| without_foresight | foresight | 7 | 6 | 0.86 |  |\n| without_reflection | reflection | 7 | 6 | 0.86 |  |\n| without_community_summaries | community_summaries | 7 | 5 | 0.71 |  |\n| without_contradiction_supersession | contradiction_supersession | 7 | 6 | 0.86 |  |\n| vector_only_baseline | community_summaries, deep_mode, foresight, reflection, relational_mode, session_working_set | 7 | 2 | 0.29 |  |\n| flat_memory | flat_memory | 7 | 6 | 0.86 |  |\n| full_transcript | full_transcript | 7 | 1 | 0.14 |  |"
+}
