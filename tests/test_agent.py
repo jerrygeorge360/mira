@@ -259,8 +259,15 @@ def test_accurate_router_can_choose_general_mode(
     session_id = create_session("jerry")
     calls: list[dict[str, object]] = []
 
-    def _route(query: str, session_id: str | None, *, strategy: str = "fast") -> dict[str, object]:
+    def _route(
+        query: str,
+        session_id: str | None,
+        *,
+        strategy: str = "fast",
+        context: list[dict[str, object]] | None = None,
+    ) -> dict[str, object]:
         calls.append({"query": query, "session_id": session_id, "strategy": strategy})
+        assert context is not None
         return {"mode": "general", "reason": "definition question"}
 
     monkeypatch.setattr(agent, "route_retrieval", _route)

@@ -196,7 +196,12 @@ def handle_user_message(
     if routing_strategy not in {"fast", "hybrid", "accurate"}:
         raise ValueError("routing_strategy must be one of: fast, hybrid, accurate")
     _emit_progress(progress_callback, "routing", "Choosing how to use memory.")
-    decision = route_retrieval(user_message, session_id, strategy=routing_strategy)
+    decision = route_retrieval(
+        user_message,
+        session_id,
+        strategy=routing_strategy,
+        context=recent_turns,
+    )
 
     answer_mode = _answer_mode_from_decision(user_message, decision)
     if _decision_uses_memory(decision) and _should_hydrate(prior_observations, user_message):

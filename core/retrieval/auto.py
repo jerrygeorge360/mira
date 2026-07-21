@@ -82,7 +82,6 @@ DEEP_MARKERS = (
     "what sort of",
     "what type of",
     "who am i",
-    "am i",
     "describe me",
     "my style",
     "personality",
@@ -117,14 +116,10 @@ QUICK_FACT_MARKERS = (
     "where is",
     "how many",
 )
-MEMORY_QUERY_MARKERS = (
-    "my ",
-    "our ",
+EXPLICIT_MEMORY_QUERY_MARKERS = (
     "about me",
     "for me",
     "who am i",
-    "what kind of",
-    "am i",
     "you remember",
     "remember",
     "remind me",
@@ -145,12 +140,20 @@ MEMORY_QUERY_MARKERS = (
     "when is my",
     "last time",
     "previously",
-    "before",
-    "deadline",
-    "preference",
-    "prefer",
-    "project",
-    "task",
+)
+CONTEXTUAL_MEMORY_QUERY_MARKERS = (
+    "the deadline",
+    "this deadline",
+    "that deadline",
+    "the project",
+    "this project",
+    "that project",
+    "the task",
+    "this task",
+    "that task",
+    "the preference",
+    "this preference",
+    "that preference",
 )
 GENERAL_QUESTION_PREFIXES = (
     "what is ",
@@ -168,6 +171,9 @@ GENERAL_QUESTION_PREFIXES = (
     "why is ",
     "explain ",
     "define ",
+    "what kind of ",
+    "what sort of ",
+    "what type of ",
 )
 PROCEDURAL_MARKERS = (
     "summarize this",
@@ -187,20 +193,21 @@ def route_retrieval(
     session_id: str | None,
     *,
     strategy: RoutingStrategy = "fast",
+    context: list[dict[str, object]] | None = None,
 ) -> Decision:
     """Classify a query into Quick, Deep, or Relational retrieval.
 
     Returns the chosen ``mode`` with a human-readable ``reason`` and a
     ``confidence``. Ambiguous queries route to Quick with
     ``needs_sufficiency_check`` set so the caller can retry after a sufficiency
-    check. ``session_id`` is accepted for interface parity and future
-    session-aware routing; the decision is query-driven.
+    check. Recent ``context`` is supplied only to the LLM-assisted router for
+    ambiguous follow-ups; confident general questions remain query-driven.
     """
-    del session_id  # Reserved for future session-aware routing.
+    del session_id
     if strategy not in ROUTING_STRATEGIES:
         raise ValueError("strategy must be one of: fast, hybrid, accurate")
     if strategy == "accurate":
-        decision = _llm_route_retrieval(query)
+        decision = _llm_route_retrieval(query, context)
         if decision is not None:
             return decision
         return _deterministic_route_retrieval(query)
@@ -210,7 +217,7 @@ def route_retrieval(
     # the LLM classifier -- but only when a provider key is configured, so unit tests
     # and offline runs stay deterministic and never attempt a network call.
     if strategy == "hybrid" and _should_escalate_to_llm(deterministic) and _llm_routing_available():
-        llm_decision = _llm_route_retrieval(query)
+        llm_decision = _llm_route_retrieval(query, context)
         if llm_decision is not None and not _is_personal_to_general_downgrade(
             deterministic, llm_decision
         ):
@@ -225,7 +232,8 @@ def _is_personal_to_general_downgrade(deterministic: Decision, llm_decision: Dec
     deterministic personal-memory intent is kept rather than abstaining as general knowledge.
     """
     return (
-        deterministic.get("intent") == PERSONAL_MEMORY_INTENT
+        bool(deterministic.get("explicit_memory_cue"))
+        and deterministic.get("intent") == PERSONAL_MEMORY_INTENT
         and llm_decision.get("intent") == GENERAL_KNOWLEDGE_INTENT
     )
 
@@ -266,7 +274,10 @@ def _deterministic_route_retrieval(query: str) -> Decision:
             intent=PROCEDURAL_INTENT,
         )
 
-    if _looks_general_question(normalized) and not _looks_memory_grounded(normalized):
+    explicit_memory = _looks_explicitly_memory_grounded(normalized)
+    contextual_memory = _looks_contextually_memory_grounded(normalized)
+
+    if _looks_general_question(normalized) and not explicit_memory and not contextual_memory:
         return _decision(
             "general",
             "general knowledge question; no user memory required",
@@ -276,22 +287,50 @@ def _deterministic_route_retrieval(query: str) -> Decision:
 
     relational_reason = _relational_reason(normalized)
     if relational_reason is not None:
-        return _decision("relational", relational_reason, 0.86, intent=PERSONAL_MEMORY_INTENT)
+        return _decision(
+            "relational",
+            relational_reason,
+            0.86,
+            intent=PERSONAL_MEMORY_INTENT,
+            explicit_memory=explicit_memory,
+        )
 
     deep_reason = _deep_reason(normalized)
     if deep_reason is not None:
-        return _decision("deep", deep_reason, 0.8, intent=PERSONAL_MEMORY_INTENT)
+        return _decision(
+            "deep",
+            deep_reason,
+            0.8,
+            intent=PERSONAL_MEMORY_INTENT,
+            explicit_memory=explicit_memory,
+        )
+
+    if contextual_memory and not explicit_memory:
+        return _decision(
+            "quick",
+            "context-dependent memory reference; verify against recent conversation",
+            0.55,
+            ambiguous=True,
+            intent=MIXED_INTENT,
+        )
 
     quick_reason = _quick_reason(normalized)
     if quick_reason is not None:
-        return _decision("quick", quick_reason, 0.8, intent=PERSONAL_MEMORY_INTENT)
+        return _decision(
+            "quick",
+            quick_reason,
+            0.8,
+            intent=PERSONAL_MEMORY_INTENT,
+            explicit_memory=explicit_memory,
+        )
 
-    if _looks_memory_grounded(normalized):
+    if explicit_memory:
         return _decision(
             "quick",
             "personal or session-specific memory cue",
             0.7,
             intent=PERSONAL_MEMORY_INTENT,
+            explicit_memory=True,
         )
 
     return _decision(
@@ -308,8 +347,13 @@ def classify_retrieval_mode(query: str) -> str:
     return str(route_retrieval(query, None)["mode"])
 
 
-def _llm_route_retrieval(query: str) -> Decision | None:
-    prompt = render_prompt("retrieval_router_classification", {"query": query, "context": []})
+def _llm_route_retrieval(
+    query: str, context: list[dict[str, object]] | None = None
+) -> Decision | None:
+    prompt = render_prompt(
+        "retrieval_router_classification",
+        {"query": query, "context": context or []},
+    )
     try:
         response = call_qwen_json(
             [{"role": "user", "content": prompt}],
@@ -365,8 +409,18 @@ def _first_marker(normalized: str, markers: tuple[str, ...]) -> str | None:
     return None
 
 
-def _looks_memory_grounded(normalized: str) -> bool:
-    return any(marker in normalized for marker in MEMORY_QUERY_MARKERS)
+def _looks_explicitly_memory_grounded(normalized: str) -> bool:
+    identity_question = re.search(
+        r"\b(?:what kind|what sort|what type) of .+\b(?:am i|are we)\b",
+        normalized,
+    )
+    return bool(re.search(r"\b(?:my|our)\b", normalized) or identity_question) or any(
+        marker in normalized for marker in EXPLICIT_MEMORY_QUERY_MARKERS
+    )
+
+
+def _looks_contextually_memory_grounded(normalized: str) -> bool:
+    return any(marker in normalized for marker in CONTEXTUAL_MEMORY_QUERY_MARKERS)
 
 
 def _looks_general_question(normalized: str) -> bool:
@@ -385,6 +439,7 @@ def _decision(
     *,
     ambiguous: bool = False,
     intent: str | None = None,
+    explicit_memory: bool = False,
 ) -> Decision:
     selected_intent = intent or (
         GENERAL_KNOWLEDGE_INTENT if mode == "general" else PERSONAL_MEMORY_INTENT
@@ -398,6 +453,7 @@ def _decision(
         "reason": reason,
         "confidence": confidence,
         "needs_sufficiency_check": ambiguous,
+        "explicit_memory_cue": explicit_memory,
     }
 
 

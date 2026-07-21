@@ -219,7 +219,8 @@ Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
   `route=direct_llm`, `intent=general_knowledge`, and `used_memory=false`. Personal,
   procedural, mixed, and relationship questions route through memory with `used_memory=true`.
   Relational remains ordered before Deep, and ambiguous memory queries set
-  `needs_sufficiency_check`.
+  `needs_sufficiency_check`. Public chat defaults to the hybrid strategy: confident routes stay
+  deterministic, while ambiguous follow-ups may use recent turn context in the LLM classifier.
 - **Sufficiency** (`check_retrieval_sufficiency`, `resolve_with_one_retry`) — reports
   missing terms and a rewrite query; permits exactly one retry, then answers with
   uncertainty.
@@ -300,6 +301,9 @@ Future-relevant constraints with a lifecycle: `pending -> active -> resolved | e
 transitions (activation/expiration) against `valid_from`/`valid_until`; `resolve_foresight`
 and `cancel_foresight` are the explicit, evidence-backed exits. `list_relevant_foresight(query,
 now)` returns active, temporally-valid records that match the query or are `always_inject`.
+Detection preserves stated deadline boundaries as `valid_until`. The slow-path worker calls
+`refresh_foresight_lifecycle` on every poll, including idle polls, and terminal transitions demote
+the corresponding hot-memory projection so expired foresight cannot remain prompt-eligible.
 
 ## Reflection
 

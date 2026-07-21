@@ -3,7 +3,7 @@ const BASE_URL = (import.meta as any).env?.VITE_API_URL ?? 'http://localhost:800
 export interface ChatRequest {
   message: string;
   session_id?: string;
-  routing_strategy?: 'fast' | 'accurate';
+  routing_strategy?: 'fast' | 'hybrid' | 'accurate';
 }
 
 export interface ChatResponse {

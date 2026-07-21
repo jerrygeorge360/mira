@@ -56,6 +56,37 @@ def test_general_knowledge_routes_direct_llm() -> None:
     assert decision["route"] == "direct_llm"
 
 
+@pytest.mark.parametrize(
+    "query",
+    [
+        "What is a project?",
+        "How does task scheduling work?",
+        "Explain deadline scheduling.",
+        "What kind of database is PostgreSQL?",
+    ],
+)
+def test_general_questions_with_domain_words_do_not_force_memory(query: str) -> None:
+    decision = route_retrieval(query, "memory-heavy-session")
+
+    assert decision["mode"] == "general"
+    assert decision["used_memory"] is False
+
+
+def test_explicit_personal_project_question_still_uses_memory() -> None:
+    decision = route_retrieval("What is my project?", None)
+
+    assert decision["mode"] == "quick"
+    assert decision["explicit_memory_cue"] is True
+
+
+def test_contextual_reference_is_ambiguous_without_explicit_owner() -> None:
+    decision = route_retrieval("When is the project deadline?", None)
+
+    assert decision["mode"] == "quick"
+    assert decision["intent"] == "mixed"
+    assert decision["needs_sufficiency_check"] is True
+
+
 def test_ambiguous_query_runs_quick_first_with_sufficiency() -> None:
     """An ambiguous query routes to Quick and flags the sufficiency check."""
     decision = route_retrieval("Tell me more about that.", None)
@@ -153,6 +184,26 @@ def test_hybrid_escalates_low_confidence_to_llm(monkeypatch: pytest.MonkeyPatch)
     assert decision["reason"] == "preference comparison"
 
 
+def test_hybrid_passes_recent_context_to_llm_router(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
+
+    def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert "PostgreSQL migration" in messages[0]["content"]
+        return {"json": {"mode": "quick", "reason": "contextual follow-up"}}
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _fake_call)
+
+    decision = route_retrieval(
+        "Tell me more about that.",
+        "session-1",
+        strategy="hybrid",
+        context=[{"role": "user", "content": "Discuss the PostgreSQL migration."}],
+    )
+
+    assert decision["mode"] == "quick"
+    assert decision["reason"] == "contextual follow-up"
+
+
 def test_hybrid_keeps_borderline_personal_memory_route(monkeypatch: pytest.MonkeyPatch) -> None:
     """A borderline (0.7) personal-memory route is kept, not handed to the LLM classifier."""
     monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)
@@ -177,7 +228,13 @@ def test_hybrid_blocks_personal_to_general_downgrade(monkeypatch: pytest.MonkeyP
     # Force a low-confidence personal-memory deterministic route so hybrid escalates.
     monkeypatch.setattr(
         "core.retrieval.auto._deterministic_route_retrieval",
-        lambda query: _decision("quick", "forced personal", 0.5, intent=PERSONAL_MEMORY_INTENT),
+        lambda query: _decision(
+            "quick",
+            "forced personal",
+            0.5,
+            intent=PERSONAL_MEMORY_INTENT,
+            explicit_memory=True,
+        ),
     )
 
     def _fake_call(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
@@ -187,7 +244,7 @@ def test_hybrid_blocks_personal_to_general_downgrade(monkeypatch: pytest.MonkeyP
 
     decision = route_retrieval("anything at all", None, strategy="hybrid")
 
-    # The general downgrade is rejected; the deterministic personal-memory route is kept.
+    # The explicit-memory downgrade is rejected; the deterministic route is kept.
     assert decision["intent"] == "personal_memory"
     assert decision["mode"] == "quick"
 

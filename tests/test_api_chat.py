@@ -97,7 +97,7 @@ def test_chat_endpoint_calls_agent_path(monkeypatch: Any, tmp_path: Any) -> None
     assert response.used_memory_items == ["fact_1"]
     assert response.used_session_items == ["sws_1"]
     assert _FakeAgent.calls and _FakeAgent.calls[0][1] == "Use 2026."
-    assert _FakeAgent.calls[0][2] == "fast"
+    assert _FakeAgent.calls[0][2] == "hybrid"
     with repository_connection() as connection:
         title = connection.execute(
             "SELECT title FROM sessions WHERE id = ?",
@@ -124,6 +124,12 @@ def test_chat_endpoint_passes_accurate_routing_strategy(monkeypatch: Any, tmp_pa
     )
 
     assert _FakeAgent.calls and _FakeAgent.calls[0][2] == "accurate"
+
+
+def test_chat_request_accepts_hybrid_routing_strategy() -> None:
+    request = ChatRequest(message="What is the project deadline?", routing_strategy="hybrid")
+
+    assert request.routing_strategy == "hybrid"
 
 
 def test_chat_endpoint_sanitizes_internal_runtime_errors(
