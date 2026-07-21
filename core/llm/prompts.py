@@ -526,6 +526,11 @@ Modes:
 - relational: graph traversal, contradiction, supersession, causality, evidence.
 - auto: insufficient information to choose a specific route.
 
+Context rule:
+- A pronoun such as "that" or "it" may refer to the immediately preceding topic. A follow-up
+  to an ordinary general-knowledge answer remains general unless the user explicitly asks
+  about their own memory, project history, preferences, or prior statements.
+
 Non-goals:
 - Do not retrieve records.
 - Do not answer the user.

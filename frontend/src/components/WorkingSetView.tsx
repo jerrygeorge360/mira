@@ -15,14 +15,15 @@ import { ViewStatus } from './ViewStatus';
 
 type Row = Record<string, unknown>;
 
-const GROUPS = [
+const ACTIVE_GROUPS = [
   { key: 'corrections', title: 'Active corrections', types: ['correction'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: Shield },
   { key: 'constraints', title: 'Constraints', types: ['active_constraint', 'current_goal'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: Layers },
   { key: 'decisions', title: 'Decisions', types: ['decision'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: CheckCircle },
   { key: 'questions', title: 'Open questions', types: ['open_question'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: MessageSquare },
   { key: 'pending', title: 'Pending promotion', promotion: ['eligible', 'pending_confirmation'], icon: Flame },
-  { key: 'inactive', title: 'Recently inactive', statuses: ['resolved', 'expired', 'rejected', 'superseded'], icon: Clock },
 ] as const;
+
+const INACTIVE_STATUSES = ['resolved', 'expired', 'rejected', 'superseded'];
 
 export default function WorkingSetView() {
   const { sessionId, setView, memoryRefreshKey } = useApp();
@@ -31,6 +32,8 @@ export default function WorkingSetView() {
     [sessionId, memoryRefreshKey],
   );
   const rows = (data?.items as Row[] | undefined) ?? [];
+  const activeRows = rows.filter((row) => !INACTIVE_STATUSES.includes(text(row.status)));
+  const inactiveRows = rows.filter((row) => INACTIVE_STATUSES.includes(text(row.status)));
 
   return (
     <div>
@@ -38,7 +41,7 @@ export default function WorkingSetView() {
         <h2>Session Working Set</h2>
         <p>Current-session memory that can steer the next answer, with source, usage, and promotion evidence.</p>
       </div>
-      {rows.length === 0 ? (
+      {activeRows.length === 0 ? (
         <WorkingSetEmpty
           status={sessionId ? status : 'live'}
           hasSession={Boolean(sessionId)}
@@ -46,8 +49,8 @@ export default function WorkingSetView() {
         />
       ) : (
         <div className="working-set-sections">
-          {GROUPS.map((group) => {
-            const items = rows.filter((row) => inGroup(row, group));
+          {ACTIVE_GROUPS.map((group) => {
+            const items = activeRows.filter((row) => groupKey(row) === group.key);
             if (items.length === 0) return null;
             const Icon = group.icon;
             return (
@@ -65,6 +68,19 @@ export default function WorkingSetView() {
           })}
         </div>
       )}
+      {inactiveRows.length > 0 ? (
+        <details className="working-set-history">
+          <summary>
+            <Clock size={16} />
+            <span>Inactive history</span>
+            <strong>{inactiveRows.length}</strong>
+          </summary>
+          <p>Resolved, expired, rejected, and superseded items are retained for inspection but cannot steer answers.</p>
+          <div className="working-set-grid">
+            {inactiveRows.map((item) => <WorkingSetCard key={String(item.id)} item={item} />)}
+          </div>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -194,18 +210,17 @@ function Field({ label, value }: { label: string; value: string }) {
   );
 }
 
-function inGroup(
-  row: Row,
-  group: (typeof GROUPS)[number],
-) {
+function groupKey(row: Row) {
   const type = text(row.type);
   const status = text(row.status);
   const promotion = text(row.promotion_status);
-  if ('promotion' in group) return group.promotion?.includes(promotion as never) ?? false;
-  return (
-    (!('types' in group) || group.types?.includes(type as never))
-    && (!('statuses' in group) || group.statuses?.includes(status as never))
-  );
+  if (['eligible', 'pending_confirmation'].includes(promotion)) return 'pending';
+  const group = ACTIVE_GROUPS.find(candidate => (
+    'types' in candidate
+    && candidate.types?.includes(type as never)
+    && candidate.statuses?.includes(status as never)
+  ));
+  return group?.key ?? null;
 }
 
 function active(item: Row) {

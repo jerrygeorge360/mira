@@ -2962,6 +2962,37 @@ select:focus-visible {
   grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
   gap: 12px;
 }
+.working-set-history {
+  margin-top: 20px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.working-set-history > summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 0.84rem;
+  font-weight: 800;
+  list-style: none;
+}
+.working-set-history > summary::-webkit-details-marker { display: none; }
+.working-set-history > summary svg { color: var(--accent); }
+.working-set-history > summary strong {
+  display: inline-grid;
+  place-items: center;
+  min-width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  font-size: 0.72rem;
+}
+.working-set-history > p {
+  margin: 8px 0 12px;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
 .working-card {
   min-width: 0;
   display: grid;

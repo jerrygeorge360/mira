@@ -185,6 +185,20 @@ PROCEDURAL_MARKERS = (
     "what are we doing",
 )
 
+FOLLOWUP_REFERENCE_RE = re.compile(r"\b(?:that|this|it|those|these|they|them)\b")
+FOLLOWUP_QUESTION_RE = re.compile(
+    r"\b(?:what|why|how|who|where|when|is|are|was|were|do|does|did|can|could|would|should)\b"
+)
+CONVERSATION_MEMORY_MARKERS = (
+    "you said",
+    "you told",
+    "did you",
+    "i said",
+    "i told",
+    "we said",
+    "we decided",
+)
+
 TRANSITION_PATTERN = re.compile(r"\bfrom\s+\w[\w.+-]*\s+to\s+\w[\w.+-]*")
 
 
@@ -206,6 +220,11 @@ def route_retrieval(
     del session_id
     if strategy not in ROUTING_STRATEGIES:
         raise ValueError("strategy must be one of: fast, hybrid, accurate")
+
+    inherited_general = _general_followup_decision(query, context)
+    if inherited_general is not None:
+        return inherited_general
+
     if strategy == "accurate":
         decision = _llm_route_retrieval(query, context)
         if decision is not None:
@@ -223,6 +242,64 @@ def route_retrieval(
         ):
             return llm_decision
     return deterministic
+
+
+def _general_followup_decision(
+    query: str,
+    context: list[dict[str, object]] | None,
+) -> Decision | None:
+    """Keep an anaphoric follow-up on the preceding general-knowledge topic.
+
+    Words such as ``that`` refer to the immediate conversation as often as they
+    refer to durable memory. When the preceding user turn was clearly general
+    knowledge, preserve that route instead of letting an LLM router reinterpret
+    the pronoun as a request for personal graph traversal.
+    """
+    if not context:
+        return None
+    normalized = _normalize(query)
+    if not _looks_like_anaphoric_followup(normalized):
+        return None
+    if _looks_explicitly_memory_grounded(normalized) or _looks_contextually_memory_grounded(
+        normalized
+    ):
+        return None
+    if any(marker in normalized for marker in CONVERSATION_MEMORY_MARKERS):
+        return None
+
+    prior_user_message = _latest_user_message(context)
+    if prior_user_message is None:
+        return None
+    prior_decision = _deterministic_route_retrieval(prior_user_message)
+    if prior_decision.get("intent") != GENERAL_KNOWLEDGE_INTENT:
+        return None
+    return _decision(
+        "general",
+        "follow-up to the current general-knowledge topic; durable memory is not required",
+        0.88,
+        intent=GENERAL_KNOWLEDGE_INTENT,
+    )
+
+
+def _looks_like_anaphoric_followup(normalized: str) -> bool:
+    stripped = normalized.strip()
+    if not FOLLOWUP_REFERENCE_RE.search(stripped):
+        return False
+    return bool(
+        "?" in stripped
+        or FOLLOWUP_QUESTION_RE.search(stripped)
+        or stripped.startswith(("tell me more", "explain that", "explain this", "go on"))
+    )
+
+
+def _latest_user_message(context: list[dict[str, object]]) -> str | None:
+    for turn in reversed(context):
+        if str(turn.get("role", "")).casefold() != "user":
+            continue
+        content = turn.get("content")
+        if isinstance(content, str) and content.strip():
+            return content
+    return None
 
 
 def _is_personal_to_general_downgrade(deterministic: Decision, llm_decision: Decision) -> bool:

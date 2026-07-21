@@ -204,6 +204,44 @@ def test_hybrid_passes_recent_context_to_llm_router(monkeypatch: pytest.MonkeyPa
     assert decision["reason"] == "contextual follow-up"
 
 
+@pytest.mark.parametrize("strategy", ["fast", "hybrid", "accurate"])
+def test_anaphoric_followup_inherits_general_topic(
+    strategy: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A conversational pronoun must not trigger unrelated durable-memory retrieval."""
+
+    def _no_call(*args: object, **kwargs: object) -> dict[str, object]:
+        raise AssertionError("a clear general follow-up must not consult the LLM router")
+
+    monkeypatch.setattr("core.retrieval.auto.call_qwen_json", _no_call)
+    decision = route_retrieval(
+        "That is mad, what was the purpose of that",
+        "session-1",
+        strategy=strategy,
+        context=[
+            {"role": "user", "content": "What is the Holocaust?"},
+            {"role": "assistant", "content": "The Holocaust was a genocide."},
+        ],
+    )
+
+    assert decision["mode"] == "general"
+    assert decision["intent"] == "general_knowledge"
+    assert decision["used_memory"] is False
+
+
+def test_anaphoric_personal_followup_still_uses_memory() -> None:
+    """Explicit personal ownership prevents general-topic inheritance."""
+    decision = route_retrieval(
+        "Was that in my notes?",
+        "session-1",
+        strategy="fast",
+        context=[{"role": "user", "content": "What is the Holocaust?"}],
+    )
+
+    assert decision["mode"] != "general"
+    assert decision["used_memory"] is True
+
+
 def test_hybrid_keeps_borderline_personal_memory_route(monkeypatch: pytest.MonkeyPatch) -> None:
     """A borderline (0.7) personal-memory route is kept, not handed to the LLM classifier."""
     monkeypatch.setattr("core.retrieval.auto._llm_routing_available", lambda: True)

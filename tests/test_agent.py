@@ -267,6 +267,21 @@ def test_followup_general_question_stays_general(
     assert "Answer mode:\ngeneral_knowledge" in fake_qwen.prompts[-1]
 
 
+def test_anaphoric_general_followup_does_not_retrieve_memory(
+    database_path: Path, fake_qwen: _CapturingQwen
+) -> None:
+    """A follow-up to a public topic stays grounded in recent conversation, not old memory."""
+    session_id = create_session("jerry")
+
+    handle_user_message(session_id, "What is the Holocaust?")
+    response = handle_user_message(session_id, "That is mad, what was the purpose of that")
+
+    assert response["retrieval_mode"] == "general"
+    assert response["routing_decision"]["used_memory"] is False
+    assert response["retrieval_trace"]["retrieved"] == []
+    assert "The Holocaust" in fake_qwen.prompts[-1]
+
+
 def test_memory_question_stays_memory_grounded(
     database_path: Path, fake_qwen: _CapturingQwen
 ) -> None:
