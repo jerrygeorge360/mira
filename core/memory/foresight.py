@@ -80,6 +80,31 @@ NON_FORESIGHT_MARKERS = frozenset(
         "use detailed",
     }
 )
+CANCELLATION_PATTERN = re.compile(
+    r"\b(?:cancel|drop|remove)\b|"
+    r"\b(?:do not|don't|dont|no longer)\s+(?:have\s+)?|"
+    r"\b(?:does not|doesn't|doesnt)\s+(?:apply|exist)\b|"
+    r"\bnot\b.+\banymore\b",
+    re.IGNORECASE,
+)
+CANCELLATION_STOPWORDS = frozenset(
+    {
+        "anymore",
+        "apply",
+        "cancel",
+        "doesn't",
+        "doesnt",
+        "don't",
+        "dont",
+        "drop",
+        "exist",
+        "have",
+        "longer",
+        "no",
+        "not",
+        "remove",
+    }
+)
 
 
 def detect_foresight(
@@ -209,14 +234,47 @@ def resolve_foresight(record_id: str, resolved_by: str) -> None:
     LOGGER.info("Foresight %s resolved by %s", record_id, resolved_by)
 
 
-def cancel_foresight(record_id: str) -> None:
+def cancel_foresight(record_id: str, cancelled_by: str | None = None) -> None:
     """Cancel a foresight record that no longer applies."""
     record = _require_record(record_id)
     status = str(record["status"])
     if status in TERMINAL_STATUSES:
         raise ValueError(f"cannot cancel foresight in terminal status {status!r}")
-    _write_status(record_id, "cancelled")
+    _write_status(record_id, "cancelled", resolved_by=cancelled_by)
     LOGGER.info("Foresight %s cancelled", record_id)
+
+
+def cancel_matching_foresight(
+    observation_id: str,
+    content: str,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+) -> list[str]:
+    """Cancel active foresight explicitly withdrawn by a new user observation."""
+    normalized = _normalize_text(content)
+    if not CANCELLATION_PATTERN.search(normalized):
+        return []
+    target_tokens = _tokens(normalized) - CANCELLATION_STOPWORDS
+    if not target_tokens:
+        return []
+
+    with repository_connection() as connection:
+        rows = connection.execute(
+            "SELECT * FROM foresight_records "
+            "WHERE workspace_id = ? AND status IN ('pending', 'active')",
+            (workspace_id,),
+        ).fetchall()
+
+    cancelled: list[str] = []
+    for row in rows:
+        record = dict(row)
+        record_tokens = _tokens(f"{record.get('content', '')} {record.get('reason') or ''}")
+        if not target_tokens & record_tokens:
+            continue
+        record_id = str(record["id"])
+        cancel_foresight(record_id, cancelled_by=observation_id)
+        cancelled.append(record_id)
+    return cancelled
 
 
 def list_relevant_foresight(

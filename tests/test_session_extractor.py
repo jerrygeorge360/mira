@@ -78,6 +78,33 @@ def test_negative_architecture_sentence_is_no_op() -> None:
     assert operations[0]["reason"] == "no_session_state_operation_detected"
 
 
+def test_ordinary_user_question_is_not_persisted_as_open_work() -> None:
+    """A question being answered now is not an unresolved Session Working Set item."""
+    operations = extract_session_operations(
+        "obs_match",
+        "Do I have a match?",
+        [],
+        [],
+    )
+
+    assert operations[0]["op"] == "no_op"
+    assert operations[0]["reason"] == "no_session_state_operation_detected"
+
+
+def test_explicit_deliberation_is_extracted_as_open_question() -> None:
+    """A genuine unresolved decision remains available to steer later turns."""
+    operations = extract_session_operations(
+        "obs_open",
+        "Open question: should we add recursive summaries?",
+        [],
+        [],
+    )
+
+    assert operations[0]["op"] == "upsert"
+    assert operations[0]["type"] == "open_question"
+    assert operations[0]["explicitness_label"] == "direct_instruction"
+
+
 def test_community_summary_distinction_extracts_decision_or_constraint() -> None:
     """Explicit architecture distinctions become decision-like session items."""
     operations = extract_session_operations(

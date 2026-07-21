@@ -22,6 +22,7 @@ from core.db.repositories import (
 from core.memory import foresight
 from core.memory.foresight import (
     cancel_foresight,
+    cancel_matching_foresight,
     create_foresight,
     detect_foresight,
     list_relevant_foresight,
@@ -135,6 +136,66 @@ def test_cancel_active_foresight(database_path: Path) -> None:
     assert _status(record_id) == "cancelled"
     with pytest.raises(ValueError, match="terminal status"):
         cancel_foresight(record_id)
+
+
+def test_explicit_deadline_removal_cancels_matching_foresight(database_path: Path) -> None:
+    """A new user observation can withdraw a previously active deadline."""
+    session_id = create_session("jerry")
+    deadline_observation_id = save_observation(
+        session_id,
+        "user",
+        "My project deadline is July 30.",
+    )
+    deadline_id = create_foresight(
+        {
+            "content": "The project deadline is July 30.",
+            "reason": "The user stated a project deadline.",
+            "status": "active",
+            "source_observation_id": deadline_observation_id,
+        }
+    )
+    cancellation_observation_id = save_observation(
+        session_id,
+        "user",
+        "I don't have a deadline anymore.",
+    )
+
+    cancelled = cancel_matching_foresight(
+        cancellation_observation_id,
+        "I don't have a deadline anymore.",
+    )
+
+    assert cancelled == [deadline_id]
+    record = _record(deadline_id)
+    assert record["status"] == "cancelled"
+    assert record["resolved_by"] == cancellation_observation_id
+
+
+def test_explicit_event_removal_matches_the_event_noun(database_path: Path) -> None:
+    """Cancellation is not limited to hard-coded event categories such as deadlines."""
+    session_id = create_session("jerry")
+    match_observation_id = save_observation(session_id, "user", "I have a match today.")
+    match_id = create_foresight(
+        {
+            "content": "The user has a match today.",
+            "reason": "A match today is a time-sensitive event.",
+            "status": "active",
+            "source_observation_id": match_observation_id,
+        }
+    )
+    cancellation_observation_id = save_observation(
+        session_id,
+        "user",
+        "I don't have the match anymore.",
+    )
+
+    cancelled = cancel_matching_foresight(
+        cancellation_observation_id,
+        "I don't have the match anymore.",
+    )
+
+    assert cancelled == [match_id]
+    assert _record(match_id)["status"] == "cancelled"
 
 
 def test_prompt_builder_retrieves_active_relevant_foresight(database_path: Path) -> None:

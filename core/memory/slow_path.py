@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import Protocol
 from uuid import uuid4
 
+from core.context.ambient import build_ambient_context
 from core.db import chroma
 from core.db.repositories import (
     canonical_form_for_id,
@@ -44,7 +45,12 @@ from core.memory.community import (
     store_community_summary,
     summarize_community,
 )
-from core.memory.foresight import create_foresight, detect_foresight, refresh_foresight_lifecycle
+from core.memory.foresight import (
+    cancel_matching_foresight,
+    create_foresight,
+    detect_foresight,
+    refresh_foresight_lifecycle,
+)
 from core.memory.graph import (
     create_graph_edge,
     create_graph_node,
@@ -304,6 +310,15 @@ def run_slow_path_for_observation(
     steps: tuple[tuple[str, Callable[[], dict[str, list[str]]]], ...] = (
         ("session_confirmation", lambda: _step_session_confirmation(observation_id, session_id)),
         ("durable_promotion", lambda: _step_durable_promotion(observation_id, session_id)),
+        (
+            "foresight_reconciliation",
+            lambda: _step_foresight_reconciliation(
+                observation_id,
+                content,
+                observation,
+                workspace_id,
+            ),
+        ),
         (
             "embedding_index",
             lambda: _step_embedding_index(observation_id, content, observation, workspace_id),
@@ -957,6 +972,16 @@ def _llm_change_is_locally_plausible(
     relation_type: str,
 ) -> bool:
     """Reject verifier relations that join independent properties under one subject."""
+    target_observation_id = _optional_str(target_fact.get("source_observation_id"))
+    if target_observation_id:
+        target_observation = _load_observation(target_observation_id)
+        target_content = (
+            _normalize_change_text(str(target_observation.get("content", "")))
+            if target_observation
+            else ""
+        )
+        if target_content.startswith(("another ", "an additional ", "one more ")):
+            return False
     if _normalized_predicate(source_fact) in _ADDITIVE_CHANGE_PREDICATES:
         return False
     if _normalized_predicate(target_fact) in _ADDITIVE_CHANGE_PREDICATES:
@@ -1256,7 +1281,11 @@ def _step_foresight(
 ) -> dict[str, list[str]]:
     if not config.enable_foresight:
         return {}
-    ambient_context: dict[str, object] = {"current_time": _now()}
+    observation = _load_observation(observation_id)
+    session_id = _optional_str(observation.get("session_id")) if observation else None
+    ambient_context: dict[str, object] = (
+        build_ambient_context(session_id) if session_id else {"current_time": _now()}
+    )
     created: list[str] = []
     try:
         records = detect_foresight(observation_id, content, ambient_context)
@@ -1273,6 +1302,23 @@ def _step_foresight(
             continue
         created.append(create_foresight(record))
     return {"foresight_records": created}
+
+
+def _step_foresight_reconciliation(
+    observation_id: str,
+    content: str,
+    observation: dict[str, object],
+    workspace_id: str,
+) -> dict[str, list[str]]:
+    """Apply explicit user cancellations before provider-dependent slow-path work."""
+    if observation.get("role") != "user":
+        return {}
+    cancelled = cancel_matching_foresight(
+        observation_id,
+        content,
+        workspace_id=workspace_id,
+    )
+    return {"foresight_records": cancelled} if cancelled else {}
 
 
 def _step_reflection_invalidation(

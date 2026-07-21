@@ -21,7 +21,7 @@ const GROUPS = [
   { key: 'decisions', title: 'Decisions', types: ['decision'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: CheckCircle },
   { key: 'questions', title: 'Open questions', types: ['open_question'], statuses: ['provisional', 'hydrated', 'confirmed'], icon: MessageSquare },
   { key: 'pending', title: 'Pending promotion', promotion: ['eligible', 'pending_confirmation'], icon: Flame },
-  { key: 'inactive', title: 'Recently expired', statuses: ['resolved', 'expired', 'rejected', 'superseded'], icon: Clock },
+  { key: 'inactive', title: 'Recently inactive', statuses: ['resolved', 'expired', 'rejected', 'superseded'], icon: Clock },
 ] as const;
 
 export default function WorkingSetView() {
@@ -201,7 +201,7 @@ function inGroup(
   const type = text(row.type);
   const status = text(row.status);
   const promotion = text(row.promotion_status);
-  if ('promotion' in group && group.promotion?.includes(promotion as never)) return true;
+  if ('promotion' in group) return group.promotion?.includes(promotion as never) ?? false;
   return (
     (!('types' in group) || group.types?.includes(type as never))
     && (!('statuses' in group) || group.statuses?.includes(status as never))

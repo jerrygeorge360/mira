@@ -180,7 +180,7 @@ def handle_user_message(
     run_session_micro_path(session_id, user_observation_id, user_message, recent_turn_texts)
     _raise_if_cancelled(should_cancel)
 
-    turn_purpose = _classify_turn_purpose(user_message)
+    turn_purpose = _classify_turn_purpose(user_message, recent_turns=recent_turns)
     if turn_purpose == "informational_update":
         return _acknowledge_informational_update(
             session_id=session_id,
@@ -362,7 +362,7 @@ def _acknowledge_informational_update(
     trace.record_session_items(session_items)
     trace.record_retrieval(retrieval_mode, retrieved)
     trace.record_prompt_sections([])
-    answer = "Noted."
+    answer = _informational_update_acknowledgement(user_message, recent_turns)
     assistant_observation_id = persist_turn_fast_path(session_id, "assistant", answer)
     trace.assistant_observation_id = assistant_observation_id
     used_session_items = [str(item["id"]) for item in session_items if item.get("id")]
@@ -504,7 +504,11 @@ def _decision_uses_memory(decision: dict[str, object]) -> bool:
     return bool(decision.get("used_memory", decision.get("mode") != GENERAL_RETRIEVAL_MODE))
 
 
-def _classify_turn_purpose(user_message: str) -> str:
+def _classify_turn_purpose(
+    user_message: str,
+    *,
+    recent_turns: list[dict[str, object]] | None = None,
+) -> str:
     normalized = _normalize_turn(user_message)
     if not normalized:
         return "casual_message"
@@ -518,17 +522,27 @@ def _classify_turn_purpose(user_message: str) -> str:
         return "correction"
     if any(marker in normalized for marker in CORRECTION_TURN_MARKERS):
         return "correction"
-    if _looks_like_declarative_update(normalized):
+    if _looks_like_declarative_update(normalized) or _looks_like_personal_update(normalized):
         return "informational_update"
-    if _should_ask_llm_turn_classifier(normalized):
-        return _llm_classify_turn_purpose(user_message) or "casual_message"
+    if _should_ask_llm_turn_classifier(normalized, recent_turns):
+        classified = _llm_classify_turn_purpose(user_message, recent_turns or [])
+        if classified is not None and not (
+            _looks_like_additional_event_update(normalized, recent_turns)
+            and classified != "informational_update"
+        ):
+            return classified
+        if _looks_like_contextual_update_fragment(normalized, recent_turns):
+            return "informational_update"
     return "casual_message"
 
 
-def _llm_classify_turn_purpose(user_message: str) -> str | None:
+def _llm_classify_turn_purpose(
+    user_message: str,
+    recent_turns: list[dict[str, object]],
+) -> str | None:
     prompt = render_prompt(
         "turn_purpose_classification",
-        {"recent_turns": [], "user_message": user_message},
+        {"recent_turns": recent_turns, "user_message": user_message},
     )
     try:
         response = call_qwen_json(
@@ -592,6 +606,22 @@ def _looks_like_declarative_update(normalized: str) -> bool:
     )
 
 
+def _looks_like_personal_update(normalized: str) -> bool:
+    """Recognize clear user-state assertions without treating requests as updates."""
+    if normalized.startswith(("i am wondering", "i'm wondering", "i have a question")):
+        return False
+    if normalized.startswith(("i have ", "i've got ", "we have ", "i prefer ")):
+        return True
+    if normalized.startswith(("i am ", "i'm ")):
+        return len(normalized.split()) >= 3
+    if normalized.startswith(("my ", "our ")):
+        return any(
+            marker in f" {normalized} "
+            for marker in (" is ", " are ", " starts ", " begins ", " ends ", " will be ")
+        )
+    return False
+
+
 def _looks_like_architecture_note(normalized: str) -> bool:
     architecture_markers = (
         "chromadb",
@@ -609,7 +639,10 @@ def _looks_like_architecture_note(normalized: str) -> bool:
     return any(marker in normalized for marker in architecture_markers)
 
 
-def _should_ask_llm_turn_classifier(normalized: str) -> bool:
+def _should_ask_llm_turn_classifier(
+    normalized: str,
+    recent_turns: list[dict[str, object]] | None,
+) -> bool:
     llm_assist_markers = (
         "architecture",
         "context",
@@ -619,7 +652,66 @@ def _should_ask_llm_turn_classifier(normalized: str) -> bool:
         "project note",
         "submission",
     )
-    return any(marker in normalized for marker in llm_assist_markers)
+    return any(marker in normalized for marker in llm_assist_markers) or (
+        _looks_like_contextual_update_fragment(normalized, recent_turns)
+    )
+
+
+def _looks_like_contextual_update_fragment(
+    normalized: str,
+    recent_turns: list[dict[str, object]] | None,
+) -> bool:
+    if not recent_turns:
+        return False
+    return normalized.startswith(("another ", "an additional ", "one more "))
+
+
+def _looks_like_additional_event_update(
+    normalized: str,
+    recent_turns: list[dict[str, object]] | None,
+) -> bool:
+    if not _looks_like_contextual_update_fragment(normalized, recent_turns):
+        return False
+    event_terms = ("exam", "appointment", "deadline", "flight", "interview", "meeting")
+    matching_terms = {term for term in event_terms if term in normalized}
+    if not matching_terms:
+        return False
+    prior_user_text = " ".join(
+        _normalize_turn(str(turn.get("content", "")))
+        for turn in (recent_turns or [])
+        if turn.get("role") == "user"
+    )
+    return any(term in prior_user_text for term in matching_terms)
+
+
+def _informational_update_acknowledgement(
+    user_message: str,
+    recent_turns: list[dict[str, object]],
+) -> str:
+    normalized = _normalize_turn(user_message).strip(".! ")
+    if _looks_like_contextual_update_fragment(normalized, recent_turns):
+        if "exam" in normalized:
+            return "Got it. I'll treat that as a separate exam. When is it?"
+        return "Got it. I'll treat that as an additional item. What details should I attach to it?"
+    if not _looks_like_personal_update(normalized):
+        return "Noted."
+    statement = user_message.strip().rstrip(".!?")
+    replacements = (
+        (r"^I have\b", "you have"),
+        (r"^I've got\b", "you have"),
+        (r"^I am\b", "you are"),
+        (r"^I'm\b", "you're"),
+        (r"^I prefer\b", "you prefer"),
+        (r"^We have\b", "you have"),
+        (r"^My\b", "your"),
+        (r"^Our\b", "your"),
+    )
+    for pattern, replacement in replacements:
+        updated = re.sub(pattern, replacement, statement, count=1, flags=re.IGNORECASE)
+        if updated != statement:
+            statement = updated
+            break
+    return f"Got it. I'll remember that {statement}."
 
 
 def _normalize_turn(value: str) -> str:

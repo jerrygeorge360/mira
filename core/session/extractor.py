@@ -65,15 +65,15 @@ def extract_session_operations(
     correction = _extract_correction(observation_id, current_message, current_working_set)
     if correction is not None:
         return [correction]
+    open_question = _extract_open_question(observation_id, current_message)
+    if open_question is not None:
+        return [open_question]
     decision = _extract_decision_or_constraint(observation_id, current_message)
     if decision is not None:
         return [decision]
     goal = _extract_current_goal(observation_id, current_message)
     if goal is not None:
         return [goal]
-    open_question = _extract_open_question(observation_id, current_message)
-    if open_question is not None:
-        return [open_question]
     return [_no_op(observation_id, current_message, "no_session_state_operation_detected")]
 
 
@@ -166,7 +166,19 @@ def _extract_current_goal(observation_id: str, message: str) -> SessionOperation
 
 
 def _extract_open_question(observation_id: str, message: str) -> SessionOperation | None:
-    if "?" not in message:
+    normalized_message = _normalize(message)
+    explicit_open_markers = (
+        "open question",
+        "we need to decide",
+        "we need to figure out",
+        "we still need to",
+        "we have not decided",
+        "we haven't decided",
+    )
+    open_question_markers = (*explicit_open_markers, "should we ")
+    if "?" not in message or not any(
+        marker in normalized_message for marker in open_question_markers
+    ):
         return None
     return _operation(
         observation_id,
@@ -175,7 +187,11 @@ def _extract_open_question(observation_id: str, message: str) -> SessionOperatio
         item_type="open_question",
         scope="current_task",
         priority=0.62,
-        explicitness_label="ambiguous",
+        explicitness_label=(
+            "direct_instruction"
+            if any(marker in normalized_message for marker in explicit_open_markers)
+            else "ambiguous"
+        ),
     )
 
 

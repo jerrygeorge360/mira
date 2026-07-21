@@ -7,8 +7,10 @@ type Row = Record<string, unknown>;
 
 export default function TimelineView() {
   const { memoryRefreshKey } = useApp();
-  const { data, status } = useLiveData(() => api.foresight({ limit: 50 }), [memoryRefreshKey]);
+  const { data, status } = useLiveData(() => api.foresight({ status: 'all', limit: 50 }), [memoryRefreshKey]);
   const rows = (data?.items as Row[] | undefined) ?? [];
+  const currentRows = rows.filter(row => ['pending', 'active'].includes(String(row.status)));
+  const historyRows = rows.filter(row => !['pending', 'active'].includes(String(row.status)));
 
   return (
     <div>
@@ -24,8 +26,19 @@ export default function TimelineView() {
         />
       ) : (
         <div className="timeline">
-          <div className="timeline-group-label">Upcoming</div>
-          {rows.map((t, i) => (
+          {currentRows.length > 0 ? <TimelineGroup label="Current" rows={currentRows} /> : null}
+          {historyRows.length > 0 ? <TimelineGroup label="History" rows={historyRows} /> : null}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TimelineGroup({ label, rows }: { label: string; rows: Row[] }) {
+  return (
+    <>
+      <div className="timeline-group-label">{label}</div>
+      {rows.map((t, i) => (
             <div key={i} className="timeline-item">
               <div className="timeline-dot" />
               <div className="timeline-item-text">
@@ -37,10 +50,8 @@ export default function TimelineView() {
                 {t.reason ? <div className="timeline-item-reason">{String(t.reason)}</div> : null}
               </div>
             </div>
-          ))}
-        </div>
-      )}
-    </div>
+      ))}
+    </>
   );
 }
 

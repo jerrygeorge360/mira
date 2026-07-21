@@ -55,6 +55,8 @@ MULTI_VALUE_PREDICATES = frozenset(
     }
 )
 
+ADDITIVE_EVENT_MARKERS = ("another ", "an additional ", "one more ")
+
 
 def detect_memory_change(
     new_fact_id: str,
@@ -329,9 +331,17 @@ def _facts_are_comparable(
     prior_fact: AtomicFactRecord,
     new_fact: AtomicFactRecord,
 ) -> bool:
+    if _states_additional_instance(new_fact):
+        return False
     if _predicate_allows_multiple_values(prior_fact) or _predicate_allows_multiple_values(new_fact):
         return _has_explicit_transition(prior_fact, new_fact)
     return _fact_comparison_key(prior_fact) == _fact_comparison_key(new_fact)
+
+
+def _states_additional_instance(fact: AtomicFactRecord) -> bool:
+    evidence_text = _fetch_observation_content(str(fact["source_observation_id"]))
+    normalized_text = _normalize(evidence_text)
+    return normalized_text.startswith(ADDITIVE_EVENT_MARKERS)
 
 
 def _has_explicit_transition(

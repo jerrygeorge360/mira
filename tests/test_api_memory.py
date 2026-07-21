@@ -86,6 +86,26 @@ def test_memory_surface_endpoints_return_items_shape(tmp_path: Any, monkeypatch:
     assert get_community_summaries(AUTH, limit=50).items == []
 
 
+def test_foresight_all_status_includes_cancelled_records(tmp_path: Any, monkeypatch: Any) -> None:
+    db_path = tmp_path / "api-foresight-history.sqlite3"
+    monkeypatch.setenv("MIRA_DB_PATH", str(db_path))
+    configure_database(db_path)
+    session_id = create_session("user_1", workspace_id=LEGACY_WORKSPACE_ID)
+    observation_id = save_observation(session_id, "user", "My deadline was cancelled.")
+    record_id = create_foresight_record(
+        {
+            "content": "The project deadline is Friday.",
+            "status": "cancelled",
+            "source_observation_id": observation_id,
+        }
+    )
+
+    response = get_foresight(AUTH, status="all", limit=50)
+
+    assert [item["id"] for item in response.items] == [record_id]
+    assert response.items[0]["status"] == "cancelled"
+
+
 def test_community_summaries_expose_overlap_review_metadata(
     tmp_path: Any, monkeypatch: Any
 ) -> None:

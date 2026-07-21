@@ -205,6 +205,54 @@ def test_ambiguous_turn_can_use_llm_purpose_classifier(
     assert calls == ["turn_purpose_classification"]
 
 
+def test_personal_temporal_update_is_acknowledged_without_retrieval(
+    database_path: Path, fake_qwen: _CapturingQwen, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new personal event is stored instead of being answered from stale memory."""
+    session_id = create_session("jerry")
+
+    def fail_retrieval(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("personal updates should not retrieve memory")
+
+    monkeypatch.setattr(agent, "retrieve_by_mode", fail_retrieval)
+    response = handle_user_message(session_id, "I have an exam tomorrow")
+
+    assert response["answer"] == "Got it. I'll remember that you have an exam tomorrow."
+    assert response["routing_decision"]["route"] == "acknowledge_and_store"
+    assert response["used_memory_items"] == []
+    assert fake_qwen.prompts == []
+
+
+def test_additional_event_followup_uses_recent_turns_without_retrieval(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A short additive follow-up creates a separate event and asks only for missing detail."""
+    session_id = create_session("jerry")
+    handle_user_message(session_id, "I have an exam tomorrow")
+    classifier_prompts: list[str] = []
+
+    def classify(messages: list[dict[str, str]], schema_name: str) -> dict[str, object]:
+        assert schema_name == "turn_purpose_classification"
+        classifier_prompts.append(messages[0]["content"])
+        return {
+            "json": {
+                "purpose": "question",
+                "reason": "Deliberately wrong verdict to exercise the additive-event guard.",
+            }
+        }
+
+    def fail_retrieval(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("additive event updates should not retrieve memory")
+
+    monkeypatch.setattr(agent, "call_qwen_json", classify)
+    monkeypatch.setattr(agent, "retrieve_by_mode", fail_retrieval)
+    response = handle_user_message(session_id, "another exam")
+
+    assert response["answer"] == "Got it. I'll treat that as a separate exam. When is it?"
+    assert response["routing_decision"]["route"] == "acknowledge_and_store"
+    assert classifier_prompts and "I have an exam tomorrow" in classifier_prompts[0]
+
+
 def test_followup_general_question_stays_general(
     database_path: Path, fake_qwen: _CapturingQwen
 ) -> None:

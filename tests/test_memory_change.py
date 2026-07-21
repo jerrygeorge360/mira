@@ -166,6 +166,37 @@ def test_distinct_project_properties_do_not_conflict(database_path: Path) -> Non
     assert changes == []
 
 
+def test_another_event_does_not_contradict_an_existing_event(database_path: Path) -> None:
+    """Explicitly additive event language must not replace an earlier event date."""
+    session_id = create_session("jerry")
+    first_observation_id = save_observation(session_id, "user", "I have an exam on July 22.")
+    second_observation_id = save_observation(
+        session_id,
+        "user",
+        "Another exam is on July 29.",
+    )
+    first_fact_id = create_atomic_fact(
+        {
+            "subject": "Jerry's exam",
+            "predicate": "OCCURS_ON",
+            "object": "2026-07-22",
+            "confidence": 0.9,
+            "source_observation_id": first_observation_id,
+        }
+    )
+    second_fact_id = create_atomic_fact(
+        {
+            "subject": "Jerry's exam",
+            "predicate": "OCCURS_ON",
+            "object": "2026-07-29",
+            "confidence": 0.9,
+            "source_observation_id": second_observation_id,
+        }
+    )
+
+    assert detect_memory_change(second_fact_id, [first_fact_id]) == []
+
+
 def test_relational_mode_can_see_both_conflicting_facts(database_path: Path) -> None:
     """Graph traversal exposes both sides of an unresolved contradiction."""
     session_id = create_session("jerry")

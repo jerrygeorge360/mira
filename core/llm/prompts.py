@@ -567,6 +567,9 @@ Rules:
 - "MIRA supports correction handling" is informational_update, not correction.
 - "Use 2026, not 2025" is correction.
 - "Actually, I prefer Rust" is correction.
+- "I have an exam tomorrow" is informational_update.
+- If the recent turns discuss an exam, "another exam" is an informational_update for a
+  separate event, not a question and not a correction.
 - When uncertain, prefer question only if the user asks for an answer or action.
 
 Non-goals:

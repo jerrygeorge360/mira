@@ -71,6 +71,24 @@ def list_foresight_read_model(
     workspace_id: str = LEGACY_WORKSPACE_ID,
 ) -> list[MemoryRecord]:
     """Return foresight records for read-only presentation."""
+    if status == "all":
+        if session_id is None:
+            return _fetch_all(
+                "SELECT * FROM foresight_records WHERE workspace_id = ? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (workspace_id, limit),
+            )
+        return _fetch_all(
+            """
+            SELECT foresight_records.*
+            FROM foresight_records
+            JOIN observations ON observations.id = foresight_records.source_observation_id
+            WHERE foresight_records.workspace_id = ? AND observations.session_id = ?
+            ORDER BY foresight_records.created_at DESC
+            LIMIT ?
+            """,
+            (workspace_id, session_id, limit),
+        )
     if status in (None, "active"):
         if session_id is None:
             return _fetch_all(

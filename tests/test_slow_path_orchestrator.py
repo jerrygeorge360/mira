@@ -15,6 +15,7 @@ import pytest
 from core.db import chroma
 from core.db.repositories import (
     configure_database,
+    create_foresight_record,
     create_session,
     enqueue_observation,
     repository_connection,
@@ -390,3 +391,142 @@ def test_agent_self_facts_keeps_only_assistant_attributed() -> None:
     assert {str(fact["object"]) for fact in kept} == {"PostgreSQL", "answers concise"}
     # The user echo and the third-party/world assertion are dropped.
     assert all(str(fact["object"]) not in {"Rust", "a database"} for fact in kept)
+
+
+def test_foresight_step_uses_session_ambient_context(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Relative dates are grounded in Sensa's session-aware clock and timezone."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "I have an exam tomorrow.")
+    captured: list[dict[str, object]] = []
+
+    def ambient(candidate_session_id: str) -> dict[str, object]:
+        assert candidate_session_id == session_id
+        return {
+            "current_date": "2026-07-21",
+            "current_time": "2026-07-21T19:00:00+01:00",
+            "timezone": "Africa/Lagos",
+        }
+
+    def detect(
+        candidate_observation_id: str,
+        content: str,
+        context: dict[str, object],
+    ) -> list[dict[str, object]]:
+        assert candidate_observation_id == observation_id
+        assert content == "I have an exam tomorrow."
+        captured.append(context)
+        return []
+
+    monkeypatch.setattr(slow_path, "build_ambient_context", ambient)
+    monkeypatch.setattr(slow_path, "detect_foresight", detect)
+
+    result = slow_path._step_foresight(
+        observation_id,
+        "I have an exam tomorrow.",
+        slow_path.SlowPathSemanticConfig(),
+    )
+
+    assert result == {"foresight_records": []}
+    assert captured == [
+        {
+            "current_date": "2026-07-21",
+            "current_time": "2026-07-21T19:00:00+01:00",
+            "timezone": "Africa/Lagos",
+        }
+    ]
+
+
+def test_foresight_reconciliation_cancels_deadline_without_detection(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Explicit withdrawal updates the existing lifecycle instead of creating foresight."""
+    session_id = create_session("jerry")
+    source_observation_id = save_observation(
+        session_id,
+        "user",
+        "My project deadline is July 30.",
+    )
+    record_id = create_foresight_record(
+        {
+            "content": "The project deadline is July 30.",
+            "reason": "The user stated a project deadline.",
+            "status": "active",
+            "source_observation_id": source_observation_id,
+        }
+    )
+    cancellation_observation_id = save_observation(
+        session_id,
+        "user",
+        "I don't have a deadline anymore.",
+    )
+
+    def fail_detection(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("cancellation should not create new foresight")
+
+    monkeypatch.setattr(slow_path, "detect_foresight", fail_detection)
+
+    result = slow_path._step_foresight_reconciliation(
+        cancellation_observation_id,
+        "I don't have a deadline anymore.",
+        {
+            "id": cancellation_observation_id,
+            "session_id": session_id,
+            "role": "user",
+            "content": "I don't have a deadline anymore.",
+        },
+        LEGACY_WORKSPACE_ID,
+    )
+
+    with repository_connection() as connection:
+        record = connection.execute(
+            "SELECT status, resolved_by FROM foresight_records WHERE id = ?",
+            (record_id,),
+        ).fetchone()
+    assert result == {"foresight_records": [record_id]}
+    assert record["status"] == "cancelled"
+    assert record["resolved_by"] == cancellation_observation_id
+
+
+def test_llm_change_verifier_rejects_an_additional_event(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An LLM verdict cannot turn explicit additive language into a conflict edge."""
+    session_id = create_session("jerry")
+    prior_observation_id = save_observation(session_id, "user", "I have an exam on July 22.")
+    new_observation_id = save_observation(session_id, "user", "Another exam is on July 29.")
+    prior_fact = {
+        "id": "prior",
+        "subject": "Jerry's exam",
+        "predicate": "OCCURS_ON",
+        "object": "2026-07-22",
+        "source_observation_id": prior_observation_id,
+    }
+    new_fact = {
+        "id": "new",
+        "subject": "Jerry's exam",
+        "predicate": "OCCURS_ON",
+        "object": "2026-07-29",
+        "source_observation_id": new_observation_id,
+    }
+
+    monkeypatch.setattr(
+        slow_path,
+        "call_qwen_json",
+        lambda *_args, **_kwargs: {
+            "json": {
+                "relations": [
+                    {
+                        "relation": "CONTRADICTS",
+                        "source_id": "prior",
+                        "target_id": "new",
+                        "confidence": 0.95,
+                        "reason": "The dates differ.",
+                    }
+                ]
+            }
+        },
+    )
+
+    assert slow_path._llm_verify_changes(new_fact, [prior_fact]) == []
