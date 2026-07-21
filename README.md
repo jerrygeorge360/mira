@@ -4,18 +4,11 @@
   <img src="docs/assets/mira-readme-banner.png" alt="MIRA - inspectable memory for AI agents" width="100%" />
 </p>
 
-MIRA is a reusable memory layer for AI agents. It turns conversations into structured,
-inspectable, cross-session memory, then retrieves only the evidence needed for the next
-answer.
+MIRA is a memory layer for AI agents. It keeps useful context across sessions, handles
+corrections without erasing history, and shows developers why a memory affected an answer.
 
 [Live demo](https://mira.ninja) · [Architecture](docs/architecture.md) ·
-[Technical report](docs/mira-paper.md) · [Documentation](docs/) · [MIT License](LICENSE)
-
-> **OpenAI Build Week eligibility boundary:** MIRA existed before Build Week began on
-> July 13, 2026. The core memory engine is the baseline. This README separately identifies
-> the work added from July 13 through July 21 so judges can evaluate only the eligible work.
-> A pull request merged on July 13 contained commits authored before the window, so it is
-> treated as baseline rather than claimed as Build Week work.
+[Technical report](docs/mira-paper.md) · [MIT License](LICENSE)
 
 ## OpenAI Build Week
 
@@ -24,501 +17,195 @@ answer.
 - **Live demo:** [mira.ninja](https://mira.ninja)
 - **Demo video:** OpenAI-specific walkthrough link pending
 
-MIRA fits Developer Tools because it gives agent developers a memory runtime and the tools
-needed to inspect it. The product exposes session state, durable facts, graph relationships,
-retrieval routes, evidence traces, worker progress, memory health, provider configuration,
-and evaluation results instead of hiding memory behind a single `remember()` call.
+MIRA existed before OpenAI Build Week began on July 13, 2026. The memory engine is the
+baseline. I am submitting the work added from July 13 through July 21: workspace isolation,
+the product frontend, better runtime inspection, provenance-aware deletion, an authenticated
+MCP service, production deployment, provider controls, and several memory-correctness fixes.
 
-The Build Week work did not replace the existing architecture. It turned that architecture
-into a safer, more inspectable product: authenticated workspaces, a live frontend, stronger
-data lifecycle rules, an OAuth-protected MCP service, production deployment, administrative
-controls, and fixes to classification and memory synthesis.
+The last pre-Build Week commit was
+[`dc33e2c`](https://github.com/jerrygeorge360/mira/commit/dc33e2ccaeac6d865b747d089c550d7e2a25c3be).
+A pull request merged on July 13 contained commits authored before the eligibility window, so
+I count that work as baseline rather than Build Week work.
+
+MIRA fits Developer Tools because it gives agent builders both a memory runtime and a way to
+inspect it. Developers can see session state, durable facts, graph relationships, retrieval
+routes, evidence traces, worker progress, memory health, provider settings, and evaluation
+results.
 
 ## The Problem
 
-Long-running agents fail in predictable ways:
+Long-running agents have a problem that a larger prompt does not solve:
 
-- The next session starts without the facts, decisions, and preferences established earlier.
-- A correction is stored beside the old value, but retrieval still returns both as if they
-  were equally current.
-- Vector similarity finds related text but does not resolve temporal validity, provenance,
-  or acknowledged change.
-- Raw transcript stuffing consumes the context window without deciding what is relevant.
-- Developers cannot tell which memory influenced an answer or why a retrieval route was
-  selected.
+- they forget decisions and preferences between sessions;
+- an old fact can keep influencing answers after the user corrects it;
+- vector similarity finds related text but does not decide which fact is current;
+- raw transcript history wastes context on irrelevant turns; and
+- developers cannot easily see why a memory was retrieved.
 
 MIRA treats the prompt as an execution buffer, not the memory store. It persists evidence,
-structures it in the background, and reconstructs a bounded prompt for each turn.
+structures it, and builds a bounded prompt from the information needed for the current turn.
 
 ## Who MIRA Is For
 
-MIRA is for developers building:
-
-- long-running AI agents and personal assistants;
-- developer copilots and research assistants;
-- customer-support and internal knowledge agents;
-- workflow agents that need durable decisions and constraints;
-- Slack agents; and
-- MCP clients that need authenticated access to user-owned memory.
+MIRA is for developers building long-running assistants, copilots, support systems, research
+tools, workflow agents, and MCP clients that need memory with provenance and user boundaries.
 
 ## What MIRA Does
 
-One user turn moves through two connected timelines:
-
 ```text
 User message
-  -> fast persistence
-  -> Session Working Set update
-  -> retrieval routing and sufficiency check
-  -> token-budgeted prompt
-  -> model answer
-  -> answer + retrieval trace persistence
+  -> persist the turn
+  -> update the Session Working Set
+  -> route and retrieve memory
+  -> check whether the evidence is sufficient
+  -> build a prompt under a token budget
+  -> generate and save the answer
+  -> save the retrieval trace
 
-Queued observation
-  -> background worker
+Background worker
   -> atomic facts and entities
   -> typed temporal graph
-  -> contradiction or supersession edges
-  -> reflection, foresight, and community summaries
-  -> durable retrieval indexes
+  -> SUPERSEDED_BY or CONTRADICTS relationships
+  -> reflection and foresight
+  -> community summaries and memory tiers
 ```
 
-The immediate path protects current-session corrections and constraints. The background path
-builds durable memory without blocking the chat turn. Retrieval later combines those layers
-through Quick, Deep, Relational, or Auto routing.
+The immediate path protects current-session goals, decisions, constraints, and corrections.
+The worker builds durable cross-session memory without making the user wait for every
+enrichment step.
+
+## Session memory vs. cross-session memory
+
+The **Session Working Set** is temporary, high-priority state for the current conversation.
+The session micro-path can apply a correction before the background worker finishes.
+
+The **cross-session slow path** confirms and structures durable memory. Corrections are
+forward-only: MIRA can stop an old value from influencing future answers without rewriting
+the historical conversation.
+
+This separation lets MIRA react quickly while keeping durable memory deliberate and traceable.
 
 ## Project Status Before Build Week
 
-The last commit before July 13 was
-[`dc33e2c`](https://github.com/jerrygeorge360/mira/commit/dc33e2ccaeac6d865b747d089c550d7e2a25c3be).
-At that point, MIRA already had:
+Before July 13, MIRA already had:
 
-- fast observation persistence and the session micro-path;
-- the Session Working Set and cross-session slow path;
-- SQLite-backed observations, atomic facts, memory tiers, reflections, foresight, and
-  community summaries;
-- ChromaDB semantic indexing and a typed SQLite-backed graph;
-- Quick, Deep, Relational, and Auto retrieval modes;
+- fast observation persistence and a Session Working Set;
+- atomic facts, a typed graph, reflection, foresight, community summaries, and memory tiers;
+- SQLite as canonical storage and ChromaDB as a rebuildable vector index;
+- Quick, Deep, Relational, and Auto retrieval;
 - correction, `SUPERSEDED_BY`, and `CONTRADICTS` semantics;
-- token-budgeted prompt construction and retrieval traces;
-- configurable OpenAI-compatible runtime providers;
-- FastAPI, Streamlit, Slack, worker, local evaluation, ablation, and benchmark code; and
-- ADRs 0001 through 0012 documenting the core architecture.
+- structured-first retrieval, one sufficiency retry, prompt construction, and answer traces;
+- configurable OpenAI-compatible model providers;
+- FastAPI, Streamlit, a worker, evaluation, ablation, and benchmark code; and
+- ADRs 0001 through 0012.
 
-The saved 13/13 local evaluation and the targeted seven-case ablation also predate Build Week.
-They are reported below as evidence for the baseline, not as newly created Build Week results.
+The saved 13/13 local evaluation and the seven-case ablation were also run before Build Week.
+I report them as baseline evidence, not as new Build Week results.
 
 ## What Changed During OpenAI Build Week
 
-### 1. Product frontend, authentication, and workspace ownership
-
-**Problem:** The memory engine existed, but the product boundary was incomplete. A developer
-could inspect local state, but browser users did not yet have a complete authenticated product
-surface, and memory ownership needed to be enforced across the full runtime.
-
-**Build Week work:** A React/TypeScript product frontend, GitHub authentication, disposable
-demo workspaces, workspace-scoped repositories, schema constraints, and ownership tests were
-added. Retrieval, graph reads, the worker, Chroma metadata, Slack bindings, and evaluation
-fixtures were updated to carry workspace identity.
-
-**Why it matters:** A memory system cannot be offered to multiple users if their facts can mix.
-Workspace identity is now a storage and retrieval boundary rather than a frontend filter.
-
-**Codex contribution:** Codex inspected the API, repository, worker, retrieval, UI, and test
-boundaries, then helped sequence and implement the auth and ownership work without replacing the
-existing memory core.
-
-**GPT-5.6 contribution:** Through Codex, GPT-5.6 was used to reason across the multi-module data
-flow, identify ownership propagation points, and review fail-closed tests.
-
-**Evidence:** [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e),
-[`api/auth.py`](api/auth.py), [`tests/test_api_auth.py`](tests/test_api_auth.py), and
-[`tests/test_workspace_ownership.py`](tests/test_workspace_ownership.py).
-
-### 2. Live memory inspection instead of static architecture claims
-
-**Problem:** The architecture could produce traces and structured records, but reviewers needed
-to see the memory lifecycle, graph, retrieval decisions, working set, reflections, communities,
-foresight, memory pressure, and evaluations in one product.
-
-**Build Week work:** Read models and API responses were expanded, and the frontend gained live
-pipeline, graph, working-set, memory-health, retrieval, community, reflection, foresight, and
-results views. The chat and graph interfaces were also made usable across desktop and mobile
-layouts.
-
-**Why it matters:** Developers can inspect what was persisted, what the worker produced, what was
-retrieved, and what evidence reached an answer. The architecture is observable in the product.
-
-**Codex contribution:** Codex traced each UI field back to an implemented read model and helped
-avoid presenting unsupported metrics as live data.
-
-**GPT-5.6 contribution:** GPT-5.6 helped compare the intended memory ontology with the actual
-SQLite records and API contracts, then identify the smallest read-model extensions needed.
-
-**Evidence:** [`ee42942`](https://github.com/jerrygeorge360/mira/commit/ee4294297600c726d3662d3289156738192cc174),
-[`core/memory/read_models.py`](core/memory/read_models.py),
-[`frontend/src/components/PipelineView.tsx`](frontend/src/components/PipelineView.tsx), and
-[`frontend/src/components/RetrievalView.tsx`](frontend/src/components/RetrievalView.tsx).
-
-### 3. Provenance-aware deletion and runtime hardening
-
-**Problem:** Deleting a conversation could hide the transcript while leaving unsupported facts,
-entities, reflections, graph edges, communities, or vectors available for later recall.
-
-**Build Week work:** Conversation deletion now removes that session from memory provenance,
-retains records that still have another valid source, deactivates unsupported derived memory,
-prunes graph lineage, removes vector entries, and resets workspace memory when the final session
-is deleted. API rate limiting and clearer chat failure handling were added in the same hardening
-pass. A later fix tightened workspace-scoped graph inspection and SQLite concurrency settings.
-
-**Why it matters:** Deletion now has memory semantics. A deleted conversation cannot remain an
-invisible source of truth, while shared memories supported elsewhere are preserved.
-
-**Codex contribution:** Codex followed deletion through observations, facts, graph records,
-reflections, communities, hot memory, Chroma pointers, and frontend state before implementing and
-testing the lifecycle.
-
-**GPT-5.6 contribution:** GPT-5.6 helped reason about provenance as a support graph rather than a
-cascade delete, including the distinction between unsupported and multiply supported records.
-
-**Evidence:** [`012d0a7`](https://github.com/jerrygeorge360/mira/commit/012d0a7283c7a9db2771613f3f8a654a59763ac8),
-[`67d1c16`](https://github.com/jerrygeorge360/mira/commit/67d1c16c95a20ad1b37c7cc3379f8cfce478922c),
-[`core/session_deletion.py`](core/session_deletion.py),
-[`tests/test_api_sessions.py`](tests/test_api_sessions.py), and
-[ADR-0014](docs/adr/0014-provenance-aware-conversation-deletion.md).
-
-### 4. OAuth-authenticated MCP service
-
-**Problem:** MIRA had Slack-oriented MCP code, but not a standalone consumer service with a
-clear workspace security boundary and standards-based authorization flow.
-
-**Build Week work:** MIRA gained a standalone Streamable HTTP MCP service, protected-resource and
-authorization-server discovery, OAuth authorization code flow with PKCE, dynamic public-client
-registration, consent, rotating refresh tokens, revocation, static-token compatibility, and
-workspace-bound tool execution. Tool descriptions were then refined to guide models on when to
-remember, search, inspect, or avoid storing content.
-
-**Why it matters:** External agents can use MIRA as memory infrastructure without receiving a
-database path or a shared master credential.
-
-**Codex contribution:** Codex helped separate the transport service from the existing Slack
-adapter, map tokens to workspaces, test cross-workspace rejection, and debug browser-client CORS
-and discovery behaviour with MCP Inspector.
-
-**GPT-5.6 contribution:** GPT-5.6 supported the OAuth and MCP threat-model review, including PKCE,
-redirect validation, token hashing, resource binding, and tool-level memory safety guidance.
-
-**Evidence:** [`9162568`](https://github.com/jerrygeorge360/mira/commit/9162568c612cdc63eee9c193e246295b6ab97bf9),
-[`42a772a`](https://github.com/jerrygeorge360/mira/commit/42a772a),
-[`81ef48e`](https://github.com/jerrygeorge360/mira/commit/81ef48e3bcc530f62a4e7fd4f1075f394deb33d2),
-[`integrations/mcp/service.py`](integrations/mcp/service.py),
-[`tests/test_mcp_oauth.py`](tests/test_mcp_oauth.py), and [ADR-0016](docs/adr/0016-authenticated-standalone-mcp-service.md).
-
-### 5. Production deployment and operational visibility
-
-**Problem:** Local services worked, but a public developer tool needs repeatable containers,
-health checks, TLS routing, deployment gating, persistent volumes, and readable logs.
-
-**Build Week work:** The API, worker, frontend, MCP service, Nginx gateway, TLS certificate flow,
-and Dozzle log viewer were composed for production. GitHub Actions now builds and publishes
-images only after CI succeeds, refreshes the server checkout, deploys a commit-addressed image,
-and recreates Nginx when its bind-mounted configuration changes. Successful health probes are
-filtered from application access logs.
-
-**Why it matters:** The live demo runs the same separated API, worker, frontend, and MCP roles
-described by the architecture, with persistent SQLite, Chroma, and model-cache volumes.
-
-**Codex contribution:** Codex reviewed the service topology, health dependencies, deployment
-failure modes, and log noise, then helped document and verify the final path.
-
-**GPT-5.6 contribution:** GPT-5.6 was used to reason about container lifecycle, stale server
-checkouts, bind-mounted Nginx configuration, and the difference between health monitoring and
-useful operational logs.
-
-**Evidence:** [`7ce97ad`](https://github.com/jerrygeorge360/mira/commit/7ce97ad),
-[`32984da`](https://github.com/jerrygeorge360/mira/commit/32984da),
-[`1fd33e2`](https://github.com/jerrygeorge360/mira/commit/1fd33e2),
-[`docker-compose.prod.yml`](docker-compose.prod.yml),
-[`.github/workflows/deploy.yml`](.github/workflows/deploy.yml), and
-[`docs/alibaba-cloud-deployment.md`](docs/alibaba-cloud-deployment.md).
-
-### 6. Turn classification, contradiction discipline, and reflection quality
-
-**Problem:** Declarative updates could be treated like questions, unrelated facts sharing a
-subject could be marked as contradictions, and reflections could be produced too eagerly or
-bubble into unrelated answers.
-
-**Build Week work:** MIRA gained an LLM-assisted turn-purpose classifier with deterministic
-shortcuts and fallback, stricter same-property contradiction pairing, local plausibility checks,
-query-aware conflict surfacing, and stronger reflection gates and synthesis rules.
-
-**Why it matters:** The model receives less irrelevant memory, complementary facts are less likely
-to contaminate each other with false conflict metadata, and declarative updates receive an
-appropriate acknowledgement rather than a context dump.
-
-**Codex contribution:** Codex traced the failure from chat input through routing, context merge,
-graph edge creation, conflict injection, and reflection synthesis; it then implemented focused
-guards and regression tests.
-
-**GPT-5.6 contribution:** GPT-5.6 helped distinguish correction, supersession, unresolved
-contradiction, complementary facts, and general statements across the affected layers.
-
-**Evidence:** [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623),
-[`core/agent.py`](core/agent.py), [`core/memory/change.py`](core/memory/change.py),
-[`core/memory/reflection.py`](core/memory/reflection.py),
-[`tests/test_memory_change.py`](tests/test_memory_change.py), and
-[`tests/test_reflection_synthesis.py`](tests/test_reflection_synthesis.py).
-
-### 7. Read-only administration and deployable evaluation evidence
-
-**Problem:** Operators could not see platform counts or switch configured providers without
-editing environment files, and the production Results page depended on generated files that were
-correctly excluded from Docker and Git.
-
-**Build Week work:** A login-allowlisted, read-only platform dashboard was added. It reports
-aggregate platform state and lets an administrator select among configured provider profiles
-without exposing provider keys. The evaluation API now prefers a fresh generated local result and
-falls back to a tracked 13/13 snapshot when generated artifacts are absent.
-
-**Why it matters:** Operators get useful visibility and provider control while the deployed demo
-retains stable, auditable evaluation evidence across rebuilds.
-
-**Codex contribution:** Codex reviewed the operator boundary, kept the dashboard read-only apart
-from the narrow provider selector, and diagnosed why gitignored evaluation files disappeared in
-production images.
-
-**GPT-5.6 contribution:** GPT-5.6 helped separate runtime secrets from provider selection and
-design the generated-result-first, published-snapshot-second fallback.
-
-**Evidence:** [`8c21c6b`](https://github.com/jerrygeorge360/mira/commit/8c21c6b),
-[`ec3c8ee`](https://github.com/jerrygeorge360/mira/commit/ec3c8eea19400e85aa495e5aaad5e10628b9814a),
-[`c621e11`](https://github.com/jerrygeorge360/mira/commit/c621e1178acdcd756a25f6dd42d85c8b82700b3e),
-[`api/routes/admin.py`](api/routes/admin.py),
-[`api/routes/evaluation.py`](api/routes/evaluation.py), and
-[`tests/test_api_evaluation.py`](tests/test_api_evaluation.py).
-
-### Build Week summary
-
-| Build Week contribution | Result | Evidence |
-| --- | --- | --- |
-| Workspace auth and product frontend | Per-user workspace boundary and live product surface | [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e) |
-| Runtime inspection | Live pipeline, graph, retrieval, health, and results views | [`ee42942`](https://github.com/jerrygeorge360/mira/commit/ee4294297600c726d3662d3289156738192cc174) |
-| Provenance-aware deletion | Unsupported derived memory is removed or disabled | [`012d0a7`](https://github.com/jerrygeorge360/mira/commit/012d0a7283c7a9db2771613f3f8a654a59763ac8) |
-| Standalone MCP + OAuth | Workspace-bound Streamable HTTP tools with PKCE | [`9162568`](https://github.com/jerrygeorge360/mira/commit/9162568c612cdc63eee9c193e246295b6ab97bf9) |
-| Production operations | CI-gated containers, TLS proxy, persistent volumes, cleaner logs | [`7ce97ad`](https://github.com/jerrygeorge360/mira/commit/7ce97ad), [`32984da`](https://github.com/jerrygeorge360/mira/commit/32984da) |
-| Memory correctness pass | Better turn purpose, contradiction pairing, and reflection gating | [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623) |
-| Admin and evaluation publication | Provider selector and stable production result snapshot | [`ec3c8ee`](https://github.com/jerrygeorge360/mira/commit/ec3c8eea19400e85aa495e5aaad5e10628b9814a), [`c621e11`](https://github.com/jerrygeorge360/mira/commit/c621e1178acdcd756a25f6dd42d85c8b82700b3e) |
+| Contribution | What changed | Why it matters | Evidence |
+| --- | --- | --- | --- |
+| Workspace ownership and product frontend | Added GitHub auth, disposable demo workspaces, scoped repositories, schema checks, and a React interface | Memory belonging to different users is separated below the UI | [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e) |
+| Runtime inspection | Added live pipeline, graph, retrieval, working-set, memory-health, community, reflection, foresight, and results views | Reviewers can see the architecture working instead of trusting a diagram | [`ee42942`](https://github.com/jerrygeorge360/mira/commit/ee4294297600c726d3662d3289156738192cc174) |
+| Provenance-aware deletion | Deleting a conversation now prunes its support from facts, entities, graph records, reflections, communities, hot memory, and vectors | Deleted conversations no longer remain as hidden sources of recall | [`012d0a7`](https://github.com/jerrygeorge360/mira/commit/012d0a7283c7a9db2771613f3f8a654a59763ac8) |
+| Workspace-scoped graph reads | Tightened graph, change-edge, working-set, and SQLite concurrency behaviour | Inspection and retrieval cannot cross workspace boundaries | [`67d1c16`](https://github.com/jerrygeorge360/mira/commit/67d1c16c95a20ad1b37c7cc3379f8cfce478922c) |
+| Authenticated MCP | Added Streamable HTTP, OAuth discovery, PKCE, consent, token rotation, revocation, and workspace-bound tools | External agents can use MIRA without direct database access or a shared master token | [`9162568`](https://github.com/jerrygeorge360/mira/commit/9162568c612cdc63eee9c193e246295b6ab97bf9) |
+| Production operations | Added production Compose services, Nginx/TLS routing, CI-gated deployment, persistent volumes, and quieter health logs | The deployed system follows the same separated API, worker, frontend, and MCP topology used locally | [`7ce97ad`](https://github.com/jerrygeorge360/mira/commit/7ce97ad), [`32984da`](https://github.com/jerrygeorge360/mira/commit/32984da) |
+| Memory correctness | Improved turn-purpose classification, contradiction pairing, conflict surfacing, and reflection gating | Declarative updates and unrelated facts are less likely to produce irrelevant or false-conflict answers | [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623) |
+| Admin and evaluation visibility | Added a read-only platform overview, provider selection, and a tracked evaluation fallback | Operators can inspect the service and production does not lose its results screen after a rebuild | [`ec3c8ee`](https://github.com/jerrygeorge360/mira/commit/ec3c8eea19400e85aa495e5aaad5e10628b9814a), [`c621e11`](https://github.com/jerrygeorge360/mira/commit/c621e1178acdcd756a25f6dd42d85c8b82700b3e) |
 
 ## How I Collaborated With Codex
 
-Codex was a development partner, not the origin of the project. I set the architecture,
-priorities, acceptance criteria, product direction, and final decisions. Codex helped me move
-through a large codebase without losing the relationship between the paper, runtime behaviour,
-tests, and product surface.
+MIRA started from my research and architecture decisions. Codex did not invent the whole
+system. I used it as an engineering partner while turning the research design into software
+that had to survive real users, Docker, provider failures, authentication, deletion, and
+background processing.
 
-| Task or decision | How Codex helped | My role and final decision | Evidence |
+The system is spread across the API, worker, SQLite, ChromaDB, graph logic, retrieval router,
+prompt builder, frontend, and evaluation harness. Codex was particularly useful for debugging
+operations across those boundaries. It helped me follow failures from a browser error or worker
+log back to the exact storage, retrieval, or model call that caused it. Examples included stale
+Chroma pointers, malformed provider JSON, false contradiction edges, reflection overproduction,
+workspace leakage risks, and memory that survived conversation deletion.
+
+It was also useful as a brainstorming partner. I gave it the research paper and asked it to
+challenge the gap between the paper and the running product. We worked through questions such as:
+
+- How does a two-speed memory architecture behave when the worker is delayed or restarted?
+- How should SQLite remain the source of truth while ChromaDB and graph projections stay
+  rebuildable?
+- What does correction provenance mean when a user deletes one of several supporting chats?
+- Which paper mechanisms deserve a visible product surface, and which should remain internal?
+- Where should deterministic checks stop and model-assisted classification begin?
+- How can MCP and workspace authentication expose memory without weakening ownership rules?
+
+I made the final decisions, selected the trade-offs, tested the behaviour, and rejected changes
+that did not match the architecture. Codex helped inspect the repository, plan small passes,
+implement selected changes, review diffs, interpret test failures, and update the documentation.
+
+| Example | Codex's role | My decision | Evidence |
 | --- | --- | --- | --- |
-| Turn the existing engine into a product | Inspected API, storage, worker, retrieval, and UI seams before proposing a sequence | I chose the workspace model, auth modes, demo boundary, and scope | [`docs/checkpoint-auth-ui.md`](docs/checkpoint-auth-ui.md), [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e) |
-| Preserve memory semantics during deletion | Traced provenance and identified derived records that survived transcript deletion | I required “retain if supported elsewhere; remove or disable if unsupported” | [`core/session_deletion.py`](core/session_deletion.py), [ADR-0014](docs/adr/0014-provenance-aware-conversation-deletion.md) |
-| Debug false contradictions and poor replies | Followed one bad classification through graph creation, retrieval, prompt construction, and later answers | I selected LLM-assisted classification with deterministic guards and query-aware bubbling | [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623) |
-| Expose MIRA through MCP | Reviewed transport, auth, workspace binding, discovery, and model-facing tool descriptions | I chose a standalone service with first-party OAuth and open public-client discovery | [`tests/test_mcp_oauth.py`](tests/test_mcp_oauth.py), [ADR-0016](docs/adr/0016-authenticated-standalone-mcp-service.md) |
-| Make mechanisms visible | Mapped frontend fields to read models and flagged unsupported claims | I chose which architecture details belong in the main UI and which remain in traces | [`ee42942`](https://github.com/jerrygeorge360/mira/commit/ee4294297600c726d3662d3289156738192cc174) |
-| Keep changes verifiable | Added or updated focused tests, interpreted CI failures, and reviewed diffs before commits | I decided when behaviour matched the intended architecture and when another pass was required | [`tests/test_workspace_ownership.py`](tests/test_workspace_ownership.py), [`tests/test_memory_change.py`](tests/test_memory_change.py) |
+| Workspace isolation | Traced ownership through storage, retrieval, worker, graph, and UI paths | Enforce workspace identity below the HTTP layer | [`tests/test_workspace_ownership.py`](tests/test_workspace_ownership.py) |
+| Conversation deletion | Found derived records that outlived their source conversation | Retain memory only when another valid source supports it | [`core/session_deletion.py`](core/session_deletion.py) |
+| False contradictions | Followed a bad classification through graph creation and later retrieval | Use model assistance with deterministic guards and same-property checks | [`tests/test_memory_change.py`](tests/test_memory_change.py) |
+| MCP access | Reviewed transport, token, redirect, and workspace boundaries | Use standalone MCP with OAuth and PKCE | [`tests/test_mcp_oauth.py`](tests/test_mcp_oauth.py) |
+| Runtime inspection | Mapped UI claims to implemented read models | Show only information the runtime can support | [`ee42942`](https://github.com/jerrygeorge360/mira/commit/ee4294297600c726d3662d3289156738192cc174) |
 
 ## How GPT-5.6 Was Used
 
-**Build-time use:** GPT-5.6 was used through Codex during Build Week. Its role was repository-scale
-reasoning: connecting behaviour across the API, worker, storage, retrieval, prompt, frontend, and
-test layers; comparing implementation choices with MIRA's ADRs; investigating evaluation and
-runtime failures; reviewing patches; and improving source-grounded documentation.
+I used GPT-5.6 through Codex at build time for repository-wide reasoning, debugging, design
+trade-offs, patch review, tests, and documentation grounded in the code and research paper.
 
-Specific uses included:
-
-- finding every workspace propagation point before changing data ownership;
-- separating deletion of a conversation from invalidation of memories derived from it;
-- distinguishing supersession from unresolved contradiction;
-- designing the MCP OAuth boundary and its failure tests;
-- tracing irrelevant chat answers back to classification, retrieval, and synthesis; and
-- checking that UI explanations matched implemented read models.
-
-**Runtime use:** MIRA does not claim GPT-5.6 as its deployed inference model. Runtime generation is
-handled by MIRA's configurable OpenAI-compatible provider adapter. The repository includes
-profiles for DashScope/Qwen, DeepSeek, Gemini, and SiliconFlow. Provider capabilities determine
-whether structured calls use JSON Schema or JSON object mode.
+MIRA does **not** claim GPT-5.6 as its deployed runtime model. Runtime generation goes through a
+configurable OpenAI-compatible adapter with profiles for DashScope/Qwen, DeepSeek, Gemini, and
+SiliconFlow.
 
 ## Key Product and Engineering Decisions
 
 | Decision | Reason | Evidence |
 | --- | --- | --- |
-| Session Working Set is separate from durable memory | Immediate corrections need prompt priority before background consolidation | [ADR-0001](docs/adr/0001-session-working-set.md), [ADR-0006](docs/adr/0006-session-micro-path-slow-path.md) |
-| SQLite is canonical; ChromaDB is rebuildable | Semantic indexing must not become an untraceable second source of truth | [ADR-0003](docs/adr/0003-sqlite-source-of-truth.md) |
-| One typed graph | Facts, entities, evidence, changes, reflections, communities, and foresight need shared provenance | [ADR-0002](docs/adr/0002-single-typed-graph.md) |
-| Supersession differs from contradiction | Acknowledged change should select a current value; unresolved conflict should preserve uncertainty | [ADR-0012](docs/adr/0012-hybrid-contradiction-supersession-detection.md) |
-| Deterministic validation with model escalation | Clear cases stay predictable; ambiguous semantic cases can use a schema-validated model decision | [ADR-0012](docs/adr/0012-hybrid-contradiction-supersession-detection.md), [ADR-0015](docs/adr/0015-provider-profiles-and-structured-output.md) |
-| Structured-first retrieval | Validated facts and graph records should outrank raw transcript fragments when both match | [ADR-0011](docs/adr/0011-structured-first-retrieval-weighting.md) |
-| One focused sufficiency retry | Retrieval can repair one weak query without entering an open-ended loop | [`core/retrieval/sufficiency.py`](core/retrieval/sufficiency.py) |
-| Retrieval traces are part of correctness | A plausible answer is not enough if the intended mechanism did not run | [`core/memory/trace.py`](core/memory/trace.py), [`evaluation/local/cases.py`](evaluation/local/cases.py) |
-| Workspace ownership is enforced below the UI | Filtering after retrieval is too late for multi-user memory | [ADR-0013](docs/adr/0013-workspace-bound-data-ownership.md) |
+| Session Working Set and durable memory are separate | Immediate corrections should not wait for consolidation | [ADR-0001](docs/adr/0001-session-working-set.md), [ADR-0006](docs/adr/0006-session-micro-path-slow-path.md) |
+| SQLite is canonical; ChromaDB is rebuildable | The semantic index must not become a second source of truth | [ADR-0003](docs/adr/0003-sqlite-source-of-truth.md) |
+| One typed graph | Facts, entities, evidence, changes, and synthesis need shared provenance | [ADR-0002](docs/adr/0002-single-typed-graph.md) |
+| Supersession differs from contradiction | A confirmed change is not the same as an unresolved conflict | [ADR-0012](docs/adr/0012-hybrid-contradiction-supersession-detection.md) |
+| Structured-first retrieval | Validated records should outrank matching raw transcript fragments | [ADR-0011](docs/adr/0011-structured-first-retrieval-weighting.md) |
+| One sufficiency retry | Retrieval can repair a weak query without entering a loop | [`core/retrieval/sufficiency.py`](core/retrieval/sufficiency.py) |
+| Traces are part of correctness | A plausible answer is not enough if the intended mechanism did not run | [`core/memory/trace.py`](core/memory/trace.py) |
+| Workspace ownership is enforced before ranking | Filtering after retrieval is too late | [ADR-0013](docs/adr/0013-workspace-bound-data-ownership.md) |
 
 ## Demo
 
-### Live Demo
+### Live demo
 
 [https://mira.ninja](https://mira.ninja)
 
-Any credentials needed by judges are provided privately in the Devpost testing field, never in
-this repository.
+Any judge credentials are provided privately in the Devpost testing field.
 
-### Suggested Test
+### Suggested test
 
 1. Start a conversation.
 2. Enter: `My project database is MongoDB.`
 3. Enter: `Correction: we migrated to PostgreSQL.`
 4. Ask: `Which database does my project currently use?`
 5. Inspect the retrieval trace and graph relationship.
-6. Open a separate session in the same workspace.
+6. Open another session in the same workspace.
 7. Ask the database question again.
 
-### Expected Result
-
-MIRA should answer PostgreSQL, apply the correction immediately in the Session Working Set,
-preserve MongoDB as historical evidence, create durable change semantics in the background,
-retrieve the current value in the new session, and show which records influenced the answer.
-
-The worker is asynchronous. If the cross-session question is asked immediately, wait for the
-pipeline view to show that the observation has completed durable processing.
-
-## Core Features
-
-### Memory lifecycle
-
-- Fast persistence of every completed turn.
-- Session Working Set for goals, corrections, decisions, constraints, and open questions.
-- Cross-session slow path for atomic facts, entities, graph edges, reflection, foresight,
-  community summaries, and hot-memory promotion.
-- Provenance-aware conversation deletion and workspace reset.
-
-### Retrieval
-
-- Quick retrieval for focused fact lookup.
-- Deep retrieval for reflection and community-backed synthesis.
-- Relational retrieval for bounded graph traversal.
-- Auto routing with deterministic and LLM-assisted classification.
-- Exactly one sufficiency retry when evidence is incomplete.
-- Structured-first ranking and a configurable token budget.
-
-### Explainability
-
-- Answer-level retrieval traces.
-- Source observations and graph evidence lineage.
-- Visible `SUPERSEDED_BY` and `CONTRADICTS` relationships.
-- Working-set, pipeline, memory-health, reflection, foresight, and community read models.
-
-### Evaluation
-
-- Scripted local behavioural cases.
-- Mechanism-level checks, not only answer-text matching.
-- Component ablations and simple memory baselines.
-- LongMemEval-compatible benchmark runner with budget, resume, cache, and parallel options.
-
-### Developer integrations
-
-- FastAPI backend.
-- React/TypeScript web application.
-- Streamlit inspection UI.
-- Slack bot.
-- OAuth-authenticated MCP service.
-- Provider profiles for DashScope/Qwen, DeepSeek, Gemini, and SiliconFlow.
-
-### Production-minded infrastructure
-
-- Separate API, worker, MCP, frontend, proxy, and log-viewer containers.
-- Persistent SQLite, ChromaDB, and local embedding model-cache volumes.
-- GitHub Actions CI and CI-gated production deployment.
-- GitHub OAuth, disposable demo workspaces, rate limiting, and read-only platform overview.
-
-## Architecture flow
-
-SQLite is the source of truth. ChromaDB is a rebuildable vector index whose records point back to
-SQLite IDs. The typed graph is also persisted in SQLite. NetworkX and igraph are read-only,
-in-process projections used for algorithms and community detection.
-
-<p align="center">
-  <img src="docs/assets/mira-c4-achitecturaldiagram.png" alt="MIRA C4 architecture diagram" width="100%" />
-</p>
-
-```text
-React frontend / Streamlit / Slack / MCP client
-                     |
-              FastAPI or MCP service
-                     |
-               core/agent.py
-          +----------+-----------+
-          |                      |
-  Session Working Set      retrieval router
-          |             Quick / Deep / Relational
-          +----------+-----------+
-                     |
-       context merge + token-budgeted prompt
-                     |
-       configurable runtime model provider
-                     |
-       answer + citations + retrieval trace
-
-Background worker
-  -> atomic facts -> typed graph -> reflection / foresight / communities -> tiers
-
-Canonical store: SQLite
-Rebuildable semantic index: ChromaDB
-Graph projections: NetworkX and igraph
-```
-
-Key modules:
-
-```text
-core/agent.py          turn orchestration
-core/session/          Session Working Set and session micro-path
-core/memory/           slow path, facts, graph, reflection, foresight, tiers
-core/retrieval/        routing, retrieval modes, sufficiency retry
-core/context/          context merge, prompt construction, token budget
-core/llm/              provider profiles, structured output, embeddings
-core/db/               SQLite schema/repositories and ChromaDB adapter
-api/                   FastAPI, auth, OAuth, admin and read APIs
-integrations/mcp/      standalone MCP service
-frontend/              React product interface
-evaluation/            local cases, ablation and benchmark harnesses
-```
-
-See [the implementation architecture](docs/architecture.md) for the full runtime path.
-
-## Session memory vs. cross-session memory
-
-The **Session Working Set** is temporary, high-priority state for the current conversation. It
-can apply a correction before any background model call finishes. It expires with session policy
-and is not another durable memory tier.
-
-The **cross-session slow path** turns queued observations into validated durable structures. Only
-confirmed project or cross-session items are candidates for promotion. Corrections are
-forward-only: MIRA can stop an old value from influencing future answers, but it does not rewrite
-the historical turn.
-
-This split is why a correction can affect the next answer immediately while still gaining durable
-facts, provenance, graph edges, reflection, and retrieval indexes later.
+MIRA should answer PostgreSQL, preserve MongoDB as historical evidence, retrieve the current
+fact in the new session, and show the records that influenced the answer. The worker is
+asynchronous, so wait for the pipeline view to show durable processing before testing the new
+session.
 
 ## Setup
 
-### Prerequisites
-
-- Python 3.11
-- Docker with Docker Compose for the recommended path
-- Node.js 18+ and npm for native frontend development
-- An API key for one configured chat provider
-- Internet access on first use if FastEmbed needs to download its local model
-
 ### Docker local development
 
-Docker is the shortest path because it starts the API, background worker, and frontend with the
-same persistent paths.
+Docker is the recommended way to run MIRA. It starts the API, worker, and frontend with persistent
+storage and a shared embedding-model cache.
+
+Requirements: Docker and Docker Compose, an API key for one configured provider, and internet
+access for the first image build and local embedding-model download.
 
 ```bash
 git clone https://github.com/jerrygeorge360/mira.git
@@ -526,7 +213,7 @@ cd mira
 cp .env.example .env
 ```
 
-Edit `.env` and set at least:
+Set the local auth mode, provider, and embedding mode in `.env`:
 
 ```env
 MIRA_AUTH_MODE=development
@@ -541,44 +228,78 @@ LOCAL_EMBEDDING_MODEL=BAAI/bge-small-en-v1.5
 EMBEDDING_FALLBACK=error
 ```
 
-Then run:
+Build and start the product:
 
 ```bash
 docker compose build
 docker compose up api worker frontend
 ```
 
-Open [http://localhost:5173](http://localhost:5173). Verify the API:
+Open [http://localhost:5173](http://localhost:5173), then verify the API:
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-Persistent development data is stored in:
+Persistent data is stored in:
 
 - `.docker-data/sqlite/mira.db`
 - `.docker-data/chroma`
 - `.docker-data/model-cache`
 
-To use alternate host ports:
+Use alternate host ports when the defaults are occupied:
 
 ```bash
 API_PORT=18000 FRONTEND_PORT=15173 docker compose up api worker frontend
 ```
 
-The first local embedding request may take longer while FastEmbed downloads its model. The model
-cache volume prevents that download on every container restart.
+The first semantic request can be slow while FastEmbed downloads its model. The model-cache
+volume prevents that download on every restart.
 
-### Native installation
+### Docker logs and inspection
+
+```bash
+docker compose logs -f api worker frontend
+```
+
+Start the log viewer separately and open [http://localhost:8080](http://localhost:8080):
+
+```bash
+docker compose up logs
+```
+
+Useful checks from another terminal:
+
+```bash
+docker compose ps
+docker compose exec api python -m scripts.check_provider --require-live-embeddings
+docker compose exec worker python -m scripts.slow_path_status \
+  --workspace-id workspace_legacy_default
+```
+
+### Common Docker problems
+
+- **No durable memory appears:** confirm the `worker` container is running and inspect its logs.
+- **The provider rejects a request:** check that `LLM_PROFILE` matches the configured API key.
+- **The first query takes time:** FastEmbed may still be downloading the local embedding model.
+- **The frontend cannot reach the API:** check the API health endpoint and Compose ports.
+- **ChromaDB reports a stale internal ID:** rebuild the disposable index from SQLite with
+  `REBUILD=1 WORKSPACE_ID=workspace_legacy_default QUERY="health check" make memory-search`.
+
+### Native development
+
+Python 3.11 and Node.js 18+ are expected.
 
 ```bash
 python3.11 -m venv .venv
 source .venv/bin/activate
 make install
 cp .env.example .env
+make frontend-install
+make check
 ```
 
-Load the environment into the current terminal:
+Load `.env` before starting native processes:
 
 ```bash
 set -a
@@ -586,263 +307,201 @@ source .env
 set +a
 ```
 
-Install frontend dependencies:
-
-```bash
-make frontend-install
-```
-
-Check the provider before starting a live chat:
-
-```bash
-make provider-check
-```
-
-### Common setup failures
-
-- **Provider check reports a missing key:** set the key matching `LLM_PROFILE`.
-- **Durable memory does not appear:** the worker is a separate process; start `make worker` or the
-  Compose `worker` service.
-- **The first semantic query is slow:** FastEmbed is downloading the configured local model.
-- **GitHub login redirects incorrectly:** set `GITHUB_CALLBACK_URL`, `APP_BASE_URL`, and the same
-  callback URL in the GitHub OAuth app. Local HTTP also requires `COOKIE_SECURE=false`.
-- **The browser cannot call the API:** verify `VITE_API_URL` and `MIRA_API_CORS_ORIGINS`.
-- **A rebuilt Chroma index is needed:** run `REBUILD=1 WORKSPACE_ID=<workspace> QUERY="health check" make memory-search`.
-
 ## Running Locally
 
-MIRA needs three processes for the main product:
-
-1. **API** handles authentication, chat, retrieval reads, traces, and product endpoints.
-2. **Worker** converts queued observations into durable memory.
-3. **Frontend** serves the browser application.
-
-Run each in a separate terminal after loading `.env`:
+MIRA's main product uses three processes:
 
 ```bash
-make api
+make api           # FastAPI on :8000
+make worker        # durable memory processing
+make frontend-dev  # Vite on :5173
 ```
 
-```bash
-make worker
-```
-
-```bash
-make frontend-dev
-```
-
-Optional services:
+Run each command in a separate terminal. The MCP service and Streamlit inspector are optional:
 
 ```bash
 make mcp
-make slack
-make run       # Streamlit inspection UI
-```
-
-For readable Docker logs:
-
-```bash
-docker compose logs -f api worker frontend mcp
-```
-
-Or start the Dozzle viewer and open [http://localhost:8080](http://localhost:8080):
-
-```bash
-docker compose up logs
+make run
 ```
 
 ## Makefile commands
 
 | Command | Purpose |
 | --- | --- |
-| `make install` | Install production and development Python dependencies |
-| `make api` | Start FastAPI on port 8000 |
-| `make worker` | Start the cross-session slow-path worker |
-| `make frontend-install` | Install frontend packages |
-| `make frontend-dev` | Start Vite on port 5173 |
-| `make mcp` | Start the standalone MCP service on port 8090 |
-| `make provider-check` | Verify chat and embedding configuration |
-| `make graph-inspect` | Print a workspace-scoped graph snapshot |
-| `make memory-search` | Test embedding and vector retrieval pointer health |
-| `make slow-path-status` | Inspect queue failures and durable artifact counts |
-| `make local-eval` | Run the local memory cases |
+| `make install` | Install Python dependencies |
+| `make api` | Start FastAPI |
+| `make worker` | Start durable memory processing |
+| `make frontend-dev` | Start the browser application |
+| `make mcp` | Start the standalone MCP service |
+| `make provider-check` | Check chat and embedding providers |
+| `make slow-path-status` | Inspect queue and artifact health |
+| `make graph-inspect` | Print a workspace graph snapshot |
+| `make memory-search` | Test embedding and vector pointer health |
+| `make local-eval` | Run local behavioural cases |
 | `make ablation-live` | Run live component ablations |
-| `make benchmark` | Run the LongMemEval-compatible benchmark harness |
-| `make check` | Run Ruff, mypy, Bandit, and Python tests |
+| `make benchmark` | Run the LongMemEval-compatible harness |
+| `make check` | Run lint, typing, security checks, and tests |
+
+## Architecture flow
+
+SQLite is the source of truth. ChromaDB is a rebuildable index that points back to SQLite
+records. The typed graph is persisted in SQLite. NetworkX and igraph are read-only in-process
+views used for algorithms and community detection.
+
+<p align="center">
+  <img src="docs/assets/mira-c4-achitecturaldiagram.png" alt="MIRA C4 architecture diagram" width="100%" />
+</p>
+
+```text
+Frontend / Streamlit / MCP client
+              |
+       FastAPI or MCP service
+              |
+         core/agent.py
+      +-------+--------+
+      |                |
+Session Working Set  retrieval router
+      |         Quick / Deep / Relational
+      +-------+--------+
+              |
+  context merge + token budget
+              |
+ configurable runtime provider
+              |
+  answer + retrieval trace
+
+Background worker
+  -> facts -> graph -> reflection / foresight / communities -> tiers
+
+SQLite: canonical records
+ChromaDB: semantic index
+NetworkX / igraph: algorithm views
+```
+
+See [docs/architecture.md](docs/architecture.md) for the full implementation path.
+
+## Core Features
+
+- Session Working Set for current goals, corrections, constraints, decisions, and questions.
+- Durable facts, graph edges, reflection, foresight, community summaries, and memory tiers.
+- Quick, Deep, Relational, and Auto retrieval with structured-first ranking.
+- Prompt construction under a token budget and one focused sufficiency retry.
+- Retrieval traces, graph provenance, pipeline status, and memory-health read models.
+- Workspace-scoped storage, retrieval, worker processing, and conversation deletion.
+- FastAPI, React, Streamlit, MCP, Docker, authentication, and evaluation tools.
+- Provider profiles for DashScope/Qwen, DeepSeek, Gemini, and SiliconFlow.
+- ambient runtime context that can influence a prompt without becoming durable memory.
 
 ## Supported Platforms
 
-Verified project paths:
-
-- Linux with Python 3.11;
-- Docker-compatible Linux environments using Docker Compose; and
-- the deployed browser application in a modern Chromium-based browser.
-
-The code may run on macOS or Windows through Python and Docker, but those platforms are not
-claimed as verified in this repository.
+The verified path is Linux with Python 3.11, Docker Compose, and a modern Chromium-based browser.
+macOS and Windows may work through Python or Docker, but this repository does not claim them as
+tested platforms.
 
 ## Sample Data and Reproducible Scenarios
 
-The judge scenario above can also be reproduced through the local product. For broader regression
-coverage, see:
-
-- [`evaluation/local/memory_cases.json`](evaluation/local/memory_cases.json) for behavioural
-  conversations and mechanism expectations;
-- [`evaluation/ablation/ablation_cases.json`](evaluation/ablation/ablation_cases.json) for focused
-  component cases; and
+- [`evaluation/local/memory_cases.json`](evaluation/local/memory_cases.json) contains behavioural
+  conversations and mechanism expectations.
+- [`evaluation/ablation/ablation_cases.json`](evaluation/ablation/ablation_cases.json) contains
+  focused component cases.
 - [`evaluation/benchmarks/sample_longmemeval.json`](evaluation/benchmarks/sample_longmemeval.json)
-  for the small LongMemEval-format sample.
-
-Inspect the system while running a scenario:
-
-```bash
-WORKSPACE_ID=workspace_legacy_default make slow-path-status
-WORKSPACE_ID=workspace_legacy_default ENTITY=PostgreSQL make graph-inspect
-WORKSPACE_ID=workspace_legacy_default QUERY="which database do I use now?" make memory-search
-```
+  is a small LongMemEval-format sample.
 
 ## Evaluation
 
-MIRA's evaluations check mechanisms as well as answers. Cases can assert the retrieval route,
-retrieved source type, Session Working Set use, slow-path edge creation, or top-ranked source.
-This catches a system that says the right thing for the wrong architectural reason.
+MIRA's local cases check mechanisms as well as answer text. They can require a retrieval mode,
+source type, Session Working Set item, graph edge, or top-ranked record. This catches an answer
+that sounds correct even when the intended memory mechanism did not run.
 
-| Evaluation | Saved result | Evidence | Interpretation |
-| --- | ---: | --- | --- |
-| Local behavioural suite | 13/13 | [`evaluation/local/published_summary.json`](evaluation/local/published_summary.json) | All 13 saved behaviours passed in the July 12 run |
-| Targeted ablation, full system | 7/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) | Full system passed the seven focused component cases |
-| Vector-only baseline | 2/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) | Quick/vector retrieval alone missed higher-layer behaviours |
-| Full-transcript baseline | 1/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) | Raw transcript alone passed only direct fact recall |
-| LongMemEval official-protocol subset | 5 examples, 0.4 LLM-judge pass rate | [`docs/evaluation-story.md`](docs/evaluation-story.md) | Harness is wired, but this subset is not a full benchmark result |
+| Evaluation | Result | Evidence |
+| --- | ---: | --- |
+| Local behavioural suite | 13/13 | [`evaluation/local/published_summary.json`](evaluation/local/published_summary.json) |
+| Targeted ablation, full system | 7/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) |
+| Vector-only baseline | 2/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) |
+| Full-transcript baseline | 1/7 | [`docs/evaluation-story.md`](docs/evaluation-story.md) |
+| LongMemEval subset | 5 examples, 0.4 LLM-judge pass rate | [`docs/evaluation-story.md`](docs/evaluation-story.md) |
 
-Important limitations:
-
-- The local 13/13 result was generated on July 12, before Build Week. Build Week added the tracked
-  production fallback for that result; it did not create the result itself.
-- The ablation set has seven cases, so each case changes a rate by about 0.14. It shows direction
-  and whether a layer is active, not statistical certainty.
-- The LongMemEval run covers only five temporal-reasoning examples. No full-scale benchmark claim
-  is made.
-- Generated local and benchmark artifacts are gitignored. The repository tracks only the stable
-  local snapshot and written evaluation account.
-
-Run the local suite:
+These numbers have limits. The local and ablation runs were completed before Build Week. The
+ablation has seven focused cases, and the LongMemEval result is only a five-example subset. They
+are useful evidence that the mechanisms run, not a claim of broad statistical performance.
 
 ```bash
 make local-eval
-```
 
-Run the live suite with the slow path:
-
-```bash
 python -m scripts.run_local_eval \
   --cases evaluation/local/memory_cases.json \
   --live \
   --run-slow-path
-```
 
-Run the targeted live ablation:
-
-```bash
-RUN_SLOW_PATH=1 PARALLEL=2 LIMIT=1 OUT=tmp/evaluation/results make ablation-live
+RUN_SLOW_PATH=1 PARALLEL=2 LIMIT=1 \
+OUT=tmp/evaluation/results make ablation-live
 ```
 
 ## What Makes MIRA Different
 
-MIRA is not saved chat history, vector search over transcripts, an ever-growing prompt, or a thin
-chatbot wrapper.
-
-Its core differences are:
-
-- two operational timelines: immediate session continuity and asynchronous durable memory;
-- explicit temporal relationships for corrections, supersession, and unresolved contradiction;
-- retrieval routing based on the kind of question being asked;
-- a prompt built under budget from current state and selected evidence;
-- provenance from derived memory back to source observations;
-- workspace-scoped storage and retrieval;
-- inspection of the mechanisms behind each answer; and
-- evaluation cases that fail when the intended mechanism does not run.
+MIRA is not saved chat history, vector search over transcripts, or an ever-growing prompt. It
+combines immediate session memory with durable structured memory, preserves correction history,
+routes different questions through different retrieval modes, tracks provenance, budgets prompt
+context, and makes those choices visible.
 
 ## Implementation status
 
-The main memory loop is implemented end to end: persistence, Session Working Set, queued slow
-path, structured durable memory, vector and graph retrieval, prompt construction, provider calls,
-answer persistence, and traces. The product includes FastAPI, React, Streamlit, Slack, MCP,
-Docker, authentication, workspace ownership, and local evaluation tooling.
+The full memory loop is implemented: persistence, Session Working Set, queued slow path, durable
+facts and graph records, retrieval, prompt construction, provider calls, answer persistence, and
+traces. The product also includes authentication, workspace ownership, conversation deletion,
+MCP, Docker, and evaluation tools.
 
-MIRA is a production-minded prototype, not a distributed memory service. Its current boundaries
-are documented below.
-
-## Known Limitations
-
-- The production topology is single-server; distributed storage and queues are not implemented.
-- API rate limiting is in-process and does not coordinate across replicas.
-- SQLite is appropriate for the current topology but would need an explicit migration plan for
-  multi-node writes.
-- Some memory extraction and classification stages require provider credentials and inherit
-  provider latency or structured-output limitations.
-- The full LongMemEval benchmark has not been completed.
-- The ablation suite is intentionally small and directional.
-- Slack, GitHub OAuth, MCP OAuth clients, and public TLS require external configuration.
-- Runtime model streaming is not claimed here; provider calls currently return complete answers.
+MIRA is still a single-server prototype. It uses SQLite, an in-process rate limiter, and a local
+worker queue. Distributed storage, distributed queues, and a complete LongMemEval run are not yet
+implemented. Provider-backed stages still depend on provider latency and structured-output
+behaviour.
 
 ## Build Week Evidence
 
-| Evidence type | Link | What it demonstrates |
-| --- | --- | --- |
-| Baseline commit | [`dc33e2c`](https://github.com/jerrygeorge360/mira/commit/dc33e2ccaeac6d865b747d089c550d7e2a25c3be) | Last commit before July 13; establishes the pre-existing core |
-| Commit | [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e) | Workspace auth, product frontend, and ownership propagation |
-| Commit | [`012d0a7`](https://github.com/jerrygeorge360/mira/commit/012d0a7283c7a9db2771613f3f8a654a59763ac8) | Provenance-aware deletion and runtime hardening |
-| Commit | [`9162568`](https://github.com/jerrygeorge360/mira/commit/9162568c612cdc63eee9c193e246295b6ab97bf9) | Standalone OAuth-authenticated MCP service |
-| Commit | [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623) | Classification, contradiction, and synthesis correctness pass |
-| Test | [`tests/test_workspace_ownership.py`](tests/test_workspace_ownership.py) | Storage, graph, retrieval, and worker isolation |
-| Test | [`tests/test_api_sessions.py`](tests/test_api_sessions.py) | Deletion provenance and unsupported-memory cleanup |
-| Test | [`tests/test_mcp_oauth.py`](tests/test_mcp_oauth.py) | PKCE, token rotation, revocation, discovery, and workspace binding |
-| ADR | [`docs/adr/0013-workspace-bound-data-ownership.md`](docs/adr/0013-workspace-bound-data-ownership.md) | Build Week ownership boundary decision |
-| ADR | [`docs/adr/0016-authenticated-standalone-mcp-service.md`](docs/adr/0016-authenticated-standalone-mcp-service.md) | Build Week MCP deployment and auth decision |
-| Evaluation output | [`evaluation/local/published_summary.json`](evaluation/local/published_summary.json) | Tracked 13/13 baseline behaviour snapshot published during Build Week |
-| Documentation | [`docs/alibaba-cloud-deployment.md`](docs/alibaba-cloud-deployment.md) | Production topology and deployment evidence |
-| Codex workflow evidence | [`docs/checkpoint-auth-ui.md`](docs/checkpoint-auth-ui.md) | Safe, repository-level account of Codex-assisted auth and product work |
+| Evidence | What it shows |
+| --- | --- |
+| [`dc33e2c`](https://github.com/jerrygeorge360/mira/commit/dc33e2ccaeac6d865b747d089c550d7e2a25c3be) | Last pre-Build Week baseline commit |
+| [`f31e026`](https://github.com/jerrygeorge360/mira/commit/f31e0265c7b5d5ff59865f118bb4a55b676a538e) | Product frontend, auth, and workspace ownership |
+| [`012d0a7`](https://github.com/jerrygeorge360/mira/commit/012d0a7283c7a9db2771613f3f8a654a59763ac8) | Provenance-aware deletion and runtime hardening |
+| [`9162568`](https://github.com/jerrygeorge360/mira/commit/9162568c612cdc63eee9c193e246295b6ab97bf9) | Authenticated standalone MCP service |
+| [`cb8c6f1`](https://github.com/jerrygeorge360/mira/commit/cb8c6f1a0eec7fb237ecb9374455410723792623) | Turn classification and memory-synthesis fixes |
+| [`tests/test_workspace_ownership.py`](tests/test_workspace_ownership.py) | Cross-workspace isolation tests |
+| [`tests/test_api_sessions.py`](tests/test_api_sessions.py) | Deletion and provenance tests |
+| [`tests/test_mcp_oauth.py`](tests/test_mcp_oauth.py) | OAuth, PKCE, token, and workspace tests |
+| [ADR-0013](docs/adr/0013-workspace-bound-data-ownership.md) | Workspace ownership decision |
+| [ADR-0016](docs/adr/0016-authenticated-standalone-mcp-service.md) | MCP service and authentication decision |
+| [`docs/alibaba-cloud-deployment.md`](docs/alibaba-cloud-deployment.md) | Production topology and deployment evidence |
+| [`docs/checkpoint-auth-ui.md`](docs/checkpoint-auth-ui.md) | Repository-level record of Codex-assisted product work |
 
-Private Codex transcripts and session identifiers are intentionally not published.
+Private Codex transcripts and session identifiers are not published.
 
 ## Team ownership
 
-- **Jerry George** designed MIRA's architecture and leads the memory runtime, session and durable
-  memory model, retrieval, prompt construction, evaluations, product direction, LLM integration,
-  and Build Week correctness and product work.
-- **Kelechi (deltron-fr)** contributed the fast observation path, ChromaDB wrapper, structured JSON
-  repair, response evidence logging, Slack integration, and Build Week production infrastructure,
-  deployment workflow, Nginx/TLS routing, and log access controls.
-
-Git history is the source for contribution attribution. No contributor is credited with work that
-the repository does not support.
+- **Jerry George:** architecture, memory runtime, retrieval, prompt construction, evaluation,
+  model integration, product direction, and Build Week product and correctness work.
+- **Kelechi (deltron-fr):** fast observation path, ChromaDB wrapper, structured JSON repair,
+  response evidence logging, database work, and production infrastructure including deployment,
+  Nginx, TLS, and log access controls.
 
 ## Architecture decision records
 
-- [ADR-0001: Session Working Set is Separate from Durable Hot Memory](docs/adr/0001-session-working-set.md)
-- [ADR-0002: Single Typed Graph Instead of Disconnected Graph Stores](docs/adr/0002-single-typed-graph.md)
-- [ADR-0003: SQLite Source of Truth and ChromaDB Vector Index](docs/adr/0003-sqlite-source-of-truth.md)
-- [ADR-0004: Quick, Deep, Relational, and Auto Retrieval Modes](docs/adr/0004-retrieval-modes.md)
-- [ADR-0005: Provisional vs Confirmed Memory](docs/adr/0005-provisional-confirmed-memory.md)
-- [ADR-0006: Session Micro-Path vs Cross-Session Slow Path](docs/adr/0006-session-micro-path-slow-path.md)
-- [ADR-0007: Prompt Builder as Integration Point](docs/adr/0007-prompt-builder-integration-point.md)
-- [ADR-0008: Foresight Lifecycle](docs/adr/0008-foresight-lifecycle.md)
-- [ADR-0009: Reflection Staleness Through Evidence Invalidation](docs/adr/0009-reflection-staleness-evidence-invalidation.md)
-- [ADR-0010: Ambient Context Is a Prompt Signal, Not a Memory Store](docs/adr/0010-ambient-context-prompt-signal.md)
-- [ADR-0011: Structured-First Retrieval Weighting](docs/adr/0011-structured-first-retrieval-weighting.md)
-- [ADR-0012: Hybrid Contradiction and Supersession Detection](docs/adr/0012-hybrid-contradiction-supersession-detection.md)
-- [ADR-0013: Workspace-Bound Data Ownership](docs/adr/0013-workspace-bound-data-ownership.md)
-- [ADR-0014: Provenance-Aware Conversation Deletion](docs/adr/0014-provenance-aware-conversation-deletion.md)
-- [ADR-0015: Provider Profiles and Capability-Aware Structured Output](docs/adr/0015-provider-profiles-and-structured-output.md)
-- [ADR-0016: Authenticated Standalone MCP Service](docs/adr/0016-authenticated-standalone-mcp-service.md)
+- [ADR-0001: Session Working Set](docs/adr/0001-session-working-set.md)
+- [ADR-0002: Single Typed Graph](docs/adr/0002-single-typed-graph.md)
+- [ADR-0003: SQLite Source of Truth](docs/adr/0003-sqlite-source-of-truth.md)
+- [ADR-0004: Retrieval Modes](docs/adr/0004-retrieval-modes.md)
+- [ADR-0006: Session Micro-Path and Slow Path](docs/adr/0006-session-micro-path-slow-path.md)
+- [ADR-0011: Structured-First Retrieval](docs/adr/0011-structured-first-retrieval-weighting.md)
+- [ADR-0012: Contradiction and Supersession](docs/adr/0012-hybrid-contradiction-supersession-detection.md)
+- [ADR-0013: Workspace Ownership](docs/adr/0013-workspace-bound-data-ownership.md)
+- [ADR-0014: Provenance-Aware Deletion](docs/adr/0014-provenance-aware-conversation-deletion.md)
+- [ADR-0015: Provider Profiles and Structured Output](docs/adr/0015-provider-profiles-and-structured-output.md)
+- [ADR-0016: Authenticated MCP Service](docs/adr/0016-authenticated-standalone-mcp-service.md)
 
 ## Roadmap
 
-- Complete a larger LongMemEval run and publish reproducible result artifacts.
-- Replace in-process rate limiting when the service moves to multiple replicas.
-- Add distributed queue and storage options only when the deployment requires them.
-- Add procedural and multimodal memory as separate, evaluated capabilities.
+- Run and publish a larger LongMemEval evaluation.
+- Replace process-local limits and queues when multi-server deployment requires it.
+- Add procedural and multimodal memory as separately tested capabilities.
 
 ## Further Reading
 
@@ -850,7 +509,6 @@ the repository does not support.
 - [Implementation architecture](docs/architecture.md)
 - [Evaluation story](docs/evaluation-story.md)
 - [Alibaba Cloud deployment proof](docs/alibaba-cloud-deployment.md)
-- [Demo script](docs/demo-script.md)
 - [Contributing guide](CONTRIBUTING.md)
 
 ## License
