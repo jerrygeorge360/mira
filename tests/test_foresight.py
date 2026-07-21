@@ -15,6 +15,7 @@ import pytest
 from core.db.repositories import (
     configure_database,
     create_session,
+    create_working_memory_item,
     repository_connection,
     save_observation,
 )
@@ -24,6 +25,7 @@ from core.memory.foresight import (
     create_foresight,
     detect_foresight,
     list_relevant_foresight,
+    refresh_foresight_lifecycle,
     resolve_foresight,
     update_foresight_status,
 )
@@ -179,7 +181,7 @@ def test_expired_window_excluded_from_relevant(database_path: Path) -> None:
     """A temporally invalid active record is not returned as relevant."""
     session_id = create_session("jerry")
     observation_id = save_observation(session_id, "user", "Hackathon ended 2026-06-01.")
-    create_foresight(
+    record_id = create_foresight(
         {
             "content": "Hackathon submission was due 2026-06-01.",
             "status": "active",
@@ -189,6 +191,7 @@ def test_expired_window_excluded_from_relevant(database_path: Path) -> None:
     )
 
     assert list_relevant_foresight("hackathon", "2026-06-26T10:00:00+00:00") == []
+    assert _status(record_id) == "expired"
 
 
 def test_detect_foresight_grounds_records_in_ambient(
@@ -211,6 +214,7 @@ def test_detect_foresight_grounds_records_in_ambient(
                         "reason": "User asked for a reminder.",
                         "status": "active",
                         "always_inject": False,
+                        "valid_until": "2026-07-01",
                     }
                 ]
             }
@@ -227,6 +231,7 @@ def test_detect_foresight_grounds_records_in_ambient(
     assert len(records) == 1
     assert records[0]["source_observation_id"] == observation_id
     assert records[0]["valid_from"] == "2026-06-24T09:00:00+00:00"
+    assert records[0]["valid_until"] == "2026-07-01T23:59:59+00:00"
     assert records[0]["status"] == "active"
 
     record_id = create_foresight(records[0])
@@ -251,6 +256,7 @@ def test_detect_foresight_rejects_standing_response_preferences(
                         "reason": "User stated an answer-style preference.",
                         "status": "active",
                         "always_inject": False,
+                        "valid_until": None,
                     }
                 ]
             }
@@ -266,3 +272,37 @@ def test_detect_foresight_rejects_standing_response_preferences(
         )
         == []
     )
+
+
+def test_lifecycle_refresh_expires_record_and_promoted_hot_copy(database_path: Path) -> None:
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "The deadline was yesterday.")
+    record_id = create_foresight(
+        {
+            "content": "The project deadline is 2026-07-01.",
+            "status": "active",
+            "source_observation_id": observation_id,
+            "valid_until": "2026-07-01T23:59:59+00:00",
+        }
+    )
+    hot_id = create_working_memory_item(
+        {
+            "content": "The project deadline is 2026-07-01.",
+            "memory_type": "active_foresight",
+            "scope": "cross_session",
+            "priority": 0.9,
+            "status": "active",
+            "source_record_type": "foresight_records",
+            "source_record_id": record_id,
+        }
+    )
+
+    summary = refresh_foresight_lifecycle("2026-07-02T08:00:00+00:00")
+
+    assert summary["expired"] == 1
+    assert _status(record_id) == "expired"
+    with repository_connection() as connection:
+        hot_status = connection.execute(
+            "SELECT status FROM working_memory WHERE id = ?", (hot_id,)
+        ).fetchone()["status"]
+    assert hot_status == "expired"

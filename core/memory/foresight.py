@@ -166,6 +166,37 @@ def update_foresight_status(record_id: str, now: str) -> None:
         LOGGER.info("Foresight %s transitioned %s -> %s", record_id, status, new_status)
 
 
+def refresh_foresight_lifecycle(
+    now: str | None = None,
+    *,
+    workspace_id: str | None = None,
+) -> dict[str, int]:
+    """Advance every non-terminal foresight record whose time boundary has passed."""
+    effective_now = now or _now()
+    where = "WHERE status IN ('pending', 'active')"
+    params: tuple[object, ...] = ()
+    if workspace_id is not None:
+        where += " AND workspace_id = ?"
+        params = (workspace_id,)
+    with repository_connection() as connection:
+        rows = connection.execute(
+            f"SELECT id, status FROM foresight_records {where}",  # nosec B608
+            params,
+        ).fetchall()
+
+    activated = 0
+    expired = 0
+    for row in rows:
+        record_id = str(row["id"])
+        prior_status = str(row["status"])
+        update_foresight_status(record_id, effective_now)
+        current_status = str(_require_record(record_id)["status"])
+        if prior_status != current_status:
+            activated += int(current_status == "active")
+            expired += int(current_status == "expired")
+    return {"examined": len(rows), "activated": activated, "expired": expired}
+
+
 def resolve_foresight(record_id: str, resolved_by: str) -> None:
     """Resolve a foresight record early, citing the observation that fulfilled it."""
     if not resolved_by:
@@ -192,6 +223,7 @@ def list_relevant_foresight(
     query: str, now: str, *, workspace_id: str = LEGACY_WORKSPACE_ID
 ) -> list[ForesightRecord]:
     """List active foresight that is temporally valid and relevant at ``now``."""
+    refresh_foresight_lifecycle(now, workspace_id=workspace_id)
     now_dt = _parse(now)
     query_tokens = _tokens(query)
     relevant: list[ForesightRecord] = []
@@ -228,7 +260,7 @@ def _normalize_detected(
         "always_inject": bool(raw_record.get("always_inject")),
         "source_observation_id": observation_id,
         "valid_from": valid_from,
-        "valid_until": None,
+        "valid_until": _normalize_valid_until(raw_record.get("valid_until")),
         "resolved_by": None,
     }
 
@@ -264,6 +296,17 @@ def _write_status(record_id: str, status: str, resolved_by: str | None = None) -
             )
         if cursor.rowcount == 0:
             raise ValueError(f"Foresight record not found: {record_id}")
+        if status in TERMINAL_STATUSES:
+            hot_status = "expired" if status == "expired" else "demoted"
+            connection.execute(
+                """
+                UPDATE working_memory
+                SET status = ?, updated_at = ?
+                WHERE source_record_type = 'foresight_records'
+                  AND source_record_id = ? AND status = 'active'
+                """,
+                (hot_status, now, record_id),
+            )
 
 
 def _fetch_by_status(
@@ -348,8 +391,11 @@ def _has_future_trigger(text: str) -> bool:
 def _parse(value: object) -> datetime | None:
     if not isinstance(value, str) or not value.strip():
         return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
     try:
-        parsed = datetime.fromisoformat(value)
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         return None
     if parsed.tzinfo is None:
@@ -381,6 +427,19 @@ def _string(value: object) -> str:
 def _optional_string(value: object) -> str | None:
     text = _string(value)
     return text or None
+
+
+def _normalize_valid_until(value: object) -> str | None:
+    text = _optional_string(value)
+    if text is None:
+        return None
+    if re.fullmatch(r"20\d{2}-\d{2}-\d{2}", text):
+        text = f"{text}T23:59:59+00:00"
+    parsed = _parse(text)
+    if parsed is None:
+        LOGGER.warning("Ignoring invalid foresight valid_until value: %s", text)
+        return None
+    return parsed.isoformat()
 
 
 def _now() -> str:

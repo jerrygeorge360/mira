@@ -171,13 +171,14 @@ FORESIGHT_SCHEMA: JsonSchema = {
             "type": "array",
             "items": {
                 "type": "object",
-                "required": ["content", "reason", "status", "always_inject"],
+                "required": ["content", "reason", "status", "always_inject", "valid_until"],
                 "additionalProperties": False,
                 "properties": {
                     "content": {"type": "string"},
                     "reason": {"type": "string"},
                     "status": {"enum": ["pending", "active"]},
                     "always_inject": {"type": "boolean"},
+                    "valid_until": {"type": ["string", "null"]},
                 },
             },
         }
@@ -419,6 +420,7 @@ New evidence:
                     "reason": "User attached the check to a future PR workflow.",
                     "status": "active",
                     "always_inject": False,
+                    "valid_until": "2026-07-01T23:59:59+00:00",
                 }
             ]
         },
@@ -430,6 +432,8 @@ Non-goals:
 - Do not create calendar events.
 - Do not treat vague wishes as active foresight.
 - Do not store standing preferences, answer-style instructions, or durable project constraints here.
+- Set valid_until to the ISO 8601 end of a stated deadline or time window. Use null only
+  for event-triggered reminders that have no calendar expiry.
 - If the memory has no future trigger, deadline, upcoming event, or time window,
   return no foresight.
 - {overclaiming_guardrail}

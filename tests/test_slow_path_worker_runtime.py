@@ -127,6 +127,22 @@ def test_empty_queue_is_safe(database_path: Path) -> None:
     assert summary == {"processed": 0, "failed": 0, "iterations": 1}
 
 
+def test_worker_refreshes_foresight_lifecycle_on_empty_queue(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls = {"count": 0}
+
+    def _refresh() -> dict[str, int]:
+        calls["count"] += 1
+        return {"examined": 1, "activated": 0, "expired": 1}
+
+    monkeypatch.setattr(sp, "refresh_foresight_lifecycle", _refresh)
+
+    run_worker_once()
+
+    assert calls["count"] == 1
+
+
 def test_failed_observation_is_marked_failed(
     database_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

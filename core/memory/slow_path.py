@@ -44,7 +44,7 @@ from core.memory.community import (
     store_community_summary,
     summarize_community,
 )
-from core.memory.foresight import create_foresight, detect_foresight
+from core.memory.foresight import create_foresight, detect_foresight, refresh_foresight_lifecycle
 from core.memory.graph import (
     create_graph_edge,
     create_graph_node,
@@ -484,6 +484,15 @@ def run_worker(
                 else run_slow_path_batch(batch_size)
             )
             duration_ms = int((time.monotonic() - started) * 1000)
+            lifecycle = refresh_foresight_lifecycle()
+            if lifecycle["activated"] or lifecycle["expired"]:
+                log_event(
+                    "foresight_lifecycle_updated",
+                    "foresight lifecycle updated",
+                    worker_id=worker_id,
+                    activated=lifecycle["activated"],
+                    expired=lifecycle["expired"],
+                )
 
             if not results:
                 log_event(
