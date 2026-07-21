@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { Maximize2, Minimize2 } from 'lucide-react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
@@ -72,6 +73,8 @@ export default function MemoryGraphView() {
   const [edgeTypeFilter, setEdgeTypeFilter] = useState<string>('all');
   const [edgeCategoryFilter, setEdgeCategoryFilter] = useState<EdgeCategory>('all');
   const [timeFilter, setTimeFilter] = useState<TimeFilter>('all');
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [expandedGraphHeight, setExpandedGraphHeight] = useState(620);
   const { data, status } = useLiveData(
     () => api.memoryGraph({ limit: 150 }),
     [memoryRefreshKey],
@@ -121,6 +124,24 @@ export default function MemoryGraphView() {
     });
   }, [edges, filteredNodes, edgeCategoryFilter, edgeTypeFilter, search, timeFilter]);
 
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+
+    const resize = () => setExpandedGraphHeight(Math.max(420, window.innerHeight - 300));
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsExpanded(false);
+    };
+    resize();
+    document.body.classList.add('graph-expanded-open');
+    window.addEventListener('resize', resize);
+    window.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.body.classList.remove('graph-expanded-open');
+      window.removeEventListener('resize', resize);
+      window.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [isExpanded]);
+
   return (
     <div>
       <div className="view-header">
@@ -147,112 +168,128 @@ export default function MemoryGraphView() {
               </div>
             ))}
           </div>
-          <div className="graph-filter-panel">
-            <div className="graph-filter-row">
-              <label className="graph-search">
-                <span>Search graph</span>
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Find entity, edge, source ID, or relationship"
-                />
-              </label>
-              <div className="graph-quick-actions">
-                <button type="button" onClick={() => setEdgeCategoryFilter('conflict')}>
-                  Show contradiction chain
+          <div className={`graph-workspace${isExpanded ? ' expanded' : ''}`}>
+            <div className="graph-filter-panel">
+              <div className="graph-filter-row">
+                <label className="graph-search">
+                  <span>Search graph</span>
+                  <input
+                    value={search}
+                    onChange={(event) => setSearch(event.target.value)}
+                    placeholder="Find entity, edge, source ID, or relationship"
+                  />
+                </label>
+                <div className="graph-quick-actions">
+                  <button
+                    type="button"
+                    className="graph-expand-button"
+                    onClick={() => setIsExpanded((value) => !value)}
+                    aria-label={isExpanded ? 'Restore graph view' : 'Expand graph to full screen'}
+                    aria-pressed={isExpanded}
+                    title={isExpanded ? 'Restore graph view (Esc)' : 'Expand graph to full screen'}
+                  >
+                    {isExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+                    {isExpanded ? 'Restore' : 'Full screen'}
+                  </button>
+                  <button type="button" onClick={() => setEdgeCategoryFilter('conflict')}>
+                    Show contradiction chain
+                  </button>
+                  <button type="button" onClick={() => setEdgeCategoryFilter('evidence')}>
+                    Show evidence lineage
+                  </button>
+                </div>
+              </div>
+              <div className="graph-filter-group">
+                <span>Nodes</span>
+                <button
+                  type="button"
+                  className={nodeTypeFilter === 'all' ? 'active' : ''}
+                  onClick={() => setNodeTypeFilter('all')}
+                >
+                  All
                 </button>
-                <button type="button" onClick={() => setEdgeCategoryFilter('evidence')}>
-                  Show evidence lineage
+                {nodeTypes.map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    className={nodeTypeFilter === type ? 'active' : ''}
+                    onClick={() => setNodeTypeFilter(type)}
+                  >
+                    {type.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+              <div className="graph-filter-group">
+                <span>Relationship groups</span>
+                {EDGE_CATEGORIES.map((category) => (
+                  <button
+                    type="button"
+                    key={category.id}
+                    className={edgeCategoryFilter === category.id ? 'active' : ''}
+                    onClick={() => {
+                      setEdgeCategoryFilter(category.id);
+                      setEdgeTypeFilter('all');
+                    }}
+                  >
+                    {category.label}
+                  </button>
+                ))}
+              </div>
+              <div className="graph-filter-group">
+                <span>Edge type</span>
+                <button
+                  type="button"
+                  className={edgeTypeFilter === 'all' ? 'active' : ''}
+                  onClick={() => setEdgeTypeFilter('all')}
+                >
+                  All
                 </button>
+                {edgeTypes.map((type) => (
+                  <button
+                    type="button"
+                    key={type}
+                    className={edgeTypeFilter === type ? 'active' : ''}
+                    onClick={() => setEdgeTypeFilter(type)}
+                  >
+                    {type.replace('_', ' ')}
+                  </button>
+                ))}
+              </div>
+              <div className="graph-filter-group">
+                <span>Time range</span>
+                {[
+                  ['all', 'All time'],
+                  ['today', 'Today'],
+                  ['week', '7 days'],
+                  ['month', '30 days'],
+                ].map(([value, label]) => (
+                  <button
+                    type="button"
+                    key={value}
+                    className={timeFilter === value ? 'active' : ''}
+                    onClick={() => setTimeFilter(value as TimeFilter)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="graph-filter-count">
+                Showing {filteredNodes.length} nodes · {filteredEdges.length} edges
               </div>
             </div>
-            <div className="graph-filter-group">
-              <span>Nodes</span>
-              <button
-                type="button"
-                className={nodeTypeFilter === 'all' ? 'active' : ''}
-                onClick={() => setNodeTypeFilter('all')}
-              >
-                All
-              </button>
-              {nodeTypes.map((type) => (
-                <button
-                  type="button"
-                  key={type}
-                  className={nodeTypeFilter === type ? 'active' : ''}
-                  onClick={() => setNodeTypeFilter(type)}
-                >
-                  {type.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Relationship groups</span>
-              {EDGE_CATEGORIES.map((category) => (
-                <button
-                  type="button"
-                  key={category.id}
-                  className={edgeCategoryFilter === category.id ? 'active' : ''}
-                  onClick={() => {
-                    setEdgeCategoryFilter(category.id);
-                    setEdgeTypeFilter('all');
-                  }}
-                >
-                  {category.label}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Edge type</span>
-              <button
-                type="button"
-                className={edgeTypeFilter === 'all' ? 'active' : ''}
-                onClick={() => setEdgeTypeFilter('all')}
-              >
-                All
-              </button>
-              {edgeTypes.map((type) => (
-                <button
-                  type="button"
-                  key={type}
-                  className={edgeTypeFilter === type ? 'active' : ''}
-                  onClick={() => setEdgeTypeFilter(type)}
-                >
-                  {type.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Time range</span>
-              {[
-                ['all', 'All time'],
-                ['today', 'Today'],
-                ['week', '7 days'],
-                ['month', '30 days'],
-              ].map(([value, label]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={timeFilter === value ? 'active' : ''}
-                  onClick={() => setTimeFilter(value as TimeFilter)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-count">
-              Showing {filteredNodes.length} nodes · {filteredEdges.length} edges
-            </div>
+            {filteredNodes.length === 0 ? (
+              <ViewStatus
+                status="live"
+                emptyLabel="No graph records match this filter."
+                hint="Broaden the node or edge filter to inspect more memory."
+              />
+            ) : (
+              <GraphView
+                height={isExpanded ? expandedGraphHeight : 460}
+                data={toGraphData(filteredNodes, filteredEdges)}
+              />
+            )}
           </div>
-          {filteredNodes.length === 0 ? (
-            <ViewStatus
-              status="live"
-              emptyLabel="No graph records match this filter."
-              hint="Broaden the node or edge filter to inspect more memory."
-            />
-          ) : (
-            <GraphView height={460} data={toGraphData(filteredNodes, filteredEdges)} />
-          )}
         </>
       )}
     </div>
