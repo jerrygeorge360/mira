@@ -52,7 +52,7 @@ SQLite is the source of truth. ChromaDB is a rebuildable semantic index. Network
 read-only algorithm views over the persisted graph.
 
 <p align="center">
-  <img src="docs/assets/mira-c4-achitecturaldiagram.png" alt="MIRA architecture" width="100%" />
+  <img src="docs/assets/mira-c4-achitecturaldiagram.png" alt="MIRA C4 container architecture" width="100%" />
 </p>
 
 ## Measuring Token Use

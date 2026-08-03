@@ -1,0 +1,287 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2200" height="1320" viewBox="0 0 2200 1320" role="img" aria-labelledby="title desc">
+  <title id="title">MIRA C4 container architecture</title>
+  <desc id="desc">C4 container diagram showing MIRA's web, API, MCP, worker, storage, model-provider, and optional Paritok compression boundaries.</desc>
+  <defs>
+    <style>
+      text { font-family: Arial, sans-serif; }
+      .title { font-size: 38px; font-weight: 700; fill: #17202a; }
+      .subtitle { font-size: 18px; font-weight: 400; fill: #5b6570; }
+      .boundary-title { font-size: 20px; font-weight: 700; fill: #a5482a; }
+      .box-title { font-size: 21px; font-weight: 700; fill: #17202a; }
+      .box-type { font-size: 13px; font-weight: 700; fill: #a5482a; letter-spacing: 1.2px; }
+      .body { font-size: 15px; font-weight: 400; fill: #44505c; }
+      .small { font-size: 13px; font-weight: 400; fill: #5b6570; }
+      .component { font-size: 14px; font-weight: 600; fill: #27313b; }
+      .external-title { font-size: 17px; font-weight: 700; fill: #17202a; }
+      .external-body { font-size: 13px; font-weight: 400; fill: #59636e; }
+      .flow { font-size: 12px; font-weight: 600; fill: #66717d; }
+      .container { fill: #ffffff; stroke: #b7c0c8; stroke-width: 2; rx: 10; }
+      .container-accent { fill: #fff8f4; stroke: #cf7454; stroke-width: 2.5; rx: 10; }
+      .container-green { fill: #f2faf6; stroke: #63a67d; stroke-width: 2.5; rx: 10; }
+      .container-purple { fill: #f7f4fb; stroke: #8d75ad; stroke-width: 2.5; rx: 10; }
+      .component-box { fill: #f5f7f8; stroke: #d4dade; stroke-width: 1.3; rx: 7; }
+      .external { fill: #f3f5f6; stroke: #9aa5af; stroke-width: 1.7; rx: 9; }
+      .boundary { fill: #fcfcfb; stroke: #cf7454; stroke-width: 3; stroke-dasharray: 10 7; rx: 16; }
+      .arrow { fill: none; stroke: #59636e; stroke-width: 2; marker-end: url(#arrow); }
+      .arrow-accent { fill: none; stroke: #bd5f3e; stroke-width: 2.4; marker-end: url(#arrow-accent); }
+      .arrow-green { fill: none; stroke: #4f8f69; stroke-width: 2.4; marker-end: url(#arrow-green); }
+      .arrow-dashed { fill: none; stroke: #7e8892; stroke-width: 2; stroke-dasharray: 8 6; marker-end: url(#arrow); }
+    </style>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#59636e"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#bd5f3e"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
+      <path d="M0,0 L0,6 L9,3 z" fill="#4f8f69"/>
+    </marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="125%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#17202a" flood-opacity="0.09"/>
+    </filter>
+  </defs>
+
+  <rect width="2200" height="1320" fill="#f7f6f3"/>
+  <text x="70" y="58" class="title">MIRA container architecture</text>
+  <text x="70" y="88" class="subtitle">Inspectable, workspace-scoped memory with direct or compressed model-provider access</text>
+  <text x="2020" y="60" text-anchor="end" class="box-type">C4 CONTAINER VIEW</text>
+
+  <!-- People and external systems -->
+  <rect x="70" y="118" width="250" height="82" class="external"/>
+  <text x="195" y="148" text-anchor="middle" class="external-title">User</text>
+  <text x="195" y="173" text-anchor="middle" class="external-body">Chats and inspects memory</text>
+
+  <rect x="350" y="118" width="270" height="82" class="external"/>
+  <text x="485" y="148" text-anchor="middle" class="external-title">Workspace admin</text>
+  <text x="485" y="173" text-anchor="middle" class="external-body">Reviews usage and operations</text>
+
+  <rect x="650" y="118" width="270" height="82" class="external"/>
+  <text x="785" y="148" text-anchor="middle" class="external-title">MCP client</text>
+  <text x="785" y="173" text-anchor="middle" class="external-body">Uses authenticated memory tools</text>
+
+  <rect x="950" y="118" width="270" height="82" class="external"/>
+  <text x="1085" y="148" text-anchor="middle" class="external-title">GitHub OAuth</text>
+  <text x="1085" y="173" text-anchor="middle" class="external-body">Authenticates product users</text>
+
+  <rect x="1250" y="118" width="390" height="82" class="external"/>
+  <text x="1445" y="148" text-anchor="middle" class="external-title">OpenAI-compatible providers</text>
+  <text x="1445" y="173" text-anchor="middle" class="external-body">DeepSeek, Qwen/DashScope, Gemini, SiliconFlow</text>
+
+  <rect x="1670" y="118" width="460" height="82" class="external"/>
+  <text x="1900" y="148" text-anchor="middle" class="external-title">Paritok hosted compression</text>
+  <text x="1900" y="173" text-anchor="middle" class="external-body">Optional GPU context compression service</text>
+
+  <!-- Software-system boundary -->
+  <rect x="55" y="230" width="2090" height="1035" class="boundary"/>
+  <rect x="82" y="215" width="405" height="34" fill="#f7f6f3"/>
+  <text x="94" y="239" class="boundary-title">MIRA software system</text>
+  <text x="316" y="239" class="small">workspace isolation at every boundary</text>
+
+  <!-- Edge and product containers -->
+  <g filter="url(#shadow)">
+    <rect x="95" y="285" width="310" height="175" class="container"/>
+    <text x="120" y="315" class="box-type">CONTAINER</text>
+    <text x="120" y="345" class="box-title">Nginx edge</text>
+    <text x="120" y="373" class="body">TLS and production routing</text>
+    <text x="120" y="398" class="small">/  -> web app</text>
+    <text x="120" y="420" class="small">/api  -> FastAPI</text>
+    <text x="120" y="442" class="small">/mcp  -> MCP service</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="445" y="285" width="350" height="175" class="container-accent"/>
+    <text x="470" y="315" class="box-type">CONTAINER · REACT</text>
+    <text x="470" y="345" class="box-title">Web application</text>
+    <text x="470" y="373" class="body">Chat and memory inspection</text>
+    <text x="470" y="398" class="small">Graph, working set, pipeline,</text>
+    <text x="470" y="420" class="small">foresight, traces, usage, admin</text>
+    <text x="470" y="442" class="small">No memory semantics in the UI</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="835" y="285" width="965" height="315" class="container-accent"/>
+    <text x="860" y="315" class="box-type">CONTAINER · FASTAPI / PYTHON</text>
+    <text x="860" y="345" class="box-title">Product API and foreground agent runtime</text>
+    <text x="860" y="372" class="body">Owns authentication, request scope, synchronous memory use, and answer persistence</text>
+
+    <rect x="860" y="397" width="205" height="92" class="component-box"/>
+    <text x="878" y="424" class="component">Fast persistence</text>
+    <text x="878" y="448" class="small">Observation + queue</text>
+    <text x="878" y="469" class="small">Session micro-path</text>
+
+    <rect x="1082" y="397" width="205" height="92" class="component-box"/>
+    <text x="1100" y="424" class="component">Scope-first router</text>
+    <text x="1100" y="448" class="small">No, recent, session,</text>
+    <text x="1100" y="469" class="small">durable, or mixed context</text>
+
+    <rect x="1304" y="397" width="205" height="92" class="component-box"/>
+    <text x="1322" y="424" class="component">Memory retrieval</text>
+    <text x="1322" y="448" class="small">Quick · Deep</text>
+    <text x="1322" y="469" class="small">Relational + retry</text>
+
+    <rect x="1526" y="397" width="249" height="92" class="component-box"/>
+    <text x="1544" y="424" class="component">Answer execution</text>
+    <text x="1544" y="448" class="small">Evidence sufficiency + budget</text>
+    <text x="1544" y="469" class="small">Prompt, generation, trace</text>
+
+    <rect x="860" y="510" width="915" height="62" fill="#fff0e9" stroke="#e2aa94" stroke-width="1.3" rx="7"/>
+    <text x="878" y="537" class="component">Shared model client and usage instrumentation</text>
+    <text x="878" y="558" class="small">Provider profile + gateway selection · measured/estimated tokens · latency · prompt fingerprint · logical run</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1840" y="285" width="270" height="315" class="container-purple"/>
+    <text x="1865" y="315" class="box-type">CONTAINER · MCP</text>
+    <text x="1865" y="345" class="box-title">MCP service</text>
+    <text x="1865" y="373" class="body">Streamable HTTP tools</text>
+    <text x="1865" y="402" class="small">OAuth 2.1 / PKCE</text>
+    <text x="1865" y="424" class="small">Workspace-bound tokens</text>
+    <text x="1865" y="446" class="small">Retrieve and inspect memory</text>
+    <text x="1865" y="468" class="small">Write explicit observations</text>
+    <line x1="1865" y1="495" x2="2085" y2="495" stroke="#c8bdd5"/>
+    <text x="1865" y="525" class="small">Calls the same core modules;</text>
+    <text x="1865" y="547" class="small">does not duplicate semantics</text>
+  </g>
+
+  <!-- Worker and provider boundary -->
+  <g filter="url(#shadow)">
+    <rect x="95" y="655" width="1110" height="270" class="container-green"/>
+    <text x="120" y="685" class="box-type">CONTAINER · PYTHON WORKER</text>
+    <text x="120" y="715" class="box-title">Asynchronous slow-path memory pipeline</text>
+    <text x="120" y="742" class="body">Claims queued observations and builds durable structures outside response latency</text>
+
+    <rect x="120" y="768" width="190" height="100" class="component-box"/>
+    <text x="138" y="795" class="component">Claim + isolate</text>
+    <text x="138" y="819" class="small">Queue lease</text>
+    <text x="138" y="840" class="small">Workspace checks</text>
+
+    <rect x="327" y="768" width="190" height="100" class="component-box"/>
+    <text x="345" y="795" class="component">Extract</text>
+    <text x="345" y="819" class="small">Atomic facts</text>
+    <text x="345" y="840" class="small">Entities + validity</text>
+
+    <rect x="534" y="768" width="205" height="100" class="component-box"/>
+    <text x="552" y="795" class="component">Graph semantics</text>
+    <text x="552" y="819" class="small">Supersession</text>
+    <text x="552" y="840" class="small">Contradiction + lineage</text>
+
+    <rect x="756" y="768" width="205" height="100" class="component-box"/>
+    <text x="774" y="795" class="component">Synthesis</text>
+    <text x="774" y="819" class="small">Reflection + foresight</text>
+    <text x="774" y="840" class="small">Communities</text>
+
+    <rect x="978" y="768" width="202" height="100" class="component-box"/>
+    <text x="996" y="795" class="component">Lifecycle</text>
+    <text x="996" y="819" class="small">Hot / warm / cold</text>
+    <text x="996" y="840" class="small">Index + diagnostics</text>
+
+    <text x="120" y="900" class="small">Every model-backed step uses the same provider/gateway client and records its own slow-path token usage.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1250" y="655" width="550" height="270" class="container-accent"/>
+    <text x="1275" y="685" class="box-type">OPTIONAL CONTAINER · PARITOK PROFILE</text>
+    <text x="1275" y="715" class="box-title">Paritok compression proxy</text>
+    <text x="1275" y="745" class="body">Compresses eligible assembled context</text>
+    <text x="1275" y="772" class="small">Runs after MIRA retrieval and sufficiency</text>
+    <text x="1275" y="794" class="small">Keeps the latest task turn intact</text>
+    <text x="1275" y="816" class="small">Forwards to the same selected provider</text>
+    <line x1="1275" y1="840" x2="1775" y2="840" stroke="#e2aa94"/>
+    <text x="1275" y="868" class="component">Gateway choice is independent of provider choice</text>
+    <text x="1275" y="893" class="small">Direct mode bypasses this container entirely.</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1840" y="655" width="270" height="270" class="container"/>
+    <text x="1865" y="685" class="box-type">CONTAINER · DOZZLE</text>
+    <text x="1865" y="715" class="box-title">Runtime logs</text>
+    <text x="1865" y="745" class="body">Operational inspection</text>
+    <text x="1865" y="773" class="small">API, worker, MCP,</text>
+    <text x="1865" y="795" class="small">frontend and proxy logs</text>
+    <text x="1865" y="830" class="small">No canonical memory</text>
+    <text x="1865" y="852" class="small">stored here</text>
+  </g>
+
+  <!-- Data stores -->
+  <g filter="url(#shadow)">
+    <rect x="95" y="985" width="930" height="230" class="container-green"/>
+    <text x="120" y="1015" class="box-type">DATA STORE · SQLITE · SOURCE OF TRUTH</text>
+    <text x="120" y="1045" class="box-title">Canonical workspace memory</text>
+    <text x="120" y="1073" class="body">Users, sessions, observations, working set, facts, graph, traces, auth, and usage ledger</text>
+    <rect x="120" y="1095" width="265" height="82" class="component-box"/>
+    <text x="138" y="1122" class="component">Typed temporal graph</text>
+    <text x="138" y="1146" class="small">Nodes, edges, validity, evidence</text>
+    <text x="138" y="1167" class="small">NetworkX / igraph read-only views</text>
+    <rect x="402" y="1095" width="290" height="82" class="component-box"/>
+    <text x="420" y="1122" class="component">Durable memory products</text>
+    <text x="420" y="1146" class="small">Facts, reflections, foresight,</text>
+    <text x="420" y="1167" class="small">communities, lifecycle tiers</text>
+    <rect x="709" y="1095" width="291" height="82" class="component-box"/>
+    <text x="727" y="1122" class="component">Inspectable evidence</text>
+    <text x="727" y="1146" class="small">Retrieval traces + model usage</text>
+    <text x="727" y="1167" class="small">No prompts stored in usage ledger</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1070" y="985" width="500" height="230" class="container-purple"/>
+    <text x="1095" y="1015" class="box-type">DATA STORE · CHROMADB</text>
+    <text x="1095" y="1045" class="box-title">Rebuildable vector index</text>
+    <text x="1095" y="1073" class="body">Embeddings and SQLite record pointers</text>
+    <text x="1095" y="1102" class="small">Workspace metadata prefilters candidates</text>
+    <text x="1095" y="1124" class="small">Supports Quick and Deep retrieval</text>
+    <text x="1095" y="1158" class="component">Never the canonical memory store</text>
+    <text x="1095" y="1183" class="small">Can be cleared and rebuilt from SQLite</text>
+  </g>
+
+  <g filter="url(#shadow)">
+    <rect x="1615" y="985" width="495" height="230" class="container"/>
+    <text x="1640" y="1015" class="box-type">VOLUME · LOCAL MODEL CACHE</text>
+    <text x="1640" y="1045" class="box-title">FastEmbed embeddings</text>
+    <text x="1640" y="1073" class="body">Local CPU embedding pipeline</text>
+    <text x="1640" y="1102" class="small">Default: BAAI/bge-small-en-v1.5</text>
+    <text x="1640" y="1124" class="small">Shared cache avoids repeated downloads</text>
+    <text x="1640" y="1158" class="component">384-dimensional vectors</text>
+    <text x="1640" y="1183" class="small">Cloud embeddings remain configurable</text>
+  </g>
+
+  <!-- Flows -->
+  <path d="M195 200 V258 H250 V285" class="arrow"/>
+  <path d="M485 200 V258 H250 V285" class="arrow"/>
+  <path d="M785 200 V255 H1975 V285" class="arrow"/>
+  <path d="M1085 200 V258 H1318 V285" class="arrow-dashed"/>
+  <path d="M405 372 H445" class="arrow-accent"/>
+  <path d="M795 372 H835" class="arrow-accent"/>
+  <path d="M405 430 H815 V555 H835" class="arrow"/>
+  <path d="M1800 445 H1840" class="arrow"/>
+
+  <path d="M1318 600 V627 H650 V655" class="arrow-green"/>
+  <text x="760" y="622" class="flow">queued observations</text>
+
+  <path d="M1160 600 V625 H70 V960 H560 V985" class="arrow-green"/>
+  <text x="760" y="964" class="flow">read/write canonical records and usage</text>
+  <path d="M650 925 V985" class="arrow-green"/>
+  <path d="M2110 445 H2125 V960 H930 V985" class="arrow"/>
+
+  <path d="M1408 600 V625 H1818 V955 H1320 V985" class="arrow"/>
+  <text x="1335" y="955" class="flow">semantic search</text>
+  <path d="M1110 925 V955 H1228 V970 H1320 V985" class="arrow"/>
+  <path d="M1570 1120 H1615" class="arrow-dashed"/>
+  <text x="1593" y="1106" text-anchor="middle" class="flow">embed</text>
+  <path d="M1070 1174 H1025" class="arrow-dashed"/>
+  <text x="1048" y="1160" text-anchor="middle" class="flow">pointers</text>
+
+  <path d="M1440 285 V252 H1445 V200" class="arrow-dashed"/>
+  <text x="1470" y="245" class="flow">direct model calls</text>
+  <path d="M1525 600 V655" class="arrow-accent"/>
+  <text x="1540" y="628" class="flow">optional gateway</text>
+  <path d="M1205 715 H1250" class="arrow-accent"/>
+  <path d="M1450 655 V620 H1818 V250 H1445 V200" class="arrow-accent"/>
+  <text x="1594" y="610" class="flow">forward compressed request</text>
+  <path d="M1800 710 H2130 V250 H1900 V200" class="arrow-accent"/>
+  <text x="1780" y="610" class="flow">compress context</text>
+
+  <path d="M2110 790 H2130 V965 H1990 V985" class="arrow-dashed"/>
+  <text x="2020" y="958" class="flow">container logs</text>
+
+  <text x="1095" y="1295" text-anchor="middle" class="small">Solid paths are primary runtime flows. Dashed paths are optional, read-only, or operational flows.</text>
+</svg>
