@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import {
   MessageSquare,
   Network,
@@ -17,6 +18,9 @@ import {
   LogOut,
   Trash2,
   Gauge,
+  MoreHorizontal,
+  Pencil,
+  Star,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
@@ -40,6 +44,7 @@ const MEMORY_VIEWS = [
 ] as const;
 
 export default function Rail() {
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
   const {
     view, setView,
     theme, toggleTheme,
@@ -57,6 +62,25 @@ export default function Rail() {
     [sessionId, authUser?.workspaceId, historyRefreshKey],
   );
   const threads = data?.sessions ?? [];
+  const starredThreads = threads.filter(thread => thread.is_starred);
+  const recentThreads = threads.filter(thread => !thread.is_starred);
+
+  useEffect(() => {
+    function closeMenu(event: PointerEvent) {
+      const target = event.target;
+      if (target instanceof Element && target.closest('.rail-history-actions')) return;
+      setOpenMenu(null);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpenMenu(null);
+    }
+    document.addEventListener('pointerdown', closeMenu);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('pointerdown', closeMenu);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, []);
 
   function startNewChat() {
     setView('Chat');
@@ -82,6 +106,86 @@ export default function Rail() {
     }
     refreshHistory();
     refreshMemory();
+  }
+
+  async function renameThread(id: string, currentTitle: string | null) {
+    setOpenMenu(null);
+    const title = window.prompt('Rename conversation', currentTitle || 'Untitled chat');
+    if (title === null) return;
+    const normalized = title.trim();
+    if (!normalized || normalized === currentTitle) return;
+    try {
+      await api.updateSession(id, { title: normalized });
+      refreshHistory();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not rename the conversation.');
+    }
+  }
+
+  async function toggleStar(id: string, isStarred: boolean) {
+    setOpenMenu(null);
+    try {
+      await api.updateSession(id, { is_starred: !isStarred });
+      refreshHistory();
+    } catch (error) {
+      window.alert(error instanceof Error ? error.message : 'Could not update the conversation.');
+    }
+  }
+
+  function renderThread(t: (typeof threads)[number]) {
+    const menuOpen = openMenu === t.session_id;
+    return (
+      <div
+        key={t.session_id}
+        className={`rail-history-row${activeThread === t.session_id ? ' active' : ''}`}
+      >
+        <button
+          className="rail-history-btn"
+          onClick={() => selectThread(t.session_id)}
+        >
+          <span className="rail-history-title">
+            {t.is_starred && <Star size={12} aria-hidden="true" fill="currentColor" />}
+            <h4>{t.title || 'Untitled chat'}</h4>
+          </span>
+          <small>{t.message_count} message{t.message_count === 1 ? '' : 's'}</small>
+        </button>
+        <div className="rail-history-actions">
+          <button
+            className="rail-history-menu-trigger"
+            onClick={() => setOpenMenu(menuOpen ? null : t.session_id)}
+            title="Conversation actions"
+            aria-label={`Actions for ${t.title || 'chat'}`}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+          >
+            <MoreHorizontal size={15} />
+          </button>
+          {menuOpen && (
+            <div className="rail-history-menu" role="menu">
+              <button role="menuitem" onClick={() => toggleStar(t.session_id, t.is_starred)}>
+                <Star size={15} fill={t.is_starred ? 'currentColor' : 'none'} />
+                {t.is_starred ? 'Unstar' : 'Star'}
+              </button>
+              <button role="menuitem" onClick={() => renameThread(t.session_id, t.title)}>
+                <Pencil size={15} />
+                Rename
+              </button>
+              <button
+                className="danger"
+                role="menuitem"
+                onClick={() => {
+                  setOpenMenu(null);
+                  void deleteThread(t.session_id, t.title);
+                }}
+              >
+                <Trash2 size={15} />
+                Delete
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
   }
 
   async function handleDeleteWorkspaceData() {
@@ -181,33 +285,25 @@ export default function Rail() {
         {/* history section */}
         {!railCollapsed && (
           <>
-            <div className="rail-section-label">History</div>
-            {threads.map(t => (
-              <div
-                key={t.session_id}
-                className={`rail-history-row${activeThread === t.session_id ? ' active' : ''}`}
-              >
-                <button
-                  className="rail-history-btn"
-                  onClick={() => selectThread(t.session_id)}
-                >
-                  <h4>{t.title || 'Untitled chat'}</h4>
-                  <small>{t.message_count} message{t.message_count === 1 ? '' : 's'}</small>
-                </button>
-                <button
-                  className="rail-history-delete"
-                  onClick={() => deleteThread(t.session_id, t.title)}
-                  title="Delete chat"
-                  aria-label={`Delete ${t.title || 'chat'}`}
-                >
-                  <Trash2 size={13} />
-                </button>
-              </div>
-            ))}
+            {starredThreads.length > 0 && (
+              <>
+                <div className="rail-section-label">Starred</div>
+                {starredThreads.map(renderThread)}
+              </>
+            )}
+            {recentThreads.length > 0 && (
+              <>
+                <div className="rail-section-label">Recent</div>
+                {recentThreads.map(renderThread)}
+              </>
+            )}
             {threads.length === 0 && (
-              <div className="rail-history-empty">
-                {status === 'offline' ? 'Backend offline' : 'No conversations yet'}
-              </div>
+              <>
+                <div className="rail-section-label">History</div>
+                <div className="rail-history-empty">
+                  {status === 'offline' ? 'Backend offline' : 'No conversations yet'}
+                </div>
+              </>
             )}
           </>
         )}

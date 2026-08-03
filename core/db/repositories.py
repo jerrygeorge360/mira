@@ -126,6 +126,7 @@ JSON_COLUMNS: frozenset[str] = frozenset(
         "included_memory_items_json",
         "included_recent_turns_json",
         "token_budget_json",
+        "usage_json",
         "retrieved_observation_ids_json",
         "retrieved_fact_ids_json",
         "session_item_ids_json",
@@ -317,6 +318,37 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "llm_usage_events": frozenset(
+        {
+            "id",
+            "run_id",
+            "session_id",
+            "observation_id",
+            "component",
+            "operation",
+            "provider",
+            "model",
+            "gateway",
+            "status",
+            "usage_source",
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "cached_input_tokens",
+            "reasoning_output_tokens",
+            "estimated_input_tokens",
+            "estimated_output_tokens",
+            "gateway_input_tokens_original",
+            "gateway_input_tokens_compressed",
+            "gateway_tokens_saved",
+            "latency_ms",
+            "estimated_cost_usd",
+            "provider_request_id",
+            "prompt_fingerprint",
+            "usage_json",
+            "created_at",
+        }
+    ),
     "answer_traces": frozenset(
         {
             "id",
@@ -357,6 +389,7 @@ _WORKSPACE_OWNED_TABLES = frozenset(
         "working_memory",
         "retrieval_logs",
         "prompt_logs",
+        "llm_usage_events",
         "answer_traces",
     }
 )
@@ -677,10 +710,56 @@ class WorkspaceRepository:
             """
             SELECT * FROM sessions
             WHERE workspace_id = ? AND status != 'deleted'
-            ORDER BY updated_at DESC LIMIT ?
+            ORDER BY is_starred DESC, updated_at DESC LIMIT ?
             """,
             (self.workspace_id, limit),
         )
+
+    def update_session(
+        self,
+        session_id: str,
+        *,
+        title: str | None = None,
+        is_starred: bool | None = None,
+    ) -> RepositoryRecord:
+        """Update user-managed session metadata within this workspace."""
+        if title is None and is_starred is None:
+            raise ValueError("At least one session field must be provided")
+        if title is not None and is_starred is not None:
+            statement = """
+                UPDATE sessions
+                SET title = ?, is_starred = ?
+                WHERE id = ? AND workspace_id = ? AND status != 'deleted'
+            """
+            parameters: tuple[object, ...] = (
+                title,
+                int(is_starred),
+                session_id,
+                self.workspace_id,
+            )
+        elif title is not None:
+            statement = """
+                UPDATE sessions
+                SET title = ?
+                WHERE id = ? AND workspace_id = ? AND status != 'deleted'
+            """
+            parameters = (title, session_id, self.workspace_id)
+        else:
+            statement = """
+                UPDATE sessions
+                SET is_starred = ?
+                WHERE id = ? AND workspace_id = ? AND status != 'deleted'
+            """
+            parameters = (int(bool(is_starred)), session_id, self.workspace_id)
+        _execute_write(
+            statement,
+            parameters,
+            missing_message=f"Session not found in workspace: {session_id}",
+        )
+        updated = self.get_session(session_id)
+        if updated is None:
+            raise ValueError(f"Session not found in workspace: {session_id}")
+        return updated
 
     def save_observation(
         self,
@@ -1396,6 +1475,121 @@ def create_prompt_log(log: RepositoryRecord) -> str:
     _require_fields("prompt_logs", record, {"session_id", "user_observation_id"})
     record.setdefault("workspace_id", _workspace_id_for("sessions", str(record["session_id"])))
     return _insert_with_generated_id("prompt_logs", record)
+
+
+def create_llm_usage_event(event: RepositoryRecord) -> str:
+    """Persist one provider call without storing prompt or response content."""
+    record = _prepare_record(event)
+    _require_fields(
+        "llm_usage_events",
+        record,
+        {
+            "workspace_id",
+            "run_id",
+            "component",
+            "operation",
+            "provider",
+            "model",
+            "gateway",
+            "status",
+            "usage_source",
+            "estimated_input_tokens",
+            "latency_ms",
+            "prompt_fingerprint",
+        },
+    )
+    return _insert_with_generated_id("llm_usage_events", record)
+
+
+def attach_llm_usage_run_observation(run_id: str, observation_id: str) -> None:
+    """Attach calls made before fast persistence to the completed user observation."""
+    if not run_id or not observation_id:
+        raise ValueError("run_id and observation_id must not be empty")
+    with _connect() as connection:
+        connection.execute(
+            """
+            UPDATE llm_usage_events
+            SET observation_id = ?
+            WHERE run_id = ? AND observation_id IS NULL
+            """,
+            (observation_id, run_id),
+        )
+
+
+def list_llm_usage_events(
+    *,
+    run_id: str | None = None,
+    workspace_id: str | None = None,
+    limit: int = 100,
+) -> list[RepositoryRecord]:
+    """List usage records for one run or workspace, newest first."""
+    if limit < 1:
+        raise ValueError("limit must be a positive integer")
+    clauses: list[str] = []
+    parameters: list[object] = []
+    if run_id is not None:
+        clauses.append("run_id = ?")
+        parameters.append(run_id)
+    if workspace_id is not None:
+        clauses.append("workspace_id = ?")
+        parameters.append(workspace_id)
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    parameters.append(limit)
+    return _fetch_all(
+        f"""
+        SELECT * FROM llm_usage_events
+        {where}
+        ORDER BY created_at DESC
+        LIMIT ?
+        """,  # nosec B608 - clauses are fixed literals, values stay parameterized
+        tuple(parameters),
+    )
+
+
+def summarize_llm_usage_run(run_id: str) -> RepositoryRecord:
+    """Return measured totals for one agent or worker run."""
+    if not run_id:
+        raise ValueError("run_id must not be empty")
+    with _connect() as connection:
+        row = connection.execute(
+            """
+            SELECT
+                COUNT(*) AS calls,
+                SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS successful_calls,
+                SUM(CASE WHEN usage_source = 'provider' THEN 1 ELSE 0 END)
+                    AS provider_measured_calls,
+                COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(cached_input_tokens), 0) AS cached_input_tokens,
+                COALESCE(SUM(reasoning_output_tokens), 0) AS reasoning_output_tokens,
+                COALESCE(SUM(estimated_input_tokens), 0) AS estimated_input_tokens,
+                COALESCE(SUM(estimated_output_tokens), 0) AS estimated_output_tokens,
+                COALESCE(SUM(gateway_input_tokens_original), 0)
+                    AS gateway_input_tokens_original,
+                COALESCE(SUM(gateway_input_tokens_compressed), 0)
+                    AS gateway_input_tokens_compressed,
+                COALESCE(SUM(gateway_tokens_saved), 0) AS gateway_tokens_saved,
+                SUM(CASE WHEN gateway = 'paritok' THEN 1 ELSE 0 END) AS paritok_calls,
+                SUM(
+                    CASE WHEN gateway = 'paritok' AND gateway_tokens_saved IS NOT NULL
+                    THEN 1 ELSE 0 END
+                ) AS gateway_measured_calls,
+                COALESCE(SUM(estimated_cost_usd), 0.0) AS estimated_cost_usd
+            FROM llm_usage_events
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+    summary = dict(row) if row is not None else {}
+    summary["run_id"] = run_id
+    summary["fully_measured"] = bool(summary.get("calls")) and summary.get("calls") == summary.get(
+        "provider_measured_calls"
+    )
+    summary["gateway_savings_fully_measured"] = bool(summary.get("paritok_calls")) and summary.get(
+        "paritok_calls"
+    ) == summary.get("gateway_measured_calls")
+    return summary
 
 
 def create_answer_trace(trace: RepositoryRecord) -> str:

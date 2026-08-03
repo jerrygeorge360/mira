@@ -20,6 +20,7 @@ explicit, evidence-backed actions, so they have dedicated entry points.
 from __future__ import annotations
 
 import logging
+import math
 import re
 from datetime import datetime, timezone
 
@@ -29,8 +30,9 @@ from core.db.repositories import (
     validate_enum_value,
 )
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
-from core.llm.qwen import call_qwen_json
+from core.llm.qwen import LLMClientError, call_qwen_json
 
 ForesightRecord = dict[str, object]
 
@@ -38,6 +40,9 @@ LOGGER = logging.getLogger(__name__)
 
 DETECTABLE_STATUSES = frozenset({"pending", "active"})
 TERMINAL_STATUSES = frozenset({"resolved", "expired", "cancelled"})
+FORESIGHT_RECONCILIATION_CONFIDENCE = 0.85
+FORESIGHT_CANDIDATE_LLM_LIMIT = 8
+FORESIGHT_RECENT_TURN_LIMIT = 6
 
 TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_'-]+")
 DATE_PATTERN = re.compile(r"\b(?:20\d{2}-\d{2}-\d{2}|\d{1,2}/\d{1,2}(?:/\d{2,4})?)\b")
@@ -60,6 +65,7 @@ FUTURE_MARKERS = frozenset(
         "scheduled",
         "soon",
         "submit",
+        "today",
         "tomorrow",
         "upcoming",
         "until",
@@ -81,7 +87,7 @@ NON_FORESIGHT_MARKERS = frozenset(
     }
 )
 CANCELLATION_PATTERN = re.compile(
-    r"\b(?:cancel|drop|remove)\b|"
+    r"\b(?:cancel|canceled|cancelled|cancled|cacelled|canceling|cancelling|drop|remove)\b|"
     r"\b(?:do not|don't|dont|no longer)\s+(?:have\s+)?|"
     r"\b(?:does not|doesn't|doesnt)\s+(?:apply|exist)\b|"
     r"\bnot\b.+\banymore\b",
@@ -92,6 +98,12 @@ CANCELLATION_STOPWORDS = frozenset(
         "anymore",
         "apply",
         "cancel",
+        "canceled",
+        "cancelled",
+        "cancled",
+        "cacelled",
+        "canceling",
+        "cancelling",
         "doesn't",
         "doesnt",
         "don't",
@@ -103,6 +115,24 @@ CANCELLATION_STOPWORDS = frozenset(
         "no",
         "not",
         "remove",
+        "alright",
+        "it",
+        "that",
+        "this",
+        "was",
+    }
+)
+REFERENCE_STOPWORDS = CANCELLATION_STOPWORDS | frozenset(
+    {
+        "about",
+        "has",
+        "remind",
+        "scheduled",
+        "their",
+        "today",
+        "tomorrow",
+        "user",
+        "you",
     }
 )
 
@@ -249,12 +279,15 @@ def cancel_matching_foresight(
     content: str,
     *,
     workspace_id: str = LEGACY_WORKSPACE_ID,
+    reference_text: str | None = None,
 ) -> list[str]:
     """Cancel active foresight explicitly withdrawn by a new user observation."""
     normalized = _normalize_text(content)
     if not CANCELLATION_PATTERN.search(normalized):
         return []
-    target_tokens = _tokens(normalized) - CANCELLATION_STOPWORDS
+    target_tokens = _cancellation_tokens(normalized) - CANCELLATION_STOPWORDS
+    if not target_tokens and reference_text:
+        target_tokens = _cancellation_tokens(_normalize_text(reference_text)) - REFERENCE_STOPWORDS
     if not target_tokens:
         return []
 
@@ -268,13 +301,280 @@ def cancel_matching_foresight(
     cancelled: list[str] = []
     for row in rows:
         record = dict(row)
-        record_tokens = _tokens(f"{record.get('content', '')} {record.get('reason') or ''}")
+        record_tokens = _cancellation_tokens(
+            f"{record.get('content', '')} {record.get('reason') or ''}"
+        )
         if not target_tokens & record_tokens:
             continue
         record_id = str(record["id"])
         cancel_foresight(record_id, cancelled_by=observation_id)
         cancelled.append(record_id)
     return cancelled
+
+
+def reconcile_foresight_lifecycle(
+    observation_id: str,
+    content: str,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+    session_id: str | None = None,
+    reference_text: str | None = None,
+    current_time: str | None = None,
+) -> dict[str, object]:
+    """Resolve a user update against workspace Foresight using bounded semantic context.
+
+    Embeddings rank candidates but never mutate lifecycle state. A structured LLM verdict
+    must reference supplied record IDs and clear a confidence gate. Provider failure falls
+    back to the conservative explicit-cancellation matcher and otherwise leaves state alone.
+    """
+    candidates = _active_foresight_candidates(workspace_id)
+    if not candidates:
+        return _empty_reconciliation_result()
+    shortlisted = _shortlist_foresight_candidates(content, candidates, reference_text)
+    prompt = render_prompt(
+        "foresight_reconciliation",
+        {
+            "current_time": current_time or _now(),
+            "recent_turns": _recent_session_turns(session_id, observation_id),
+            "reference_text": reference_text,
+            "latest_statement": content,
+            "candidates": shortlisted,
+        },
+    )
+    try:
+        response = call_qwen_json(
+            [{"role": "user", "content": prompt}],
+            schema_name="foresight_reconciliation",
+        )
+    except LLMClientError as error:
+        LOGGER.warning(
+            "Foresight semantic reconciliation failed; using conservative fallback: %s",
+            error,
+        )
+        cancelled = cancel_matching_foresight(
+            observation_id,
+            content,
+            workspace_id=workspace_id,
+            reference_text=reference_text,
+        )
+        result = _empty_reconciliation_result()
+        result["cancelled"] = cancelled
+        result["fallback_used"] = True
+        return result
+    return _apply_foresight_decisions(
+        observation_id,
+        response.get("json"),
+        shortlisted,
+    )
+
+
+def _active_foresight_candidates(workspace_id: str) -> list[ForesightRecord]:
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT foresight_records.*,
+                   observations.content AS source_content,
+                   observations.session_id AS source_session_id,
+                   observations.created_at AS source_created_at
+            FROM foresight_records
+            JOIN observations
+              ON observations.id = foresight_records.source_observation_id
+            WHERE foresight_records.workspace_id = ?
+              AND foresight_records.status IN ('pending', 'active')
+            ORDER BY foresight_records.created_at DESC
+            """,
+            (workspace_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _shortlist_foresight_candidates(
+    content: str,
+    candidates: list[ForesightRecord],
+    reference_text: str | None,
+) -> list[ForesightRecord]:
+    query_text = "\n".join(text for text in (content, reference_text) if text)
+    try:
+        query_embedding = embed_text(query_text)
+        scored = [
+            (
+                _cosine_similarity(
+                    query_embedding,
+                    embed_text(_foresight_candidate_text(candidate)),
+                ),
+                candidate,
+            )
+            for candidate in candidates
+        ]
+        scored.sort(key=lambda pair: (-pair[0], -_timestamp(pair[1].get("created_at"))))
+    except (LLMClientError, ValueError) as error:
+        LOGGER.warning("Foresight candidate embedding failed; using recent candidates: %s", error)
+        scored = [(0.0, candidate) for candidate in candidates]
+
+    shortlisted: list[ForesightRecord] = []
+    for similarity, candidate in scored[:FORESIGHT_CANDIDATE_LLM_LIMIT]:
+        public_candidate: ForesightRecord = {
+            "id": str(candidate["id"]),
+            "content": str(candidate["content"]),
+            "reason": _optional_string(candidate.get("reason")),
+            "status": str(candidate["status"]),
+            "valid_from": _optional_string(candidate.get("valid_from")),
+            "valid_until": _optional_string(candidate.get("valid_until")),
+            "source_statement": _optional_string(candidate.get("source_content")),
+            "source_session_id": _optional_string(candidate.get("source_session_id")),
+            "source_created_at": _optional_string(candidate.get("source_created_at")),
+            "similarity": round(similarity, 4),
+        }
+        shortlisted.append(public_candidate)
+    return shortlisted
+
+
+def _apply_foresight_decisions(
+    observation_id: str,
+    payload: object,
+    candidates: list[ForesightRecord],
+) -> dict[str, object]:
+    result = _empty_reconciliation_result()
+    if not isinstance(payload, dict):
+        return result
+    valid_ids = {str(candidate["id"]) for candidate in candidates}
+    decisions = payload.get("decisions")
+    if not isinstance(decisions, list):
+        return result
+    needs_clarification = payload.get("needs_clarification") is True
+    result["needs_clarification"] = needs_clarification
+    clarification = payload.get("clarification")
+    result["clarification"] = clarification.strip() if isinstance(clarification, str) else None
+    if needs_clarification:
+        return result
+    applied_ids: set[str] = set()
+    replacements: set[tuple[str, str | None]] = set()
+
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        target_id = _string(decision.get("target_id"))
+        action = _string(decision.get("action")).casefold()
+        confidence = _confidence(decision.get("confidence"))
+        if (
+            target_id not in valid_ids
+            or target_id in applied_ids
+            or confidence < FORESIGHT_RECONCILIATION_CONFIDENCE
+        ):
+            continue
+        if action == "retain":
+            _result_ids(result, "retained").append(target_id)
+            applied_ids.add(target_id)
+            continue
+        if action == "unrelated":
+            continue
+        try:
+            if action == "cancel":
+                cancel_foresight(target_id, cancelled_by=observation_id)
+                _result_ids(result, "cancelled").append(target_id)
+            elif action == "resolve":
+                resolve_foresight(target_id, observation_id)
+                _result_ids(result, "resolved").append(target_id)
+            elif action == "modify":
+                replacement_content = _string(decision.get("replacement_content"))
+                if not replacement_content:
+                    continue
+                replacement_valid_until = _normalize_valid_until(
+                    decision.get("replacement_valid_until")
+                )
+                cancel_foresight(target_id, cancelled_by=observation_id)
+                _result_ids(result, "cancelled").append(target_id)
+                replacement_key = (replacement_content.casefold(), replacement_valid_until)
+                if replacement_key not in replacements:
+                    replacement_id = create_foresight(
+                        {
+                            "content": replacement_content,
+                            "reason": _string(decision.get("reason")),
+                            "status": "active",
+                            "source_observation_id": observation_id,
+                            "valid_from": _now(),
+                            "valid_until": replacement_valid_until,
+                            "always_inject": False,
+                        }
+                    )
+                    _result_ids(result, "created").append(replacement_id)
+                    replacements.add(replacement_key)
+            else:
+                continue
+        except ValueError as error:
+            LOGGER.warning("Ignoring invalid Foresight lifecycle decision: %s", error)
+            continue
+        applied_ids.add(target_id)
+    return result
+
+
+def _empty_reconciliation_result() -> dict[str, object]:
+    return {
+        "cancelled": [],
+        "resolved": [],
+        "created": [],
+        "retained": [],
+        "needs_clarification": False,
+        "clarification": None,
+        "fallback_used": False,
+    }
+
+
+def _result_ids(result: dict[str, object], key: str) -> list[str]:
+    value = result.get(key)
+    return value if isinstance(value, list) else []
+
+
+def _recent_session_turns(session_id: str | None, observation_id: str) -> list[dict[str, str]]:
+    if not session_id:
+        return []
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT role, content, created_at
+            FROM observations
+            WHERE session_id = ? AND id != ?
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (session_id, observation_id, FORESIGHT_RECENT_TURN_LIMIT),
+        ).fetchall()
+    return [
+        {
+            "role": str(row["role"]),
+            "content": str(row["content"]),
+            "created_at": str(row["created_at"]),
+        }
+        for row in reversed(rows)
+    ]
+
+
+def _foresight_candidate_text(candidate: ForesightRecord) -> str:
+    return " ".join(
+        text
+        for text in (
+            _optional_string(candidate.get("content")),
+            _optional_string(candidate.get("reason")),
+            _optional_string(candidate.get("source_content")),
+        )
+        if text
+    )
+
+
+def _cosine_similarity(left: list[float], right: list[float]) -> float:
+    if len(left) != len(right):
+        return 0.0
+    left_norm = math.sqrt(sum(value * value for value in left))
+    right_norm = math.sqrt(sum(value * value for value in right))
+    if left_norm == 0.0 or right_norm == 0.0:
+        return 0.0
+    return sum(a * b for a, b in zip(left, right, strict=True)) / (left_norm * right_norm)
+
+
+def _confidence(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return 0.0
+    return max(0.0, min(float(value), 1.0))
 
 
 def list_relevant_foresight(
@@ -472,6 +772,19 @@ def _tokens(value: str) -> set[str]:
         for token in TOKEN_PATTERN.findall(value.casefold())
         if len(token) > 1 and token not in STOPWORDS
     }
+
+
+def _cancellation_tokens(value: str) -> set[str]:
+    """Include conservative verb stems when matching an event withdrawal."""
+    tokens = _tokens(value)
+    expanded = set(tokens)
+    for token in tokens:
+        if token.endswith("ing") and len(token) > 5:
+            stem = token[:-3]
+            expanded.add(stem)
+            if len(stem) > 2 and stem[-1] == stem[-2]:
+                expanded.add(stem[:-1])
+    return expanded
 
 
 def _normalize_text(value: str) -> str:

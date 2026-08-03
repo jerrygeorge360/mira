@@ -30,6 +30,14 @@ def test_retrieval_trace_endpoint_returns_trace_shape(tmp_path: Any, monkeypatch
             "query": "What changed?",
             "retrieval_mode": "relational",
             "retrieved_records_json": [{"id": "edge_1", "source": "graph"}],
+            "sufficiency_json": {
+                "routing_decision": {
+                    "context_scope": "durable_memory",
+                    "mode": "relational",
+                    "confidence": 0.9,
+                    "reason": "stored relationship required",
+                }
+            },
         }
     )
     trace_id = create_answer_trace(
@@ -62,6 +70,12 @@ def test_retrieval_trace_endpoint_returns_trace_shape(tmp_path: Any, monkeypatch
     assert response.assistant_observation_id == assistant_observation_id
     assert response.query == "What changed?"
     assert response.retrieval_mode == "relational"
+    assert response.routing_decision == {
+        "context_scope": "durable_memory",
+        "mode": "relational",
+        "confidence": 0.9,
+        "reason": "stored relationship required",
+    }
     assert response.retrieved_observation_ids == [user_observation_id]
     assert response.retrieved_fact_ids == ["fact_1"]
     assert response.session_item_ids == ["sws_1"]

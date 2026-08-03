@@ -13,11 +13,13 @@ from api.auth import AuthenticatedWorkspace
 from api.routes.sessions import (
     create_session_route,
     delete_session_route,
+    get_session_messages_route,
     get_session_route,
     get_working_set_route,
     list_sessions_route,
+    update_session_route,
 )
-from api.schemas.sessions import CreateSessionRequest
+from api.schemas.sessions import CreateSessionRequest, UpdateSessionRequest
 from core.db import chroma
 from core.db.repositories import (
     WorkspaceContext,
@@ -30,6 +32,7 @@ from core.db.repositories import (
     create_graph_edge,
     create_graph_node,
     create_reflection,
+    create_retrieval_log,
     create_session,
     create_session_item,
     create_working_memory_item,
@@ -79,6 +82,82 @@ def test_session_list_message_counts_are_workspace_scoped(tmp_path: Any, monkeyp
     assert [(session.session_id, session.message_count) for session in response.sessions] == [
         (session_a, 1)
     ]
+
+
+def test_session_can_be_renamed_and_starred_within_its_workspace(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    configure_database(tmp_path / "api-session-update.sqlite3")
+    workspace_a = create_workspace("A", "session-update-a", "development")
+    workspace_b = create_workspace("B", "session-update-b", "development")
+    auth_a = AuthenticatedWorkspace(WorkspaceContext(workspace_a, auth_mode="development"))
+    auth_b = AuthenticatedWorkspace(WorkspaceContext(workspace_b, auth_mode="development"))
+    session_id = create_session("a", "Original", workspace_id=workspace_a)
+    other_session_id = create_session("a", "Recent but unstarred", workspace_id=workspace_a)
+
+    updated = update_session_route(
+        REQUEST,
+        session_id,
+        UpdateSessionRequest(title="  Renamed chat  ", is_starred=True),
+        auth_a,
+    )
+
+    assert updated.title == "Renamed chat"
+    assert updated.is_starred is True
+    listed = list_sessions_route(auth_a).sessions
+    assert [(session.session_id, session.title, session.is_starred) for session in listed] == [
+        (session_id, "Renamed chat", True),
+        (other_session_id, "Recent but unstarred", False),
+    ]
+    with pytest.raises(HTTPException) as error:
+        update_session_route(
+            REQUEST,
+            session_id,
+            UpdateSessionRequest(is_starred=False),
+            auth_b,
+        )
+    assert error.value.status_code == 404
+
+
+def test_session_messages_include_persisted_routing_metadata(
+    tmp_path: Any,
+    monkeypatch: Any,
+) -> None:
+    configure_database(tmp_path / "api-session-messages.sqlite3")
+    session_id = create_session("development")
+    user_observation_id = save_observation(session_id, "user", "What is my deadline?")
+    assistant_observation_id = save_observation(session_id, "assistant", "Friday.")
+    retrieval_log_id = create_retrieval_log(
+        {
+            "session_id": session_id,
+            "query": "What is my deadline?",
+            "retrieval_mode": "quick",
+            "retrieved_records_json": [],
+            "sufficiency_json": {
+                "routing_decision": {
+                    "context_scope": "durable_memory",
+                    "retrieval_mode": "quick",
+                }
+            },
+        }
+    )
+    trace_id = create_answer_trace(
+        {
+            "session_id": session_id,
+            "user_observation_id": user_observation_id,
+            "assistant_observation_id": assistant_observation_id,
+            "retrieval_mode": "quick",
+            "retrieval_log_id": retrieval_log_id,
+        }
+    )
+
+    response = get_session_messages_route(session_id, AUTH)
+
+    assert response.messages[0].retrieval_mode is None
+    assert response.messages[1].retrieval_mode == "quick"
+    assert response.messages[1].context_scope == "durable_memory"
+    assert response.messages[1].trace_id == trace_id
 
 
 def test_working_set_endpoint_returns_grouped_shape(tmp_path: Any, monkeypatch: Any) -> None:

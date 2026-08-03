@@ -1,11 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Send, Sparkles } from 'lucide-react';
+import { Route, Send, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import { api } from '../api/client';
+import type { LlmUsageSummary } from '../api/client';
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Message = {
+  role: 'user' | 'assistant';
+  content: string;
+  contextScope?: string | null;
+  retrievalMode?: string | null;
+  traceId?: string | null;
+  llmUsage?: LlmUsageSummary | null;
+};
 
 export default function ChatView() {
   const {
@@ -16,6 +24,7 @@ export default function ChatView() {
     sessionId,
     setSessionId,
     setLastTraceId,
+    setView,
   } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -41,7 +50,13 @@ export default function ChatView() {
       .sessionMessages(activeThread)
       .then((res) => {
         if (!active) return;
-        setMessages(res.messages.map((m) => ({ role: m.role as Message['role'], content: m.content })));
+        setMessages(res.messages.map((m) => ({
+          role: m.role as Message['role'],
+          content: m.content,
+          contextScope: m.context_scope,
+          retrievalMode: m.retrieval_mode,
+          traceId: m.trace_id,
+        })));
         setStatus(`${res.messages.length} message${res.messages.length === 1 ? '' : 's'}`);
         loadedRef.current = activeThread;
       })
@@ -116,6 +131,12 @@ export default function ChatView() {
                 }
               }
               if (event.trace_id) setLastTraceId(event.trace_id);
+              setMessages(current => withRoutingMetadata(current, {
+                contextScope: stringValue(event.routing_decision?.context_scope),
+                retrievalMode: event.retrieval_mode,
+                traceId: event.trace_id,
+                llmUsage: event.llm_usage,
+              }));
               setStatus(`Real backend · ${event.retrieval_mode}`);
               return;
             }
@@ -153,7 +174,14 @@ export default function ChatView() {
             }
           }
           if (res.trace_id) setLastTraceId(res.trace_id);
-          setMessages([...next, { role: 'assistant', content: res.answer }]);
+          setMessages([...next, {
+            role: 'assistant',
+            content: res.answer,
+            contextScope: stringValue(res.routing_decision?.context_scope),
+            retrievalMode: res.retrieval_mode,
+            traceId: res.trace_id,
+            llmUsage: res.llm_usage,
+          }]);
           setStatus(`Real backend · ${res.retrieval_mode}`);
         }
       }
@@ -161,7 +189,12 @@ export default function ChatView() {
       await new Promise(r => setTimeout(r, 600));
       const reply =
         "I've pulled context from your durable memory and session working set. The main signal is still active — let me know if you'd like a deeper trace or a retrieval breakdown.";
-      setMessages([...next, { role: 'assistant', content: reply }]);
+      setMessages([...next, {
+        role: 'assistant',
+        content: reply,
+        contextScope: 'durable_memory',
+        retrievalMode: 'quick',
+      }]);
       setStatus('Demo response · quick retrieval');
     }
     setLoading(false);
@@ -175,9 +208,23 @@ export default function ChatView() {
         {messages.map((m, i) => (
           <div key={i} className={`chat-turn ${m.role}`}>
             {m.role === 'assistant' && <div className="bot-avatar"><BrandMark size={17} /></div>}
-            <div className="chat-bubble">
-              {m.role === 'assistant' ? <MarkdownText content={m.content} /> : m.content}
-            </div>
+            {m.role === 'assistant' ? (
+              <div className="assistant-message">
+                <div className="chat-bubble"><MarkdownText content={m.content} /></div>
+                <RoutingIndicator
+                  contextScope={m.contextScope}
+                  retrievalMode={m.retrievalMode}
+                  traceId={m.traceId}
+                  llmUsage={m.llmUsage}
+                  onInspect={(traceId) => {
+                    setLastTraceId(traceId);
+                    setView('Retrieval Trace');
+                  }}
+                />
+              </div>
+            ) : (
+              <div className="chat-bubble">{m.content}</div>
+            )}
           </div>
         ))}
 
@@ -248,6 +295,106 @@ export default function ChatView() {
       </div>
     </div>
   );
+}
+
+function RoutingIndicator({
+  contextScope,
+  retrievalMode,
+  traceId,
+  llmUsage,
+  onInspect,
+}: {
+  contextScope?: string | null;
+  retrievalMode?: string | null;
+  traceId?: string | null;
+  llmUsage?: LlmUsageSummary | null;
+  onInspect: (traceId: string) => void;
+}) {
+  if (!contextScope && !retrievalMode) return null;
+  const compressionPercent = llmUsage && llmUsage.gateway_input_tokens_original > 0
+    ? Math.round(
+      (llmUsage.gateway_tokens_saved / llmUsage.gateway_input_tokens_original) * 100,
+    )
+    : 0;
+  const content = (
+    <>
+      <Route size={12} />
+      <span>{routingLabel(contextScope)}</span>
+      <span aria-hidden="true">·</span>
+      <span>{retrievalLabel(retrievalMode)}</span>
+      {llmUsage && llmUsage.calls > 0 && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span title={llmUsage.fully_measured ? 'Provider-reported usage' : 'Includes estimates'}>
+            {llmUsage.input_tokens.toLocaleString()} in / {llmUsage.output_tokens.toLocaleString()} out
+          </span>
+        </>
+      )}
+      {llmUsage && llmUsage.paritok_calls > 0 && llmUsage.gateway_savings_fully_measured && (
+        <>
+          <span aria-hidden="true">·</span>
+          <span
+            className="chat-token-saving"
+            title="Request-scoped token reduction reported by the Paritok proxy"
+          >
+            Paritok saved {llmUsage.gateway_tokens_saved.toLocaleString()} ({compressionPercent}%)
+          </span>
+        </>
+      )}
+    </>
+  );
+  if (!traceId) return <div className="chat-routing-indicator">{content}</div>;
+  return (
+    <button
+      type="button"
+      className="chat-routing-indicator is-action"
+      onClick={() => onInspect(traceId)}
+      title="Open this answer's retrieval trace"
+    >
+      {content}
+    </button>
+  );
+}
+
+function routingLabel(value?: string | null): string {
+  const labels: Record<string, string> = {
+    no_retrieval: 'No retrieval context',
+    general_knowledge: 'General knowledge',
+    recent_conversation: 'Recent conversation',
+    session_memory: 'Session memory',
+    durable_memory: 'Durable memory',
+    mixed: 'Mixed context',
+  };
+  return value ? labels[value] ?? titleCase(value) : 'Context unavailable';
+}
+
+function retrievalLabel(value?: string | null): string {
+  if (!value || value === 'general') return 'No durable retrieval';
+  return `${titleCase(value)} retrieval`;
+}
+
+function titleCase(value: string): string {
+  return value
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, character => character.toUpperCase());
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function withRoutingMetadata(messages: Message[], metadata: Partial<Message>): Message[] {
+  let index = -1;
+  for (let candidate = messages.length - 1; candidate >= 0; candidate -= 1) {
+    if (messages[candidate].role === 'assistant') {
+      index = candidate;
+      break;
+    }
+  }
+  if (index < 0) return messages;
+  const updated = [...messages];
+  updated[index] = { ...updated[index], ...metadata };
+  return updated;
 }
 
 function MarkdownText({ content }: { content: string }) {

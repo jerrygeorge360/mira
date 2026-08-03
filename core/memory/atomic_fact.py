@@ -24,6 +24,12 @@ MAX_CONFIDENCE = 1.0
 _VALUE = r"(.+?)"
 _STOP = r"(?=\s+for\b|\s+because\b|\s+since\b|[.!?]|$)"
 _TRANSITION_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"\b(?:i|we)\s+(?:switched|moved|migrated|changed)\s+"
+        rf"(?:my|our|the)\s+[\w -]{{1,60}}\s+from\s+{_VALUE}\s+to\s+{_VALUE}"
+        rf"(?:\s+(?:last|this)\s+(?:month|week|year))?{_STOP}",
+        re.IGNORECASE,
+    ),
     re.compile(rf"\bswitched\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
     re.compile(rf"\bmigrated\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),
     re.compile(rf"\bmoved\s+from\s+{_VALUE}\s+to\s+{_VALUE}{_STOP}", re.IGNORECASE),

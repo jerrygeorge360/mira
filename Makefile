@@ -1,4 +1,4 @@
-.PHONY: help install run api slack mcp worker provider-check graph-inspect slow-path-status memory-search demo-cleanup local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build
+.PHONY: help install run api slack mcp worker provider-check graph-inspect slow-path-status memory-search demo-cleanup local-eval test test-slack lint format type security check fix precommit clean ablation ablation-live benchmark benchmark-cost benchmark-subset frontend-install frontend-dev frontend-build mira-paritok-up mira-paritok-down paritok-up paritok-stats token-compare
 
 PYTHON ?= python3
 SOURCES := core ui slack evaluation scripts api integrations
@@ -15,6 +15,11 @@ help:
 		'  mcp        Run the standalone MCP memory service' \
 		'  worker     Run the slow-path background memory worker' \
 		'  provider-check  Smoke-check configured chat and embedding providers' \
+		'  mira-paritok-up   Start the complete MIRA stack with Paritok' \
+		'  mira-paritok-down Stop the MIRA and Paritok containers' \
+		'  paritok-up        Add Paritok to an already-running MIRA stack' \
+		'  paritok-stats  Show live Paritok proxy compression totals' \
+		'  token-compare  Run a controlled direct-vs-Paritok prompt comparison' \
 		'  graph-inspect   Print a JSON snapshot of the memory graph' \
 		'  slow-path-status Print slow-path queue and artifact health' \
 		'  memory-search   Embed a query and search vector memory' \
@@ -100,6 +105,21 @@ worker:
 
 provider-check:
 	$(PYTHON) -m scripts.check_provider --require-live-embeddings
+
+mira-paritok-up:
+	docker compose --profile paritok up -d --build
+
+mira-paritok-down:
+	docker compose --profile paritok down
+
+paritok-up:
+	docker compose --profile paritok up -d --build paritok
+
+paritok-stats:
+	curl -fsS http://127.0.0.1:$${PARITOK_PORT:-8081}/stats
+
+token-compare:
+	$(PYTHON) -m scripts.compare_token_usage $${INPUT:+--input "$$INPUT"} $${LIMIT:+--limit $$LIMIT} --out $${OUT:-tmp/token-comparison.json}
 
 graph-inspect:
 	$(PYTHON) -m scripts.inspect_graph --workspace-id "$${WORKSPACE_ID:?set WORKSPACE_ID}" --limit $${LIMIT:-50} $${ENTITY:+--entity "$$ENTITY"}

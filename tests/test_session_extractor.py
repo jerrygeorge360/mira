@@ -65,6 +65,51 @@ def test_architecture_sentence_about_corrections_is_no_op() -> None:
     assert operations[0]["reason"] == "no_session_state_operation_detected"
 
 
+def test_vague_deictic_correction_is_not_added_to_working_set() -> None:
+    operations = extract_session_operations(
+        "obs-1",
+        "Actually that's wrong.",
+        ["You switched from Redis to Memcached."],
+        [],
+    )
+
+    assert operations[0]["op"] == "no_op"
+    assert operations[0]["reason"] == "unresolved_correction_target"
+
+
+def test_not_anymore_statement_is_a_correction() -> None:
+    operations = extract_session_operations(
+        "obs-1",
+        "The interview is not next Tuesday anymore.",
+        ["The interview is next Tuesday."],
+        [],
+    )
+
+    assert operations[0]["type"] == "correction"
+
+
+def test_named_layer_transition_is_a_correction() -> None:
+    operations = extract_session_operations(
+        "obs-1",
+        "I moved my caching layer from Redis to Memcached last month.",
+        [],
+        [],
+    )
+
+    assert operations[0]["type"] == "correction"
+
+
+def test_contextual_temporal_amendment_is_a_correction() -> None:
+    operations = extract_session_operations(
+        "obs-1",
+        "It moved to the following week.",
+        ["My interview is next Tuesday."],
+        [],
+    )
+
+    assert operations[0]["type"] == "correction"
+
+
 def test_negative_architecture_sentence_is_no_op() -> None:
     """Ordinary negative facts should be left for durable slow-path extraction."""
     operations = extract_session_operations(
@@ -134,14 +179,46 @@ def test_ignore_that_for_now_extracts_expire_with_target_items() -> None:
                 "id": "sws_question",
                 "content": "Should we add recursive summaries?",
                 "status": "provisional",
+                "source_observations": ["obs_question"],
             }
         ],
+        turn_purpose="resolution",
+        resolution_target_observation_id="obs_question",
     )
 
     assert operations[0]["op"] == "expire"
     assert operations[0]["type"] == "resolution"
     assert operations[0]["supersedes"] == ["sws_question"]
     assert operations[0]["evidence_span"] == "Let's ignore that for now."
+
+
+def test_ambiguous_resolution_does_not_target_unrelated_working_set_item() -> None:
+    operations = extract_session_operations(
+        "obs_ignore_latest",
+        "Ignore that.",
+        [],
+        [
+            {
+                "id": "older_constraint",
+                "content": "Use concise responses.",
+                "status": "confirmed",
+                "created_at": "2026-07-01T10:00:00+00:00",
+                "source_observations": ["obs_constraint"],
+            },
+            {
+                "id": "latest_question",
+                "content": "Should we change the cache?",
+                "status": "provisional",
+                "created_at": "2026-07-01T11:00:00+00:00",
+                "source_observations": ["obs_question"],
+            },
+        ],
+        turn_purpose="resolution",
+        resolution_target_observation_id="obs_social_reaction",
+    )
+
+    assert operations[0]["op"] == "no_op"
+    assert operations[0]["reason"] == "unresolved_resolution_target"
 
 
 def test_maybe_python_later_is_no_op() -> None:

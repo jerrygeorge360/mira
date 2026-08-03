@@ -55,6 +55,19 @@ def test_detect_transitions_extracts_prior_and_current(text: str, prior: str, cu
     assert transitions[0]["current_object"] == current
 
 
+def test_detect_transition_with_named_layer_between_verb_and_values() -> None:
+    transitions = detect_transitions("I moved my caching layer from Redis to Memcached last month.")
+
+    assert transitions == [
+        {
+            "subject": "user",
+            "predicate": "uses",
+            "prior_object": "Redis",
+            "current_object": "Memcached",
+        }
+    ]
+
+
 @pytest.mark.parametrize(
     "text",
     [

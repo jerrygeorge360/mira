@@ -24,10 +24,14 @@ REQUIRED_PROMPTS = {
     "entity_extraction",
     "contradiction_supersession_detection",
     "foresight_detection",
+    "foresight_reconciliation",
     "reflection_synthesis",
     "community_summary_generation",
     "retrieval_router_classification",
+    "context_scope_classification",
+    "retrieval_mode_classification",
     "turn_purpose_classification",
+    "discourse_reference_resolution",
     "sufficiency_check",
     "answer_generation",
 }
@@ -54,10 +58,18 @@ def test_prompt_templates_render_with_inputs() -> None:
                 "community_nodes": [],
                 "query": "What changed?",
                 "context": [],
+                "turn_purpose": "question",
+                "context_scope": "durable_memory",
                 "retrieved_context": [],
                 "user_message": "Summarize this.",
                 "answer_mode": "general_knowledge",
+                "evidence_assessment": "Not evaluated.",
                 "prompt_context": [],
+                "current_time": "2026-07-22T08:00:00+01:00",
+                "reference_text": None,
+                "latest_statement": "The class was cancelled.",
+                "latest_message": "Ignore the autoscaling threshold.",
+                "candidates": [],
             },
         )
         for name in list_prompt_names()
@@ -81,6 +93,16 @@ def test_json_schema_examples_parse() -> None:
         assert isinstance(schema, dict), name
         assert schema["type"] == "object"
         assert json.loads(json.dumps(example)) == example
+
+
+def test_atomic_fact_prompt_treats_reusable_configuration_as_durable() -> None:
+    rendered = render_prompt(
+        "atomic_fact_extraction",
+        {"evidence": "I configured a liveness probe every 15 seconds."},
+    )
+
+    assert "configuration state" in rendered
+    assert "reusable beyond the immediate reply" in rendered
 
 
 def test_session_extraction_prompt_includes_operation_taxonomy() -> None:
@@ -114,3 +136,24 @@ def test_answer_generation_prompt_handles_declarative_updates() -> None:
     assert "declarative update" in rendered_prompt
     assert "do not summarize unrelated memories" in rendered_prompt
     assert "Retrieved context is optional evidence" in rendered_prompt
+
+
+def test_router_schema_requires_scope_and_confidence() -> None:
+    schema = get_output_schema("retrieval_router_classification")
+
+    assert set(schema["required"]) == {"context_scope", "mode", "confidence", "reason"}
+    properties = schema["properties"]
+    assert "recent_conversation" in properties["context_scope"]["enum"]
+
+
+def test_sequential_router_schemas_separate_scope_from_mode() -> None:
+    scope_schema = get_output_schema("context_scope_classification")
+    mode_schema = get_output_schema("retrieval_mode_classification")
+
+    assert "no_retrieval" in scope_schema["properties"]["context_scope"]["enum"]
+    assert set(mode_schema["properties"]["mode"]["enum"]) == {
+        "quick",
+        "deep",
+        "relational",
+    }
+    assert "auto" not in mode_schema["properties"]["mode"]["enum"]

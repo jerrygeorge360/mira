@@ -13,6 +13,7 @@ class RetrievalTraceResponse(BaseModel):
     user_observation_id: str
     assistant_observation_id: str
     retrieval_mode: str
+    routing_decision: dict[str, object] | None = None
     query: str | None = None
     retrieved_observation_ids: list[str]
     retrieved_fact_ids: list[str]

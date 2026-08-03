@@ -19,6 +19,7 @@ from core.db.repositories import (
     create_atomic_fact,
     create_community_summary,
     create_foresight_record,
+    create_llm_usage_event,
     create_reflection,
     create_session,
     create_session_item,
@@ -179,6 +180,30 @@ def test_memory_lifecycle_endpoint_links_pipeline_artifacts(
     )
     mark_slow_path_step_started(LEGACY_WORKSPACE_ID, observation_id, "atomic_fact_extraction")
     mark_slow_path_step_completed(LEGACY_WORKSPACE_ID, observation_id, "atomic_fact_extraction")
+    create_llm_usage_event(
+        {
+            "workspace_id": LEGACY_WORKSPACE_ID,
+            "run_id": "slow-path-test-run",
+            "session_id": session_id,
+            "observation_id": observation_id,
+            "component": "slow_path",
+            "operation": "atomic_fact_extraction",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "gateway": "paritok",
+            "status": "succeeded",
+            "usage_source": "provider",
+            "input_tokens": 80,
+            "output_tokens": 20,
+            "total_tokens": 100,
+            "estimated_input_tokens": 90,
+            "gateway_input_tokens_original": 120,
+            "gateway_input_tokens_compressed": 70,
+            "gateway_tokens_saved": 50,
+            "latency_ms": 400,
+            "prompt_fingerprint": "slow-path-prompt-hash",
+        }
+    )
     with repository_connection() as connection:
         connection.execute(
             "UPDATE observations SET processed_at = created_at WHERE id = ?",
@@ -197,6 +222,18 @@ def test_memory_lifecycle_endpoint_links_pipeline_artifacts(
     assert row["fast_path"]["status"] == "completed"
     assert row["session_extraction"]["counts"] == {"correction": 1}
     assert row["slow_path"]["status"] == "completed"
+    assert row["slow_path"]["llm_usage"]["calls"] == 1
+    assert row["slow_path"]["llm_usage"]["input_tokens"] == 80
+    assert row["slow_path"]["llm_usage"]["gateway_tokens_saved"] == 50
+    assert row["slow_path"]["llm_usage"]["operations"] == [
+        {
+            "name": "atomic_fact_extraction",
+            "calls": 1,
+            "input_tokens": 80,
+            "output_tokens": 20,
+            "gateway_tokens_saved": 50,
+        }
+    ]
     assert row["artifacts"]["atomic_facts"] == 1
     assert row["artifacts"]["foresight_records"] == 1
 

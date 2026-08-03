@@ -109,7 +109,7 @@ def test_full_loop_session_correction_to_cross_session_recall(
     # --- Session 1: original value, then correction -------------------------
     session_one = create_session("jerry")
     original = handle_user_message(session_one, "The project year is 2025.")
-    assert "2025" in str(original["answer"])  # original value before correction
+    assert original["routing_decision"]["route"] == "acknowledge_and_store"
     run_slow_path_for_observation(str(original["user_observation_id"]))  # durable 2025 fact
 
     corrected = handle_user_message(session_one, CORRECTION_MESSAGE)

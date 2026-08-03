@@ -7,8 +7,10 @@ Architecture area: slow path.
 
 from __future__ import annotations
 
+import json
 import logging
 import math
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -38,6 +40,7 @@ from core.db.schema import LEGACY_WORKSPACE_ID
 from core.llm.embeddings import embed_text
 from core.llm.prompts import render_prompt
 from core.llm.qwen import LLMClientError, call_qwen_json
+from core.llm.usage import llm_usage_context, new_usage_run_id
 from core.memory.atomic_fact import detect_transitions, extract_atomic_facts, store_atomic_facts
 from core.memory.change import apply_contradiction, apply_supersession, detect_memory_change
 from core.memory.community import (
@@ -46,9 +49,9 @@ from core.memory.community import (
     summarize_community,
 )
 from core.memory.foresight import (
-    cancel_matching_foresight,
     create_foresight,
     detect_foresight,
+    reconcile_foresight_lifecycle,
     refresh_foresight_lifecycle,
 )
 from core.memory.graph import (
@@ -283,6 +286,27 @@ def run_slow_path_for_observation(
     observation_id: str,
     config: SlowPathSemanticConfig | None = None,
 ) -> OrchestratorResult:
+    """Run one slow-path observation with all model calls grouped in one usage run."""
+    observation = _load_observation(observation_id)
+    if observation is None:
+        return _run_slow_path_for_observation(observation_id, config)
+    workspace_id = workspace_id_for_observation(observation_id)
+    raw_session_id = observation.get("session_id")
+    session_id = raw_session_id if isinstance(raw_session_id, str) else None
+    with llm_usage_context(
+        run_id=new_usage_run_id("slow-path"),
+        workspace_id=workspace_id,
+        component="slow_path",
+        session_id=session_id,
+        observation_id=observation_id,
+    ):
+        return _run_slow_path_for_observation(observation_id, config)
+
+
+def _run_slow_path_for_observation(
+    observation_id: str,
+    config: SlowPathSemanticConfig | None = None,
+) -> OrchestratorResult:
     """Chain the implemented slow-path memory steps for one observation.
 
     Confirms session items, promotes durable candidates, extracts atomic facts,
@@ -317,6 +341,7 @@ def run_slow_path_for_observation(
                 content,
                 observation,
                 workspace_id,
+                context,
             ),
         ),
         (
@@ -331,7 +356,10 @@ def run_slow_path_for_observation(
             lambda: _step_reflection_invalidation(observation_id, context, semantic_config),
         ),
         ("tier_update", lambda: _step_tiers(context)),
-        ("foresight_detection", lambda: _step_foresight(observation_id, content, semantic_config)),
+        (
+            "foresight_detection",
+            lambda: _step_foresight(observation_id, content, semantic_config, context),
+        ),
     )
     for step_name, step in steps:
         if slow_path_step_completed(workspace_id, observation_id, step_name):
@@ -705,6 +733,17 @@ def _step_embedding_index(
 
 
 _AGENT_SELF_SUBJECTS = frozenset({"i", "me", "my", "myself", "assistant", "agent", "mira", "ai"})
+_PURE_QUESTION_PREFIX_RE = re.compile(
+    r"^(?:(?:alright|also|and|but|okay|ok|so|well|yeah|yh)[,\s]+)*"
+    r"(?:am|are|can|could|did|do|does|explain|how|is|should|tell me|what|when|"
+    r"where|which|who|why|will|would)\b",
+    re.IGNORECASE,
+)
+_ASSERTION_PREFIX_RE = re.compile(
+    r"^(?:i am|i have|i prefer|i use|i switched|i work|i'm|i've|my|our|we are|we have|"
+    r"we use)\b",
+    re.IGNORECASE,
+)
 
 
 def _agent_self_facts(facts: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -739,6 +778,17 @@ def _step_atomic_facts(
     if existing:
         context["fact_ids"] = existing
         return {}
+    observation = _load_observation(observation_id)
+    if observation is not None and (
+        _has_unresolved_reference(observation) or _is_resolution_observation(observation)
+    ):
+        context["fact_ids"] = []
+        return {}
+    if _observation_role(observation_id) == "user" and (
+        _is_pure_question(content) or _is_unresolved_deictic_correction(content)
+    ):
+        context["fact_ids"] = []
+        return {}
     facts = extract_atomic_facts(observation_id, content)
     if _observation_role(observation_id) != "user":
         # Assistant/system turns contribute only what the agent says about itself.
@@ -748,7 +798,37 @@ def _step_atomic_facts(
     return {"atomic_facts": fact_ids}
 
 
+def _is_pure_question(content: str) -> bool:
+    """Reject interrogative premises while retaining assertions followed by requests."""
+    normalized = " ".join(content.strip().split())
+    if not normalized or _ASSERTION_PREFIX_RE.search(normalized):
+        return False
+    return bool(_PURE_QUESTION_PREFIX_RE.search(normalized))
+
+
+def _is_unresolved_deictic_correction(content: str) -> bool:
+    """Keep a vague retraction out of durable memory until the user identifies its target."""
+    normalized = " ".join(content.casefold().strip(" .!?").split())
+    return normalized in {
+        "actually that is wrong",
+        "actually that's wrong",
+        "it is no longer true",
+        "it's no longer true",
+        "that is wrong",
+        "that's wrong",
+        "that is no longer true",
+        "that's no longer true",
+        "that isn't true anymore",
+        "that is not true anymore",
+        "that's not true anymore",
+        "not true anymore",
+    }
+
+
 def _step_entities(observation_id: str, content: str, workspace_id: str) -> dict[str, list[str]]:
+    observation = _load_observation(observation_id)
+    if observation is not None and _is_resolution_observation(observation):
+        return {}
     try:
         entities = extract_entities(content, workspace_id=workspace_id)
     except TypeError as error:
@@ -1062,10 +1142,13 @@ def _step_changes(
         # merely paraphrase them, so running change detection on assistant observations only
         # duplicates edges the user turn already produced.
         return {"graph_edges": []}
+    retracted_fact_ids, retracted_observation_id = _expire_resolved_reference_facts(observation_id)
     transition_edge_ids: list[str] = _apply_transition_supersessions(observation_id, content)
     general_edge_ids: list[str] = []
     general_superseded = 0
-    recheck_observations: set[str] = set()
+    recheck_observations: set[str] = (
+        {retracted_observation_id} if retracted_observation_id is not None else set()
+    )
     for fact_id in context.get("fact_ids", []):
         fact = _fetch_fact(fact_id)
         if fact is None or str(fact.get("status")) != "active":
@@ -1117,7 +1200,56 @@ def _step_changes(
     # Reflections built on facts that were just superseded/contradicted must be
     # re-evaluated for staleness; the invalidation step reads this from context.
     context["reflection_recheck_observations"] = sorted(recheck_observations)
+    if retracted_fact_ids:
+        context["retracted_fact_ids"] = retracted_fact_ids
     return {"graph_edges": transition_edge_ids + general_edge_ids}
+
+
+def _expire_resolved_reference_facts(
+    resolution_observation_id: str,
+) -> tuple[list[str], str | None]:
+    observation = _load_observation(resolution_observation_id)
+    if observation is None or not _is_resolution_observation(observation):
+        return [], None
+    target_id = _resolved_reference_target_id(observation)
+    if target_id is None:
+        return [], None
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id
+            FROM atomic_facts
+            WHERE workspace_id = ? AND source_observation_id = ? AND status = 'active'
+            """,
+            (observation.get("workspace_id"), target_id),
+        ).fetchall()
+        fact_ids = [str(row["id"]) for row in rows]
+        if fact_ids:
+            placeholders = ", ".join("?" for _ in fact_ids)
+            connection.execute(
+                f"UPDATE atomic_facts SET status = 'expired' "  # nosec B608
+                f"WHERE id IN ({placeholders})",
+                tuple(fact_ids),
+            )
+            connection.execute(
+                f"""
+                UPDATE working_memory
+                SET status = 'expired', updated_at = ?
+                WHERE source_record_type = 'atomic_facts'
+                  AND source_record_id IN ({placeholders})
+                  AND status = 'active'
+                """,  # nosec B608
+                (_now(), *fact_ids),
+            )
+    if fact_ids:
+        log_event(
+            "reference_facts_expired",
+            "Resolved reference withdrew durable facts from the selected source",
+            observation_id=resolution_observation_id,
+            target_observation_id=target_id,
+            fact_ids=fact_ids,
+        )
+    return fact_ids, target_id
 
 
 def _step_tiers(context: dict[str, list[str]]) -> dict[str, list[str]]:
@@ -1278,10 +1410,21 @@ def _step_foresight(
     observation_id: str,
     content: str,
     config: SlowPathSemanticConfig,
+    context: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
     if not config.enable_foresight:
         return {}
+    if context and context.get("foresight_lifecycle_actions"):
+        return {}
+    if _observation_role(observation_id) != "user":
+        # Assistant acknowledgements may repeat a user's future event, but they are not
+        # independent evidence and must not create duplicate user foresight.
+        return {}
     observation = _load_observation(observation_id)
+    if observation is not None and (
+        _has_unresolved_reference(observation) or _is_resolution_observation(observation)
+    ):
+        return {}
     session_id = _optional_str(observation.get("session_id")) if observation else None
     ambient_context: dict[str, object] = (
         build_ambient_context(session_id) if session_id else {"current_time": _now()}
@@ -1309,16 +1452,98 @@ def _step_foresight_reconciliation(
     content: str,
     observation: dict[str, object],
     workspace_id: str,
+    context: dict[str, list[str]] | None = None,
 ) -> dict[str, list[str]]:
-    """Apply explicit user cancellations before provider-dependent slow-path work."""
+    """Apply validated workspace Foresight lifecycle updates before new detection."""
     if observation.get("role") != "user":
         return {}
-    cancelled = cancel_matching_foresight(
+    if _has_unresolved_reference(observation):
+        log_event(
+            "foresight_reconciliation_skipped",
+            "Foresight lifecycle left unchanged until the reference is clarified",
+            observation_id=observation_id,
+        )
+        return {}
+    session_id = _optional_str(observation.get("session_id"))
+    reference_text = _resolved_reference_text(observation)
+    if reference_text is None and session_id:
+        reference_text = _previous_retrieved_foresight_text(session_id, content)
+    ambient_context = build_ambient_context(session_id) if session_id else {}
+    lifecycle = reconcile_foresight_lifecycle(
         observation_id,
         content,
         workspace_id=workspace_id,
+        session_id=session_id,
+        reference_text=reference_text,
+        current_time=_optional_str(ambient_context.get("current_time")),
     )
-    return {"foresight_records": cancelled} if cancelled else {}
+    affected: list[str] = []
+    for key in ("cancelled", "resolved", "created"):
+        record_ids = lifecycle.get(key)
+        if isinstance(record_ids, list):
+            affected.extend(record_id for record_id in record_ids if isinstance(record_id, str))
+    lifecycle_handled = bool(
+        affected or lifecycle.get("retained") or lifecycle.get("needs_clarification")
+    )
+    if context is not None and lifecycle_handled:
+        context["foresight_lifecycle_actions"] = affected or ["handled"]
+    if lifecycle.get("needs_clarification"):
+        log_event(
+            "foresight_reconciliation_ambiguous",
+            "Foresight update requires clarification; lifecycle left unchanged",
+            observation_id=observation_id,
+            clarification=lifecycle.get("clarification"),
+        )
+    log_event(
+        "foresight_reconciliation_completed",
+        "Foresight lifecycle reconciliation completed",
+        observation_id=observation_id,
+        cancelled=_list_count(lifecycle.get("cancelled")),
+        resolved=_list_count(lifecycle.get("resolved")),
+        created=_list_count(lifecycle.get("created")),
+        retained=_list_count(lifecycle.get("retained")),
+        needs_clarification=bool(lifecycle.get("needs_clarification")),
+        fallback_used=bool(lifecycle.get("fallback_used")),
+    )
+    return {"foresight_records": affected} if affected else {}
+
+
+def _previous_retrieved_foresight_text(session_id: str, current_query: str) -> str | None:
+    """Resolve an anaphoric update against Foresight used by the preceding answer."""
+    with repository_connection() as connection:
+        log_rows = connection.execute(
+            """
+            SELECT retrieved_records_json
+            FROM retrieval_logs
+            WHERE session_id = ? AND query != ?
+            ORDER BY created_at DESC
+            LIMIT 8
+            """,
+            (session_id, current_query),
+        ).fetchall()
+        for log_row in log_rows:
+            try:
+                records = json.loads(str(log_row["retrieved_records_json"]))
+            except (TypeError, ValueError):
+                continue
+            foresight_ids = [
+                str(record.get("id"))
+                for record in records
+                if isinstance(record, dict)
+                and record.get("source") == "foresight_records"
+                and record.get("id")
+            ]
+            if not foresight_ids:
+                continue
+            placeholders = ",".join("?" for _ in foresight_ids)
+            rows = connection.execute(
+                f"SELECT content FROM foresight_records "  # nosec B608
+                f"WHERE id IN ({placeholders}) AND status IN ('pending', 'active')",
+                tuple(foresight_ids),
+            ).fetchall()
+            if rows:
+                return "\n".join(str(row["content"]) for row in rows)
+    return None
 
 
 def _step_reflection_invalidation(
@@ -1407,6 +1632,49 @@ def _load_observation(observation_id: str) -> dict[str, object] | None:
             (observation_id,),
         ).fetchone()
     return None if row is None else dict(row)
+
+
+def _has_unresolved_reference(observation: dict[str, object]) -> bool:
+    metadata = _observation_metadata(observation)
+    resolution = metadata.get("reference_resolution")
+    return isinstance(resolution, dict) and resolution.get("status") in {
+        "ambiguous",
+        "unresolved",
+    }
+
+
+def _is_resolution_observation(observation: dict[str, object]) -> bool:
+    return _observation_metadata(observation).get("turn_purpose") == "resolution"
+
+
+def _resolved_reference_text(observation: dict[str, object]) -> str | None:
+    target_id = _resolved_reference_target_id(observation)
+    if target_id is None:
+        return None
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT content FROM observations WHERE id = ? AND workspace_id = ?",
+            (target_id, observation.get("workspace_id")),
+        ).fetchone()
+    return str(row["content"]) if row is not None else None
+
+
+def _resolved_reference_target_id(observation: dict[str, object]) -> str | None:
+    resolution = _observation_metadata(observation).get("reference_resolution")
+    if not isinstance(resolution, dict) or resolution.get("status") != "resolved":
+        return None
+    target_id = resolution.get("target_observation_id")
+    return target_id if isinstance(target_id, str) else None
+
+
+def _observation_metadata(observation: dict[str, object]) -> dict[str, object]:
+    metadata = observation.get("metadata_json")
+    if isinstance(metadata, str):
+        try:
+            metadata = json.loads(metadata)
+        except json.JSONDecodeError:
+            return {}
+    return metadata if isinstance(metadata, dict) else {}
 
 
 def _mark_observation_processed(observation_id: str) -> None:
@@ -1547,6 +1815,10 @@ def _transition_supersession_exists(
 
 def _optional_str(value: object) -> str | None:
     return None if value is None else str(value)
+
+
+def _list_count(value: object) -> int:
+    return len(value) if isinstance(value, list) else 0
 
 
 def _active_prior_fact_ids(fact: dict[str, object]) -> list[str]:

@@ -13,6 +13,7 @@ import json
 import os
 import time
 from collections.abc import Callable
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -21,8 +22,9 @@ from core.llm.json_helpers import (
     coerce_or_reject_json,
     validate_required_keys,
 )
-from core.llm.profiles import LLM_PROFILE_ENV, active_profile
+from core.llm.profiles import LLM_PROFILE_ENV, active_gateway_name, active_profile
 from core.llm.prompts import get_output_schema, get_prompt
+from core.llm.usage import record_llm_usage
 
 LLM_API_KEY_ENV = "LLM_API_KEY"
 LLM_CHAT_ENDPOINT_ENV = "LLM_CHAT_ENDPOINT"
@@ -30,6 +32,9 @@ LLM_PROVIDER_ENV = "LLM_PROVIDER"
 LLM_MODEL_ENV = "LLM_MODEL"
 LLM_RESPONSE_FORMAT_ENV = "LLM_RESPONSE_FORMAT"
 LLM_JSON_MAX_TOKENS_ENV = "LLM_JSON_MAX_TOKENS"
+PARITOK_ENABLED_ENV = "MIRA_PARITOK_ENABLED"
+PARITOK_BASE_URL_ENV = "PARITOK_BASE_URL"
+PARITOK_UPSTREAM_PROFILE_ENV = "PARITOK_UPSTREAM_PROFILE"
 DASHSCOPE_API_KEY_ENV = "DASHSCOPE_API_KEY"
 DASHSCOPE_ENDPOINT_ENV = "DASHSCOPE_CHAT_ENDPOINT"
 DEFAULT_QWEN_MODEL = "qwen-plus-2025-07-28"
@@ -41,6 +46,7 @@ DEFAULT_LLM_MODEL = DEFAULT_QWEN_MODEL
 DEFAULT_LLM_CHAT_ENDPOINT = DEFAULT_DASHSCOPE_ENDPOINT
 DEFAULT_LLM_RESPONSE_FORMAT = "auto"
 DEFAULT_LLM_JSON_MAX_TOKENS = 2048
+DEFAULT_PARITOK_BASE_URL = "http://127.0.0.1:8080/v1"
 MAX_ATTEMPTS = 3
 MAX_JSON_VALIDATION_ATTEMPTS = 3
 RETRY_BACKOFF_S = 0.25
@@ -48,6 +54,7 @@ RETRY_BACKOFF_S = 0.25
 Message = dict[str, str]
 ResponseObject = dict[str, object]
 Transport = Callable[[dict[str, object], int], dict[str, object]]
+_GATEWAY_OVERRIDE: ContextVar[str | None] = ContextVar("mira_llm_gateway", default=None)
 
 
 class LLMClientError(RuntimeError):
@@ -79,19 +86,59 @@ def call_llm_chat(
     provider: str | None = None,
     response_format: dict[str, object] | None = None,
     max_tokens: int | None = None,
+    gateway: str | None = None,
+    operation: str | None = None,
 ) -> ResponseObject:
     """Call an OpenAI-compatible chat completion endpoint."""
     _validate_messages(messages)
     _validate_timeout(timeout_s)
     selected_model = model or _load_chat_model(provider)
     selected_provider = provider or _load_provider()
+    selected_gateway = _select_gateway(gateway)
+    _validate_gateway_provider(selected_gateway, selected_provider)
     payload: dict[str, object] = {"model": selected_model, "messages": messages}
     if response_format is not None:
         payload["response_format"] = response_format
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
-    raw_response = _call_with_retries(payload, timeout_s)
-    return _normalize_chat_response(raw_response, selected_model, selected_provider)
+    raw_response: dict[str, object] = {}
+    started = time.perf_counter()
+    gateway_token = _GATEWAY_OVERRIDE.set(selected_gateway)
+    try:
+        raw_response = _call_with_retries(payload, timeout_s)
+        response = _normalize_chat_response(raw_response, selected_model, selected_provider)
+    except Exception:
+        _record_usage_safely(
+            messages=messages,
+            provider=selected_provider,
+            model=selected_model,
+            gateway=selected_gateway,
+            operation=operation or "chat_completion",
+            status="failed",
+            latency_ms=_elapsed_ms(started),
+            usage=raw_response.get("usage"),
+            gateway_usage=raw_response.get("_mira_gateway_usage"),
+            provider_request_id=_string_or_none(raw_response.get("id")),
+        )
+        raise
+    finally:
+        _GATEWAY_OVERRIDE.reset(gateway_token)
+    usage_event_id = _record_usage_safely(
+        messages=messages,
+        provider=selected_provider,
+        model=str(response["model"]),
+        gateway=selected_gateway,
+        operation=operation or "chat_completion",
+        status="succeeded",
+        latency_ms=_elapsed_ms(started),
+        usage=response.get("usage"),
+        gateway_usage=raw_response.get("_mira_gateway_usage"),
+        response_content=str(response["content"]),
+        provider_request_id=_string_or_none(raw_response.get("id")),
+    )
+    response["gateway"] = selected_gateway
+    response["usage_event_id"] = usage_event_id
+    return response
 
 
 def call_llm_json(
@@ -100,6 +147,7 @@ def call_llm_json(
     model: str | None = None,
     timeout_s: int = 60,
     provider: str | None = None,
+    gateway: str | None = None,
 ) -> ResponseObject:
     """Call an OpenAI-compatible model and parse assistant content as JSON."""
     if not schema_name:
@@ -113,6 +161,7 @@ def call_llm_json(
             model=model,
             timeout_s=timeout_s,
             provider=provider,
+            gateway=gateway,
         )
         try:
             return _attach_parsed_json(response, schema_name)
@@ -132,6 +181,7 @@ def _call_llm_json_chat(
     model: str | None,
     timeout_s: int,
     provider: str | None,
+    gateway: str | None,
 ) -> ResponseObject:
     response_format = _response_format_for_schema(schema_name, provider)
     try:
@@ -142,6 +192,8 @@ def _call_llm_json_chat(
             provider=provider,
             response_format=response_format,
             max_tokens=_load_json_max_tokens(),
+            gateway=gateway,
+            operation=schema_name,
         )
     except LLMRequestError as error:
         if not _should_fallback_to_json_object(response_format, error):
@@ -153,6 +205,8 @@ def _call_llm_json_chat(
             provider=provider,
             response_format={"type": "json_object"},
             max_tokens=_load_json_max_tokens(),
+            gateway=gateway,
+            operation=schema_name,
         )
 
 
@@ -216,6 +270,7 @@ def _llm_cache_key(messages: list[Message], schema_name: str) -> str:
         {
             "profile": os.environ.get(LLM_PROFILE_ENV, ""),
             "model": os.environ.get(LLM_MODEL_ENV, ""),
+            "gateway": _select_gateway(None),
             "schema": schema_name,
             "messages": messages,
         },
@@ -281,7 +336,13 @@ def _post_chat_completion(
 ) -> dict[str, object]:
     try:
         client = _create_openai_client(timeout_s)
-        completion = client.chat.completions.create(**payload)
+        gateway_usage: dict[str, int] = {}
+        if _select_gateway(_GATEWAY_OVERRIDE.get()) == "paritok":
+            raw_completion = client.chat.completions.with_raw_response.create(**payload)
+            completion = raw_completion.parse()
+            gateway_usage = _paritok_usage_from_headers(raw_completion.headers)
+        else:
+            completion = client.chat.completions.create(**payload)
     except ImportError as error:
         raise LLMConfigurationError(
             "Missing dependency: install the 'openai' package to use the LLM adapter"
@@ -298,7 +359,32 @@ def _post_chat_completion(
     decoded = _openai_object_to_dict(completion)
     if not isinstance(decoded, dict):
         raise LLMResponseError("LLM response body must be a JSON object")
-    return dict(decoded)
+    result = dict(decoded)
+    if gateway_usage:
+        result["_mira_gateway_usage"] = gateway_usage
+    return result
+
+
+def _paritok_usage_from_headers(headers: object) -> dict[str, int]:
+    """Read request-scoped compression measurements emitted by the local proxy."""
+    getter = getattr(headers, "get", None)
+    if not callable(getter):
+        return {}
+    fields = {
+        "input_tokens_original": "x-paritok-input-tokens-original",
+        "input_tokens_compressed": "x-paritok-input-tokens-compressed",
+        "tokens_saved": "x-paritok-tokens-saved",
+    }
+    parsed: dict[str, int] = {}
+    for field, header in fields.items():
+        value = getter(header)
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            continue
+        if number >= 0:
+            parsed[field] = number
+    return parsed if len(parsed) == len(fields) else {}
 
 
 def _create_openai_client(timeout_s: int) -> Any:
@@ -396,11 +482,47 @@ def _load_provider() -> str:
 
 
 def _load_base_url() -> str:
+    if _select_gateway(_GATEWAY_OVERRIDE.get()) == "paritok":
+        return os.environ.get(PARITOK_BASE_URL_ENV, DEFAULT_PARITOK_BASE_URL).rstrip("/")
     endpoint = _load_chat_endpoint().rstrip("/")
     suffix = "/chat/completions"
     if endpoint.endswith(suffix):
         return endpoint[: -len(suffix)]
     return endpoint
+
+
+def _select_gateway(gateway: str | None) -> str:
+    try:
+        selected, _source = active_gateway_name(gateway)
+    except ValueError as error:
+        raise LLMConfigurationError(str(error)) from error
+    return selected
+
+
+def _validate_gateway_provider(gateway: str, provider: str) -> None:
+    if gateway != "paritok":
+        return
+    upstream_profile = os.environ.get(PARITOK_UPSTREAM_PROFILE_ENV, "").casefold().strip()
+    if upstream_profile and upstream_profile != provider.casefold().strip():
+        raise LLMConfigurationError(
+            "Paritok upstream profile does not match the active LLM provider: "
+            f"expected {upstream_profile!r}, got {provider!r}"
+        )
+
+
+def _elapsed_ms(started: float) -> int:
+    return max(0, round((time.perf_counter() - started) * 1000))
+
+
+def _string_or_none(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def _record_usage_safely(**fields: object) -> str | None:
+    try:
+        return record_llm_usage(**fields)  # type: ignore[arg-type]
+    except Exception:
+        return None
 
 
 def _response_format_for_schema(
@@ -497,6 +619,10 @@ def _schema_contract_messages(messages: list[Message], schema_name: str) -> list
         first = dict(messages[0])
         first["content"] = f"{contract}\n\n{first['content']}"
         return [first, *messages[1:]]
+    if len(messages) > 1 and messages[-1].get("role") == "user":
+        latest = dict(messages[-1])
+        latest["content"] = f"{contract}\n\n{latest['content']}"
+        return [*messages[:-1], latest]
     return [{"role": "system", "content": contract}, *messages]
 
 

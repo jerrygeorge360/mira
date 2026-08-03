@@ -18,6 +18,7 @@ _DELETE_STATEMENTS: tuple[tuple[str, str], ...] = (
            OR observation_id IN (SELECT id FROM observations WHERE workspace_id = ?)
         """,
     ),
+    ("llm_usage_events", "DELETE FROM llm_usage_events WHERE workspace_id = ?"),
     ("answer_traces", "DELETE FROM answer_traces WHERE workspace_id = ?"),
     ("prompt_logs", "DELETE FROM prompt_logs WHERE workspace_id = ?"),
     ("retrieval_logs", "DELETE FROM retrieval_logs WHERE workspace_id = ?"),

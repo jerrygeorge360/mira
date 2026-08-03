@@ -73,7 +73,9 @@ def chat(
         used_memory_items=[
             str(item_id) for item_id in _object_list(result.get("used_memory_items"))
         ],
+        routing_decision=_object_dict(result.get("routing_decision")),
         trace_id=str(result["trace_id"]) if result.get("trace_id") else None,
+        llm_usage=_object_dict(result.get("llm_usage")),
     )
 
 
@@ -137,9 +139,11 @@ def _chat_event_stream(payload: ChatRequest, session_id: str) -> Iterator[str]:
                     "user_observation_id": result.get("user_observation_id"),
                     "assistant_observation_id": result.get("assistant_observation_id"),
                     "retrieval_mode": str(result.get("retrieval_mode") or "auto"),
+                    "routing_decision": _object_dict(result.get("routing_decision")),
                     "used_session_items": _string_list(result.get("used_session_items")),
                     "used_memory_items": _string_list(result.get("used_memory_items")),
                     "trace_id": result.get("trace_id"),
+                    "llm_usage": _object_dict(result.get("llm_usage")),
                 }
             )
             events.put(
@@ -168,6 +172,10 @@ def _chat_event_stream(payload: ChatRequest, session_id: str) -> Iterator[str]:
 
 def _object_list(value: object) -> list[object]:
     return value if isinstance(value, list) else []
+
+
+def _object_dict(value: object) -> dict[str, object] | None:
+    return value if isinstance(value, dict) else None
 
 
 def _string_list(value: object) -> list[str]:

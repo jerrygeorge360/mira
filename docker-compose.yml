@@ -30,6 +30,7 @@ services:
       MIRA_OAUTH_FIRST_PARTY_CLIENTS: ${MIRA_OAUTH_FIRST_PARTY_CLIENTS:-[]}
       MIRA_OAUTH_ACCESS_TOKEN_TTL_SECONDS: ${MIRA_OAUTH_ACCESS_TOKEN_TTL_SECONDS:-900}
       MIRA_OAUTH_REFRESH_TOKEN_TTL_DAYS: ${MIRA_OAUTH_REFRESH_TOKEN_TTL_DAYS:-30}
+      PARITOK_BASE_URL: http://paritok:8080/v1
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
@@ -59,6 +60,7 @@ services:
       MIRA_DB_PATH: /data/sqlite/mira.db
       CHROMA_DB_PATH: /data/chroma
       LOCAL_EMBEDDING_CACHE_DIR: /data/model-cache
+      PARITOK_BASE_URL: http://paritok:8080/v1
     volumes:
       - ./.docker-data/sqlite:/data/sqlite
       - ./.docker-data/chroma:/data/chroma
@@ -116,7 +118,7 @@ services:
       api:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:5173"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:5173"]
       interval: 30s
       timeout: 5s
       retries: 5
@@ -127,6 +129,34 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock 
     ports:
       - 8080:8080
+
+  paritok:
+    profiles:
+      - paritok
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: paritok
+    command:
+      - paritok
+      - proxy
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8080"
+      - --config-file
+      - /app/paritok.yaml
+      - --openai-url
+      - ${PARITOK_UPSTREAM_ENDPOINT:-https://api.deepseek.com/chat/completions}
+    env_file:
+      - .env
+    ports:
+      - "${PARITOK_PORT:-8081}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
 
   devtools:
     profiles:

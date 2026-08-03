@@ -15,6 +15,8 @@ import TimelineView from './components/TimelineView';
 import ResultsView from './components/ResultsView';
 import DemoWalkthrough from './components/DemoWalkthrough';
 import AdminView from './components/AdminView';
+import BrandMark from './components/BrandMark';
+import NotFoundPage from './components/NotFoundPage';
 
 function ViewRouter() {
   const { view } = useApp();
@@ -37,8 +39,21 @@ function ViewRouter() {
 export default function App() {
   const { page, authUser, authReady } = useApp();
 
+  if (!['/', '/index.html'].includes(window.location.pathname)) {
+    return <NotFoundPage />;
+  }
+  if (!authReady) {
+    return (
+      <main className="app-boot" aria-busy="true" aria-label="Restoring your MIRA session">
+        <div className="app-boot-brand">
+          <BrandMark className="brand-mark" size={25} />
+          <span>MIRA</span>
+        </div>
+        <div className="app-boot-progress" aria-hidden="true" />
+      </main>
+    );
+  }
   if (page === 'landing') return <Landing />;
-  if (!authReady) return <AuthPage />;
   if (page === 'auth' || !authUser) return <AuthPage />;
 
   return (

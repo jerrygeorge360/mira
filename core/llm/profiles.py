@@ -9,6 +9,8 @@ from core.db.repositories import DATABASE_PATH_ENV, current_database_path, get_r
 
 LLM_PROFILE_ENV = "LLM_PROFILE"
 LLM_PROFILE_SETTING = "llm_profile"
+LLM_GATEWAY_SETTING = "llm_gateway"
+PARITOK_ENABLED_ENV = "MIRA_PARITOK_ENABLED"
 
 
 @dataclass(frozen=True)
@@ -83,7 +85,29 @@ def active_profile_name() -> tuple[str | None, str]:
     return (env_profile.casefold(), "env") if env_profile else (None, "default")
 
 
+def active_gateway_name(explicit: str | None = None) -> tuple[str, str]:
+    """Resolve direct or Paritok transport independently from the model provider."""
+    if explicit:
+        return _validated_gateway(explicit), "explicit"
+    configured = _runtime_setting(LLM_GATEWAY_SETTING)
+    if configured:
+        return _validated_gateway(configured), "dashboard"
+    enabled = os.environ.get(PARITOK_ENABLED_ENV, "").casefold().strip()
+    return ("paritok", "env") if enabled in {"1", "true", "yes", "on"} else ("direct", "default")
+
+
 def _runtime_profile_name() -> str | None:
+    return _runtime_setting(LLM_PROFILE_SETTING)
+
+
+def _runtime_setting(key: str) -> str | None:
     if current_database_path() is None and DATABASE_PATH_ENV not in os.environ:
         return None
-    return get_runtime_setting(LLM_PROFILE_SETTING)
+    return get_runtime_setting(key)
+
+
+def _validated_gateway(value: str) -> str:
+    normalized = value.casefold().strip()
+    if normalized not in {"direct", "paritok"}:
+        raise ValueError("LLM gateway must be one of: direct, paritok")
+    return normalized

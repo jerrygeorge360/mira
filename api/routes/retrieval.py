@@ -33,6 +33,7 @@ def get_retrieval_trace(
         user_observation_id=str(trace["user_observation_id"]),
         assistant_observation_id=str(trace["assistant_observation_id"]),
         retrieval_mode=str(trace["retrieval_mode"]),
+        routing_decision=_routing_decision(retrieval_log),
         query=str(retrieval_log["query"]) if retrieval_log and retrieval_log.get("query") else None,
         retrieved_observation_ids=_string_list(trace.get("retrieved_observation_ids_json")),
         retrieved_fact_ids=_string_list(trace.get("retrieved_fact_ids_json")),
@@ -87,3 +88,12 @@ def _dict_list(value: object) -> list[dict[str, object]]:
 
 def _dict_or_none(value: object) -> dict[str, object] | None:
     return value if isinstance(value, dict) else None
+
+
+def _routing_decision(retrieval_log: dict[str, object] | None) -> dict[str, object] | None:
+    if retrieval_log is None:
+        return None
+    sufficiency = _dict_or_none(retrieval_log.get("sufficiency_json"))
+    if sufficiency is None:
+        return None
+    return _dict_or_none(sufficiency.get("routing_decision"))

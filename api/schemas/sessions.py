@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class CreateSessionRequest(BaseModel):
@@ -13,12 +13,38 @@ class CreateSessionRequest(BaseModel):
     title: str | None = None
 
 
+class UpdateSessionRequest(BaseModel):
+    """User-managed conversation metadata."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = Field(default=None, max_length=120)
+    is_starred: bool | None = None
+
+    @field_validator("title")
+    @classmethod
+    def normalize_title(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        title = value.strip()
+        if not title:
+            raise ValueError("title must not be blank")
+        return title
+
+    @model_validator(mode="after")
+    def require_update(self) -> UpdateSessionRequest:
+        if self.title is None and self.is_starred is None:
+            raise ValueError("at least one session field must be provided")
+        return self
+
+
 class SessionResponse(BaseModel):
     """Session metadata returned over HTTP."""
 
     session_id: str
     user_id: str
     title: str | None = None
+    is_starred: bool = False
     status: str
     created_at: str
     updated_at: str | None = None
@@ -42,6 +68,7 @@ class SessionSummary(BaseModel):
 
     session_id: str
     title: str | None = None
+    is_starred: bool = False
     user_id: str
     status: str
     created_at: str
@@ -61,6 +88,9 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     created_at: str
+    retrieval_mode: str | None = None
+    context_scope: str | None = None
+    trace_id: str | None = None
 
 
 class SessionMessagesResponse(BaseModel):

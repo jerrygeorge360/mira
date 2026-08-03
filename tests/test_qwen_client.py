@@ -25,6 +25,9 @@ def dashscope_environment(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv(qwen.LLM_MODEL_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_RESPONSE_FORMAT_ENV, raising=False)
     monkeypatch.delenv(qwen.LLM_CACHE_ENV, raising=False)
+    monkeypatch.delenv(qwen.PARITOK_ENABLED_ENV, raising=False)
+    monkeypatch.delenv(qwen.PARITOK_BASE_URL_ENV, raising=False)
+    monkeypatch.delenv(qwen.PARITOK_UPSTREAM_PROFILE_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_API_KEY_ENV, raising=False)
     monkeypatch.delenv(qwen.DASHSCOPE_ENDPOINT_ENV, raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
@@ -186,6 +189,21 @@ def test_json_call_parses_valid_json(monkeypatch: pytest.MonkeyPatch) -> None:
     assert response_format["type"] == "json_schema"
     assert response_format["json_schema"]["name"] == "atomic_fact_extraction"
     assert response_format["json_schema"]["strict"] is True
+
+
+def test_multimessage_json_contract_stays_in_latest_user_turn() -> None:
+    messages = [
+        {"role": "user", "content": "older context"},
+        {"role": "assistant", "content": "context received"},
+        {"role": "user", "content": "latest task"},
+    ]
+
+    contracted = qwen._schema_contract_messages(messages, "answer_generation")
+
+    assert [message["role"] for message in contracted] == ["user", "assistant", "user"]
+    assert contracted[0]["content"] == "older context"
+    assert "strict JSON API" in contracted[-1]["content"]
+    assert contracted[-1]["content"].endswith("latest task")
 
 
 def test_deepseek_auto_mode_uses_json_object_response_format(

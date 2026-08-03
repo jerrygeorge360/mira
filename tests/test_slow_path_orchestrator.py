@@ -15,9 +15,12 @@ import pytest
 from core.db import chroma
 from core.db.repositories import (
     configure_database,
+    create_atomic_fact,
     create_foresight_record,
+    create_retrieval_log,
     create_session,
     enqueue_observation,
+    list_observations,
     repository_connection,
     save_observation,
 )
@@ -81,6 +84,124 @@ def _processed_at(observation_id: str) -> object:
             (observation_id,),
         ).fetchone()
     return row["processed_at"]
+
+
+def test_unresolved_reference_cannot_mutate_durable_memory(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = create_session("jerry")
+    observation_id = save_observation(
+        session_id,
+        "user",
+        "Ignore that.",
+        metadata={
+            "turn_purpose": "resolution",
+            "reference_resolution": {"status": "ambiguous"},
+        },
+    )
+    observation = list_observations(session_id)[0]
+
+    def fail(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("unresolved references must not reach semantic mutation")
+
+    monkeypatch.setattr(slow_path, "extract_atomic_facts", fail)
+    monkeypatch.setattr(slow_path, "reconcile_foresight_lifecycle", fail)
+
+    assert slow_path._step_atomic_facts(observation_id, "Ignore that.", {"fact_ids": []}) == {}
+    assert (
+        slow_path._step_foresight_reconciliation(
+            observation_id,
+            "Ignore that.",
+            observation,
+            str(observation["workspace_id"]),
+        )
+        == {}
+    )
+
+
+def test_resolved_reference_is_forwarded_to_foresight_reconciliation(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session_id = create_session("jerry")
+    target_id = save_observation(session_id, "user", "I have a class tomorrow.")
+    resolution_id = save_observation(
+        session_id,
+        "user",
+        "Disregard what I just said.",
+        metadata={
+            "turn_purpose": "resolution",
+            "reference_resolution": {
+                "status": "resolved",
+                "target_observation_id": target_id,
+            },
+        },
+    )
+    observation = list_observations(session_id)[1]
+    captured: dict[str, object] = {}
+
+    def reconcile(*_args: object, **kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return {
+            "cancelled": [],
+            "resolved": [],
+            "created": [],
+            "retained": [],
+            "needs_clarification": False,
+            "fallback_used": False,
+        }
+
+    monkeypatch.setattr(slow_path, "reconcile_foresight_lifecycle", reconcile)
+    slow_path._step_foresight_reconciliation(
+        resolution_id,
+        "Disregard what I just said.",
+        observation,
+        str(observation["workspace_id"]),
+    )
+
+    assert captured["reference_text"] == "I have a class tomorrow."
+
+
+def test_resolved_reference_expires_target_facts(
+    database_path: Path,
+) -> None:
+    session_id = create_session("jerry")
+    target_id = save_observation(
+        session_id,
+        "user",
+        "I set the memory limit per container to 512MB.",
+    )
+    fact_id = create_atomic_fact(
+        {
+            "subject": "container",
+            "predicate": "memory limit",
+            "object": "512MB",
+            "confidence": 0.95,
+            "source_observation_id": target_id,
+        }
+    )
+    resolution_id = save_observation(
+        session_id,
+        "user",
+        "Undo what I just said.",
+        metadata={
+            "turn_purpose": "resolution",
+            "reference_resolution": {
+                "status": "resolved",
+                "target_observation_id": target_id,
+            },
+        },
+    )
+
+    slow_path._step_changes({"fact_ids": []}, resolution_id, "Undo what I just said.")
+
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT status FROM atomic_facts WHERE id = ?",
+            (fact_id,),
+        ).fetchone()
+    assert row["status"] == "expired"
 
 
 def test_orchestrator_processes_queued_observation(
@@ -438,6 +559,115 @@ def test_foresight_step_uses_session_ambient_context(
     ]
 
 
+def test_foresight_step_ignores_assistant_acknowledgements(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Assistant echoes do not become duplicate foresight about the user."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(
+        session_id,
+        "assistant",
+        "I will remind you about your class tomorrow.",
+    )
+
+    def fail_detection(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        raise AssertionError("assistant observations must not run foresight detection")
+
+    monkeypatch.setattr(slow_path, "detect_foresight", fail_detection)
+
+    result = slow_path._step_foresight(
+        observation_id,
+        "I will remind you about your class tomorrow.",
+        slow_path.SlowPathSemanticConfig(),
+    )
+
+    assert result == {}
+
+
+def test_atomic_fact_step_skips_pure_question_premises(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A user's false interrogative premise is not confirmed as durable evidence."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(
+        session_id,
+        "user",
+        "Why did Desdemona trick Othello?",
+    )
+
+    monkeypatch.setattr(
+        slow_path,
+        "extract_atomic_facts",
+        lambda *_args, **_kwargs: pytest.fail("pure questions must not be fact extraction input"),
+    )
+
+    result = slow_path._step_atomic_facts(
+        observation_id,
+        "Why did Desdemona trick Othello?",
+        {},
+    )
+
+    assert result == {}
+
+
+def test_atomic_fact_step_skips_unresolved_deictic_correction(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A targetless retraction cannot become an authoritative durable fact."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "That's no longer true.")
+    monkeypatch.setattr(
+        slow_path,
+        "extract_atomic_facts",
+        lambda *_args, **_kwargs: pytest.fail("unresolved correction must not be extracted"),
+    )
+
+    context: dict[str, list[str]] = {}
+    result = slow_path._step_atomic_facts(
+        observation_id,
+        "That's no longer true.",
+        context,
+    )
+
+    assert result == {}
+    assert context["fact_ids"] == []
+
+
+def test_atomic_fact_step_keeps_assertion_inside_casual_reaction(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Response routing must not prevent the independent memory path from extracting facts."""
+    session_id = create_session("jerry")
+    content = "That's a relief, Redis was giving me trouble."
+    observation_id = save_observation(session_id, "user", content)
+    monkeypatch.setattr(
+        slow_path,
+        "extract_atomic_facts",
+        lambda oid, _content: [
+            {
+                "subject": "Redis",
+                "predicate": "caused",
+                "object": "trouble",
+                "confidence": 0.9,
+                "source_observation_id": oid,
+            }
+        ],
+    )
+
+    context: dict[str, list[str]] = {}
+    result = slow_path._step_atomic_facts(observation_id, content, context)
+
+    assert len(result["atomic_facts"]) == 1
+    assert context["fact_ids"] == result["atomic_facts"]
+    assert (
+        _count(
+            "SELECT COUNT(*) FROM atomic_facts WHERE source_observation_id = ?",
+            observation_id,
+        )
+        == 1
+    )
+
+
 def test_foresight_reconciliation_cancels_deadline_without_detection(
     database_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -487,6 +717,113 @@ def test_foresight_reconciliation_cancels_deadline_without_detection(
     assert result == {"foresight_records": [record_id]}
     assert record["status"] == "cancelled"
     assert record["resolved_by"] == cancellation_observation_id
+
+
+def test_foresight_reconciliation_resolves_it_from_previous_retrieval(
+    database_path: Path,
+) -> None:
+    """An anaphoric cancellation uses the previous answer's Foresight trace."""
+    session_id = create_session("jerry")
+    source_observation_id = save_observation(
+        session_id,
+        "user",
+        "I have a class tomorrow.",
+    )
+    record_id = create_foresight_record(
+        {
+            "content": "User has a class tomorrow.",
+            "reason": "User mentioned a class on the following day.",
+            "status": "active",
+            "source_observation_id": source_observation_id,
+        }
+    )
+    create_retrieval_log(
+        {
+            "session_id": session_id,
+            "query": "Do I have a class today?",
+            "retrieval_mode": "quick",
+            "retrieved_records_json": [
+                {"source": "foresight_records", "id": record_id},
+            ],
+        }
+    )
+    cancellation_observation_id = save_observation(
+        session_id,
+        "user",
+        "Alright, it was cacelled.",
+    )
+
+    result = slow_path._step_foresight_reconciliation(
+        cancellation_observation_id,
+        "Alright, it was cacelled.",
+        {
+            "id": cancellation_observation_id,
+            "session_id": session_id,
+            "role": "user",
+            "content": "Alright, it was cacelled.",
+        },
+        LEGACY_WORKSPACE_ID,
+    )
+
+    with repository_connection() as connection:
+        record = connection.execute(
+            "SELECT status, resolved_by FROM foresight_records WHERE id = ?",
+            (record_id,),
+        ).fetchone()
+    assert result == {"foresight_records": [record_id]}
+    assert record["status"] == "cancelled"
+    assert record["resolved_by"] == cancellation_observation_id
+
+
+def test_foresight_reconciliation_prevents_duplicate_detection_after_lifecycle_update(
+    database_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A handled lifecycle statement cannot become a new Foresight record afterward."""
+    session_id = create_session("jerry")
+    observation_id = save_observation(session_id, "user", "The class was cancelled.")
+    context: dict[str, list[str]] = {}
+    monkeypatch.setattr(
+        slow_path,
+        "reconcile_foresight_lifecycle",
+        lambda *_args, **_kwargs: {
+            "cancelled": ["foresight-1"],
+            "resolved": [],
+            "created": [],
+            "retained": [],
+            "needs_clarification": False,
+            "clarification": None,
+            "fallback_used": False,
+        },
+    )
+
+    reconciliation = slow_path._step_foresight_reconciliation(
+        observation_id,
+        "The class was cancelled.",
+        {
+            "id": observation_id,
+            "session_id": session_id,
+            "role": "user",
+            "content": "The class was cancelled.",
+        },
+        LEGACY_WORKSPACE_ID,
+        context,
+    )
+
+    monkeypatch.setattr(
+        slow_path,
+        "detect_foresight",
+        lambda *_args, **_kwargs: pytest.fail("lifecycle update was re-detected"),
+    )
+    detection = slow_path._step_foresight(
+        observation_id,
+        "The class was cancelled.",
+        slow_path.SlowPathSemanticConfig(),
+        context,
+    )
+
+    assert reconciliation == {"foresight_records": ["foresight-1"]}
+    assert detection == {}
 
 
 def test_llm_change_verifier_rejects_an_additional_event(

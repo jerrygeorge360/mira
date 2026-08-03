@@ -272,7 +272,7 @@ def _source_ids(item: dict[str, object]) -> list[str]:
 
 
 def _primary_source_id(item: dict[str, object]) -> str | None:
-    for key in ("id", "source_record_id", "observation_id"):
+    for key in ("id", "source_id", "source_record_id", "observation_id"):
         value = item.get(key)
         if isinstance(value, str) and value:
             return value

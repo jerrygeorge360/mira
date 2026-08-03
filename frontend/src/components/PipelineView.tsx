@@ -5,6 +5,7 @@ import {
   Clock,
   Database,
   FileText,
+  Gauge,
   GitBranch,
   Layers,
   PackageCheck,
@@ -12,7 +13,7 @@ import {
   Waypoints,
   Zap,
 } from 'lucide-react';
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
@@ -39,11 +40,25 @@ const ARTIFACTS = [
 
 export default function PipelineView() {
   const { sessionId, memoryRefreshKey } = useApp();
+  const [pollTick, setPollTick] = useState(0);
   const { data, status } = useLiveData(
     () => api.memoryLifecycle({ session_id: sessionId ?? undefined, limit: 20 }),
-    [sessionId, memoryRefreshKey],
+    [sessionId, memoryRefreshKey, pollTick],
   );
   const rows = (data?.items ?? []) as LifecycleRow[];
+  const hasActiveWork = rows.some(row => {
+    const slowPath = asRecord(row.slow_path);
+    const queue = asRecord(slowPath.queue);
+    return ['pending', 'processing', 'claimed', 'retrying'].includes(
+      text(slowPath.status, text(queue.status)).toLowerCase(),
+    );
+  });
+
+  useEffect(() => {
+    if (!hasActiveWork) return undefined;
+    const timer = window.setInterval(() => setPollTick(value => value + 1), 2000);
+    return () => window.clearInterval(timer);
+  }, [hasActiveWork]);
 
   return (
     <>
@@ -80,6 +95,8 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
   const artifacts = asRecord(row.artifacts);
   const artifactIds = asRecord(row.artifact_ids);
   const steps = asRecordArray(slowPath.steps);
+  const llmUsage = asRecord(slowPath.llm_usage);
+  const llmOperations = asRecordArray(llmUsage.operations);
   const rejections = asRecordArray(row.rejections);
   const slowStatus = text(slowPath.status, text(queue.status, 'unknown'));
   const totalArtifacts = ARTIFACTS.reduce((sum, [key]) => sum + number(artifacts[key]), 0);
@@ -131,6 +148,31 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
         />
       </div>
 
+      {number(llmUsage.calls) > 0 ? (
+        <div className="pipeline-usage">
+          <Gauge size={17} />
+          <div>
+            <strong>Slow-path model usage</strong>
+            <span>
+              {number(llmUsage.calls)} call{number(llmUsage.calls) === 1 ? '' : 's'} ·{' '}
+              {number(llmUsage.input_tokens).toLocaleString()} input ·{' '}
+              {number(llmUsage.output_tokens).toLocaleString()} output
+            </span>
+          </div>
+          <div className="pipeline-usage-measurement">
+            <strong>
+              {number(llmUsage.provider_measured_calls)}/{number(llmUsage.calls)} measured
+            </strong>
+            {number(llmUsage.paritok_calls) > 0 ? (
+              <span className="chat-token-saving">
+                Paritok saved {number(llmUsage.gateway_tokens_saved).toLocaleString()}
+                {compressionPercent(llmUsage)}
+              </span>
+            ) : <span>Direct provider</span>}
+          </div>
+        </div>
+      ) : null}
+
       <div className="pipeline-artifact-grid">
         {ARTIFACTS.map(([key, label, Icon]) => (
           <div className="pipeline-artifact" key={key}>
@@ -159,6 +201,26 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
             ) : (
               <p>No slow-path step journal entries yet.</p>
             )}
+            {llmOperations.length ? (
+              <>
+                <h4>Model operations</h4>
+                <ul className="pipeline-step-list">
+                  {llmOperations.map(operation => (
+                    <li key={text(operation.name)}>
+                      <span>{labelize(text(operation.name))}</span>
+                      <strong>{number(operation.input_tokens).toLocaleString()} in</strong>
+                      <small>
+                        {number(operation.calls)} call{number(operation.calls) === 1 ? '' : 's'} ·{' '}
+                        {number(operation.output_tokens).toLocaleString()} out
+                        {number(operation.gateway_tokens_saved) > 0
+                          ? ` · ${number(operation.gateway_tokens_saved).toLocaleString()} saved`
+                          : ''}
+                      </small>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
           </div>
           <div>
             <h4>Artifact ids</h4>
@@ -218,6 +280,13 @@ function sessionSummary(counts: Record<string, unknown>) {
   return entries
     .map(([key, value]) => `${number(value)} ${labelize(key).toLowerCase()}`)
     .join(' · ');
+}
+
+function compressionPercent(usage: Record<string, unknown>): string {
+  const original = number(usage.gateway_input_tokens_original);
+  if (original <= 0) return '';
+  const percent = Math.round((number(usage.gateway_tokens_saved) / original) * 100);
+  return ` (${percent}%)`;
 }
 
 function observationId(row: LifecycleRow) {

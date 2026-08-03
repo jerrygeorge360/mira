@@ -13,7 +13,7 @@ handle_user_message(session_id, user_message)
   1. fast path        core/memory/observation.py     persist + enqueue user turn
   2. session micro-path core/session/micro_path.py    extract -> validate -> Session Working Set
   3. hydration        core/session/hydration.py       seed durable memory on new/continue sessions
-  4. routing          core/retrieval/auto.py          choose direct_llm | Quick | Deep | Relational
+  4. routing          core/retrieval/auto.py          purpose -> context scope -> retrieval mode
   5. retrieval        core/retrieval/{quick,deep,relational}.py
   6. structured tools core/llm/functions.py           invoke only explicit workflow tools
   7. context merge    core/context/merger.py          recent turns + SWS + hot + retrieved + ambient
@@ -214,16 +214,39 @@ Modules: [`core/retrieval/quick.py`](../core/retrieval/quick.py),
   runs community detection live.
 - **Relational** (`relational_retrieve`) — bounded graph traversal of `MENTIONS`,
   `DERIVED_FROM`, `CAUSED_BY`, `SUPERSEDED_BY`, `CONTRADICTS` from anchor entities.
-- **Auto** (`route_retrieval`) — deterministic or LLM-assisted classifier that returns a
-  traceable decision object. General knowledge questions route to `mode=general`,
-  `route=direct_llm`, `intent=general_knowledge`, and `used_memory=false`. Personal,
-  procedural, mixed, and relationship questions route through memory with `used_memory=true`.
-  Relational remains ordered before Deep, and ambiguous memory queries set
+- **Automatic router** (`route_retrieval`) — a scope-first deterministic or LLM-assisted
+  classifier. `Auto` is the public request to run this router, not an executable retrieval mode.
+  It first chooses `context_scope=no_retrieval | general_knowledge | recent_conversation |
+  session_memory | durable_memory | mixed`, then selects Quick, Deep, or Relational only for
+  durable/mixed scopes. General and recent conversational follow-ups use `mode=general` without
+  durable retrieval; contextual reactions use bounded recent turns while standalone greetings and
+  store-only updates use `no_retrieval`; session-only decisions can use the Session Working Set
+  without querying durable stores. Response routing does not disable the independent slow path,
+  so an assertion embedded in a conversational reaction can still become durable evidence. The
+  structured decision includes
+  confidence and provenance for both decisions, while deterministic guards reject incompatible
+  scope/mode combinations and personal-to-general downgrades.
+  Relational remains ordered before Deep, and ambiguous durable queries set
   `needs_sufficiency_check`. Public chat defaults to the hybrid strategy: confident routes stay
-  deterministic, while ambiguous follow-ups may use recent turn context in the LLM classifier.
-- **Sufficiency** (`check_retrieval_sufficiency`, `resolve_with_one_retry`) — reports
-  missing terms and a rewrite query; permits exactly one retry, then answers with
-  uncertainty.
+  deterministic, while genuinely ambiguous turns may use recent context in the LLM classifier.
+  Conversational preambles are removed before purpose classification, so "nice, by the way I
+  have an interview" remains an informational update rather than inheriting the previous answer.
+  Standalone greetings and closings do not pull context. Explicit named transitions and
+  recent-context temporal amendments enter the correction path, while unresolved references ask
+  for clarification.
+- **Sufficiency** (`check_retrieval_sufficiency`, `check_grounded_sufficiency`,
+  `resolve_with_one_retry`) — wraps durable and mixed lookup, and also verifies recent-context
+  questions before generation. A cheap requirement check accepts clear matches. When vocabulary
+  differs or a causal claim is involved, a structured model verdict must cite IDs from the
+  supplied evidence set. A cache fact does not satisfy a database question, a transition edge
+  does not establish why the transition happened, and common practice is not accepted as a
+  personal reason. The wrapper permits exactly one retry, then passes the final verdict to
+  generation and the answer trace so unsupported details are stated as unknown.
+
+Targetless corrections such as "that's no longer true" fail closed: the response asks the user
+to identify the changed claim, and the slow path skips atomic-fact extraction for that unresolved
+phrase. Explicit corrections and transitions continue through the Session Working Set and durable
+change-reconciliation paths.
 
 The public dispatcher [`router.py`](../core/retrieval/router.py) (`route_retrieval(query,
 mode, limit, session_id=None)`) is the reusable facade the agent uses for evidence retrieval
@@ -237,6 +260,7 @@ Every agent response includes the routing decision and retrieval trace:
 {
   "routing_decision": {
     "intent": "personal_memory",
+    "context_scope": "durable_memory",
     "used_memory": true,
     "route": "quick",
     "mode": "quick",
@@ -279,6 +303,27 @@ legacy inputs, trims them to budget, and renders the centralized `answer_generat
 The agent uses `build_prompt_from_context` after it has already built and traced the context
 pack ([`core/llm/prompts.py`](../core/llm/prompts.py)).
 
+### LLM usage and compression gateway
+
+[`core/llm/usage.py`](../core/llm/usage.py) records each model request under a workspace-scoped
+logical run. Agent turns and slow-path observation runs provide the grouping context. The durable
+ledger stores provider/model/gateway metadata, latency, provider token usage, optional cached and
+reasoning token details, an exact-message fingerprint, and an optional operator-configured cost
+estimate. Prompt and response content are deliberately excluded. If a provider omits usage, MIRA
+stores an explicit estimate rather than presenting it as measured usage.
+
+The gateway is separate from the provider profile. `direct` calls the selected OpenAI-compatible
+provider, while `paritok` sends the same messages through the optional Paritok proxy before the
+same upstream provider generates the answer. `build_answer_messages` places selected memory in an
+older context turn and keeps the final question and answer policy in the latest turn. This gives a
+history-compression gateway a safe boundary without changing retrieval, sufficiency, correction,
+trace, or persistence semantics.
+
+The controlled comparison script checks the prompt fingerprint, requires provider-reported input
+tokens for both paths, and reports output quality checks alongside savings. Its paired measurement
+scope is answer generation. The usage ledger and admin aggregate cover all model-backed runtime
+operations. See [ADR-0017](adr/0017-llm-usage-and-compression-gateway.md).
+
 ## Memory tiers
 
 Modules: [`core/memory/tiers.py`](../core/memory/tiers.py) and
@@ -304,6 +349,16 @@ now)` returns active, temporally-valid records that match the query or are `alwa
 Detection preserves stated deadline boundaries as `valid_until`. The slow-path worker calls
 `refresh_foresight_lifecycle` on every poll, including idle polls, and terminal transitions demote
 the corresponding hot-memory projection so expired foresight cannot remain prompt-eligible.
+
+User updates are reconciled against every active or pending Foresight record in the same workspace,
+including records created in earlier sessions. Embeddings rank a bounded candidate context; a
+structured LLM verdict then classifies each addressed candidate as cancelled, resolved, modified,
+retained, or unrelated. The runtime validates candidate IDs, workspace ownership, lifecycle state,
+and confidence before applying a transition. Modification cancels the old time-bound record and
+creates a replacement sourced from the new observation. Ambiguous or invalid decisions fail closed,
+while provider errors emit worker diagnostics and retain a conservative explicit-cancellation
+fallback. Foresight is displayed as a separate time-bound category: it is durable outside the prompt,
+and urgent active records may independently qualify for hot-memory promotion.
 
 ## Reflection
 
@@ -551,7 +606,7 @@ the step functions listed in the slow-path table.
 - [ADR-0001 — Session Working Set is Separate from Durable Hot Memory](adr/0001-session-working-set.md)
 - [ADR-0002 — Single Typed Graph Instead of Disconnected Graph Stores](adr/0002-single-typed-graph.md)
 - [ADR-0003 — SQLite Source of Truth and ChromaDB Vector Index](adr/0003-sqlite-source-of-truth.md)
-- [ADR-0004 — Quick, Deep, Relational, and Auto Retrieval Modes](adr/0004-retrieval-modes.md)
+- [ADR-0004 — Scope-First Routing with Quick, Deep, and Relational Retrieval](adr/0004-retrieval-modes.md)
 - [ADR-0005 — Provisional vs Confirmed Memory](adr/0005-provisional-confirmed-memory.md)
 - [ADR-0006 — Session Micro-Path vs Cross-Session Slow Path](adr/0006-session-micro-path-slow-path.md)
 - [ADR-0007 — Prompt Builder as Integration Point](adr/0007-prompt-builder-integration-point.md)
@@ -564,3 +619,4 @@ the step functions listed in the slow-path table.
 - [ADR-0014 — Provenance-Aware Conversation Deletion](adr/0014-provenance-aware-conversation-deletion.md)
 - [ADR-0015 — Provider Profiles and Capability-Aware Structured Output](adr/0015-provider-profiles-and-structured-output.md)
 - [ADR-0016 — Authenticated Standalone MCP Service](adr/0016-authenticated-standalone-mcp-service.md)
+- [ADR-0017 — Provider-Reported LLM Usage and Optional Compression Gateway](adr/0017-llm-usage-and-compression-gateway.md)

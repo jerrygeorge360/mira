@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 
 from api.auth import WorkspaceAuth, require_csrf
-from api.dependencies import fetch_one
+from api.dependencies import fetch_all, fetch_one
 from api.schemas.sessions import (
     ChatMessage,
     CreateSessionRequest,
@@ -14,6 +14,7 @@ from api.schemas.sessions import (
     SessionResponse,
     SessionSummary,
     SessionWorkingSetResponse,
+    UpdateSessionRequest,
 )
 from core.db.repositories import bind_workspace, list_observations, message_counts_by_session
 from core.session.read_models import active_session_items, list_session_working_set_read_model
@@ -49,6 +50,7 @@ def list_sessions_route(
         SessionSummary(
             session_id=str(row["id"]),
             title=str(row["title"]) if row.get("title") is not None else None,
+            is_starred=bool(row.get("is_starred", False)),
             user_id=str(row["user_id"]),
             status=str(row["status"]),
             created_at=str(row["created_at"]),
@@ -68,16 +70,62 @@ def get_session_messages_route(
 ) -> SessionMessagesResponse:
     """Return a session's user/assistant turns in order, to reopen a conversation."""
     _get_session_or_404(session_id, auth.context.workspace_id)
+    traces = _message_trace_metadata(session_id, auth.context.workspace_id)
     messages = [
         ChatMessage(
             role=str(row["role"]),
             content=str(row["content"]),
             created_at=str(row["created_at"]),
+            retrieval_mode=traces.get(str(row["id"]), {}).get("retrieval_mode"),
+            context_scope=traces.get(str(row["id"]), {}).get("context_scope"),
+            trace_id=traces.get(str(row["id"]), {}).get("trace_id"),
         )
         for row in list_observations(session_id, limit)
         if str(row.get("role")) in _MESSAGE_ROLES
     ]
     return SessionMessagesResponse(session_id=session_id, messages=messages)
+
+
+def _message_trace_metadata(
+    session_id: str,
+    workspace_id: str,
+) -> dict[str, dict[str, str | None]]:
+    rows = fetch_all(
+        """
+        SELECT
+            answer_traces.id AS trace_id,
+            answer_traces.assistant_observation_id,
+            answer_traces.retrieval_mode,
+            retrieval_logs.sufficiency_json
+        FROM answer_traces
+        LEFT JOIN retrieval_logs ON retrieval_logs.id = answer_traces.retrieval_log_id
+        WHERE answer_traces.session_id = ? AND answer_traces.workspace_id = ?
+        """,
+        (session_id, workspace_id),
+    )
+    metadata: dict[str, dict[str, str | None]] = {}
+    for row in rows:
+        observation_id = row.get("assistant_observation_id")
+        if observation_id is None:
+            continue
+        metadata[str(observation_id)] = {
+            "trace_id": str(row["trace_id"]),
+            "retrieval_mode": (
+                str(row["retrieval_mode"]) if row.get("retrieval_mode") is not None else None
+            ),
+            "context_scope": _trace_context_scope(row.get("sufficiency_json")),
+        }
+    return metadata
+
+
+def _trace_context_scope(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    decision = value.get("routing_decision")
+    if not isinstance(decision, dict):
+        return None
+    scope = decision.get("context_scope")
+    return str(scope) if scope is not None else None
 
 
 @router.delete("/{session_id}")
@@ -93,6 +141,26 @@ def delete_session_route(
     except ValueError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
     return {"status": "deleted", "session_id": session_id, "deleted": deleted}
+
+
+@router.patch("/{session_id}", response_model=SessionResponse)
+def update_session_route(
+    request: Request,
+    session_id: str,
+    payload: UpdateSessionRequest,
+    auth: WorkspaceAuth,
+) -> SessionResponse:
+    """Rename or star a conversation in the authenticated workspace."""
+    require_csrf(request, auth)
+    try:
+        session = bind_workspace(auth.context).update_session(
+            session_id,
+            title=payload.title,
+            is_starred=payload.is_starred,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail="session_id not found") from error
+    return _session_response(session)
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -143,6 +211,7 @@ def _session_response(row: dict[str, object]) -> SessionResponse:
         session_id=str(row["id"]),
         user_id=str(row["user_id"]),
         title=str(row["title"]) if row.get("title") is not None else None,
+        is_starred=bool(row.get("is_starred", False)),
         status=str(row["status"]),
         created_at=str(row["created_at"]),
         updated_at=str(row["updated_at"]) if row.get("updated_at") is not None else None,

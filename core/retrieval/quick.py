@@ -7,6 +7,7 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import json
 import re
 
 from core.db.repositories import repository_connection, workspace_id_for_session
@@ -70,7 +71,7 @@ def retrieve_quick(
         *_semantic_candidates(query, limit, workspace_id),
         *_keyword_observation_candidates(query, workspace_id, limit),
         *_atomic_fact_candidates(query, workspace_id, limit),
-        *_foresight_candidates(query, session_id, workspace_id),
+        *_foresight_candidates(query, workspace_id),
         *_recent_observation_candidates(query, session_id, limit),
     ]
     deduplicated = _merge_duplicates(candidates)
@@ -99,6 +100,10 @@ def _semantic_candidates(query: str, limit: int, workspace_id: str) -> list[Evid
             continue
         if not _semantic_record_is_active(str(pointer["sqlite_table"]), record):
             continue
+        if str(pointer["sqlite_table"]) == "observations" and not _observation_is_evidence(
+            query, record
+        ):
+            continue
         candidates.append(
             _evidence(
                 source=str(pointer["sqlite_table"]),
@@ -121,6 +126,7 @@ def _keyword_observation_candidates(
     limit: int,
 ) -> list[Evidence]:
     results = keyword_search_observations(query, limit, workspace_id=workspace_id)
+    query_tokens = _tokens(query)
     return [
         _evidence(
             source="observations",
@@ -135,11 +141,14 @@ def _keyword_observation_candidates(
         )
         for record in results
         if record.get("workspace_id") == workspace_id
+        and _observation_is_evidence(query, record)
+        and _lexical_score(query_tokens, str(record["content"])) > 0.0
     ]
 
 
 def _atomic_fact_candidates(query: str, workspace_id: str, limit: int) -> list[Evidence]:
     results = keyword_search_atomic_facts(query, limit, workspace_id=workspace_id)
+    query_tokens = _tokens(query)
     return [
         _evidence(
             source="atomic_facts",
@@ -154,15 +163,16 @@ def _atomic_fact_candidates(query: str, workspace_id: str, limit: int) -> list[E
         )
         for record in results
         if record.get("workspace_id") == workspace_id
+        and _lexical_score(query_tokens, _fact_content(record)) > 0.0
     ]
 
 
-def _foresight_candidates(query: str, session_id: str | None, workspace_id: str) -> list[Evidence]:
+def _foresight_candidates(query: str, workspace_id: str) -> list[Evidence]:
     tokens = _tokens(query)
     if not tokens:
         return []
     is_foresight_query = _is_foresight_query(query)
-    rows = _fetch_foresight_rows(session_id, workspace_id)
+    rows = _fetch_foresight_rows(workspace_id)
     candidates: list[Evidence] = []
     for record in rows:
         content = str(record["content"])
@@ -197,6 +207,8 @@ def _recent_observation_candidates(
     candidates: list[Evidence] = []
     for record in rows:
         content = str(record["content"])
+        if not _observation_is_evidence(query, record):
+            continue
         keyword_score = _lexical_score(tokens, content)
         if keyword_score <= 0.0:
             continue
@@ -360,29 +372,21 @@ def _semantic_record_is_active(table: str, record: dict[str, object]) -> bool:
     return str(record.get("status", "active")) == "active"
 
 
-def _fetch_foresight_rows(session_id: str | None, workspace_id: str) -> list[dict[str, object]]:
+def _fetch_foresight_rows(workspace_id: str) -> list[dict[str, object]]:
+    """Load durable user foresight across every session in the workspace."""
     with repository_connection() as connection:
-        if session_id is None:
-            rows = connection.execute(
-                """
-                SELECT * FROM foresight_records
-                WHERE workspace_id = ? AND status IN (?, ?)
-                ORDER BY created_at DESC
-                """,
-                (workspace_id, "active", "pending"),
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-                SELECT foresight_records.*
-                FROM foresight_records
-                JOIN observations ON observations.id = foresight_records.source_observation_id
-                WHERE foresight_records.workspace_id = ?
-                  AND foresight_records.status IN (?, ?) AND observations.session_id = ?
-                ORDER BY foresight_records.created_at DESC
-                """,
-                (workspace_id, "active", "pending", session_id),
-            ).fetchall()
+        rows = connection.execute(
+            """
+            SELECT foresight_records.*
+            FROM foresight_records
+            JOIN observations ON observations.id = foresight_records.source_observation_id
+            WHERE foresight_records.workspace_id = ?
+              AND foresight_records.status IN (?, ?)
+              AND observations.role = 'user'
+            ORDER BY foresight_records.created_at DESC
+            """,
+            (workspace_id, "active", "pending"),
+        ).fetchall()
     return [dict(row) for row in rows]
 
 
@@ -449,12 +453,91 @@ def _lexical_score(query_tokens: set[str], content: str) -> float:
 
 
 def _tokens(value: str) -> set[str]:
-    stopwords = {"a", "about", "did", "i", "is", "my", "the", "what", "when"}
+    stopwords = {
+        "a",
+        "about",
+        "any",
+        "did",
+        "do",
+        "does",
+        "has",
+        "have",
+        "i",
+        "is",
+        "my",
+        "the",
+        "what",
+        "when",
+    }
     return {
         token
         for token in TOKEN_PATTERN.findall(value.casefold())
         if len(token) > 1 and token not in stopwords
     }
+
+
+def _observation_is_evidence(query: str, record: dict[str, object]) -> bool:
+    content = str(record.get("content", ""))
+    if _normalize(content) == _normalize(query):
+        return False
+    if _observation_was_retracted(record):
+        return False
+    role = str(record.get("role", "user"))
+    if role == "user":
+        return True
+    return role == "assistant" and _query_targets_assistant_history(query)
+
+
+def _observation_was_retracted(record: dict[str, object]) -> bool:
+    observation_id = record.get("id")
+    workspace_id = record.get("workspace_id")
+    if not isinstance(observation_id, str) or not isinstance(workspace_id, str):
+        return False
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT metadata_json
+            FROM observations
+            WHERE workspace_id = ?
+              AND metadata_json IS NOT NULL
+              AND metadata_json LIKE ?
+            """,
+            (workspace_id, f"%{observation_id}%"),
+        ).fetchall()
+    for row in rows:
+        try:
+            metadata = json.loads(str(row["metadata_json"]))
+        except (TypeError, ValueError):
+            continue
+        resolution = metadata.get("reference_resolution") if isinstance(metadata, dict) else None
+        if (
+            isinstance(resolution, dict)
+            and resolution.get("status") == "resolved"
+            and resolution.get("target_observation_id") == observation_id
+        ):
+            return True
+    return False
+
+
+def _query_targets_assistant_history(query: str) -> bool:
+    normalized = _normalize(query)
+    return any(
+        marker in normalized
+        for marker in (
+            "did you say",
+            "did you tell",
+            "what did you say",
+            "what you said",
+            "you said",
+            "you told me",
+            "your answer",
+            "your response",
+        )
+    )
+
+
+def _normalize(value: str) -> str:
+    return " ".join(TOKEN_PATTERN.findall(value.casefold()))
 
 
 def _is_foresight_query(query: str) -> bool:

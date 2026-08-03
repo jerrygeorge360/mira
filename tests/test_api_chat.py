@@ -30,6 +30,10 @@ class _FakeAgent:
             "session_id": self.session_id,
             "answer": "Real agent path called.",
             "retrieval_mode": "quick",
+            "routing_decision": {
+                "context_scope": "durable_memory",
+                "retrieval_mode": "quick",
+            },
             "used_memory_items": ["fact_1"],
             "used_session_items": ["sws_1"],
             "trace_id": "trace_1",
@@ -64,6 +68,10 @@ class _StreamingAgent:
             "session_id": self.session_id,
             "answer": f"Answer for {user_message}",
             "retrieval_mode": "quick",
+            "routing_decision": {
+                "context_scope": "durable_memory",
+                "retrieval_mode": "quick",
+            },
             "used_memory_items": ["fact_1"],
             "used_session_items": ["sws_1"],
             "trace_id": "trace_1",
@@ -92,6 +100,10 @@ def test_chat_endpoint_calls_agent_path(monkeypatch: Any, tmp_path: Any) -> None
 
     assert response.answer == "Real agent path called."
     assert response.retrieval_mode == "quick"
+    assert response.routing_decision == {
+        "context_scope": "durable_memory",
+        "retrieval_mode": "quick",
+    }
     assert response.user_observation_id == "obs_user"
     assert response.assistant_observation_id == "obs_assistant"
     assert response.used_memory_items == ["fact_1"]
@@ -199,6 +211,9 @@ def test_chat_event_stream_emits_progress_answer_trace_and_completion(
     assert any('"type": "stage"' in line and '"stage": "retrieval"' in line for line in lines)
     assert any('"type": "answer"' in line and "Answer for What do I use?" in line for line in lines)
     assert any('"type": "trace"' in line and '"trace_id": "trace_1"' in line for line in lines)
+    assert any(
+        '"context_scope": "durable_memory"' in line and '"type": "trace"' in line for line in lines
+    )
     assert any(
         '"type": "complete"' in line and '"session_id": "session-1"' in line for line in lines
     )

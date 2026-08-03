@@ -43,6 +43,7 @@ REQUIRED_TABLES = {
     "working_memory",
     "retrieval_logs",
     "prompt_logs",
+    "llm_usage_events",
 }
 
 REQUIRED_INDEXES = {
@@ -70,6 +71,7 @@ REQUIRED_COLUMNS = {
         "workspace_id",
         "user_id",
         "title",
+        "is_starred",
         "status",
         "created_at",
         "updated_at",
@@ -234,6 +236,26 @@ REQUIRED_COLUMNS = {
         "token_budget_json",
         "created_at",
     },
+    "llm_usage_events": {
+        "id",
+        "workspace_id",
+        "run_id",
+        "component",
+        "operation",
+        "provider",
+        "model",
+        "gateway",
+        "status",
+        "usage_source",
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "estimated_input_tokens",
+        "latency_ms",
+        "prompt_fingerprint",
+        "usage_json",
+        "created_at",
+    },
 }
 
 
@@ -259,6 +281,45 @@ def test_database_initializes_from_clean_file(tmp_path: Path) -> None:
     assert database_path.is_file()
     with connect_sqlite(database_path) as connection:
         assert _names(connection, "table") >= REQUIRED_TABLES
+
+
+def test_database_adds_starred_metadata_to_existing_sessions_table(tmp_path: Path) -> None:
+    """Existing user databases gain the additive session metadata without data loss."""
+    database_path = tmp_path / "legacy-sessions.sqlite3"
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                workspace_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                title TEXT,
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                ended_at TEXT
+            )
+            """
+        )
+        connection.execute(
+            """
+            INSERT INTO sessions (
+                id, workspace_id, user_id, title, status, created_at, updated_at
+            ) VALUES (
+                'session-1', 'workspace_legacy_default', 'user-1',
+                'Existing chat', 'active', '2026-01-01', '2026-01-01'
+            )
+            """
+        )
+
+    initialize_database(database_path)
+
+    with connect_sqlite(database_path) as connection:
+        row = connection.execute(
+            "SELECT title, is_starred FROM sessions WHERE id = 'session-1'"
+        ).fetchone()
+    assert row is not None
+    assert tuple(row) == ("Existing chat", 0)
 
 
 def test_sqlite_connections_are_configured_for_worker_concurrency(tmp_path: Path) -> None:

@@ -1,0 +1,26 @@
+# Paritok remains an optional compression gateway. The active LLM provider still
+# owns generation, structured output, and billing.
+use_gpu_server: true
+
+compression:
+  min_tokens: 128
+  max_tokens: 50000
+  refusal_threshold: 0.05
+
+# MIRA sends retrieved memory as an older context turn and keeps the final task
+# turn intact. Compression starts only once the assembled request is meaningful.
+history:
+  enabled: true
+  keep_recent_turns: 1
+  context_threshold: 0.05
+  context_window: 4096
+
+# MIRA does not send model tools during answer generation. Avoid loading a second
+# local embedding stack solely for Paritok tool discovery.
+tool_discovery:
+  strategy: passthrough
+  top_k: 5
+
+trace:
+  enabled: false
+  path: /tmp/paritok-compression.jsonl

@@ -38,6 +38,7 @@ evaluation/ablation/results/
 *-run.log
 .llm-cache/
 .model-cache/
+tmp/token-comparison*.json
 
 # Downloaded benchmark datasets
 data/benchmarks/longmemeval.json

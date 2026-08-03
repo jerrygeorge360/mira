@@ -21,6 +21,7 @@ interface TraceData extends Row {
   trace_id?: string;
   session_id?: string;
   retrieval_mode?: string;
+  routing_decision?: Row | null;
   query?: string | null;
   retrieved_observation_ids?: string[];
   retrieved_fact_ids?: string[];
@@ -72,6 +73,11 @@ const KIND_COPY: Record<EvidenceKind, string> = {
 function score(value: unknown): string {
   const n = Number(value);
   return Number.isFinite(n) ? n.toFixed(2) : '—';
+}
+
+function labelize(value: unknown): string {
+  const text = String(value ?? '').replaceAll('_', ' ').trim();
+  return text ? text.replace(/\b\w/g, character => character.toUpperCase()) : '—';
 }
 
 export default function RetrievalView() {
@@ -158,6 +164,7 @@ function EmptyMetric({ label, value }: { label: string; value: string }) {
 
 function TraceSummary({ trace, evidence }: { trace: TraceData; evidence: Row[] }) {
   const sufficiency = trace.sufficiency;
+  const decision = trace.routing_decision;
   const sufficient = sufficiency ? Boolean(sufficiency.is_sufficient ?? sufficiency.sufficient) : null;
   const selectedCount =
     asList(trace.retrieved_observation_ids).length
@@ -181,6 +188,8 @@ function TraceSummary({ trace, evidence }: { trace: TraceData; evidence: Row[] }
       </div>
       <div className="trace-summary-grid">
         <SummaryStat label="Route" value={modeLabel(trace.retrieval_mode)} />
+        <SummaryStat label="Scope" value={labelize(decision?.context_scope)} />
+        <SummaryStat label="Confidence" value={decision?.confidence == null ? '—' : score(decision.confidence)} />
         <SummaryStat label="Sufficiency" value={sufficiencyLabel(sufficient)} tone={sufficient === false ? 'warn' : 'ok'} />
         <SummaryStat label="Candidates" value={String(candidateCount || evidence.length)} />
         <SummaryStat label="Selected" value={String(selectedCount)} />
@@ -195,6 +204,7 @@ function TracePipeline({ trace, evidence }: { trace: TraceData; evidence: Row[] 
   const sufficiency = trace.sufficiency;
   const sufficient = sufficiency ? Boolean(sufficiency.is_sufficient ?? sufficiency.sufficient) : null;
   const promptSections = trace.prompt_sections ?? [];
+  const decision = trace.routing_decision;
   const stages = [
     {
       icon: <MessageSquare size={16} />,
@@ -205,8 +215,13 @@ function TracePipeline({ trace, evidence }: { trace: TraceData; evidence: Row[] 
     {
       icon: <Route size={16} />,
       title: 'Route selected',
-      body: `${modeLabel(trace.retrieval_mode)} retrieval was used for this turn.`,
-      meta: trace.retrieval_log_id ? `Retrieval log ${shortId(String(trace.retrieval_log_id))}` : undefined,
+      body: decision?.reason
+        ? String(decision.reason)
+        : `${modeLabel(trace.retrieval_mode)} retrieval was used for this turn.`,
+      meta: [
+        decision?.context_scope ? `Scope: ${labelize(decision.context_scope)}` : '',
+        trace.retrieval_log_id ? `Log: ${shortId(String(trace.retrieval_log_id))}` : '',
+      ].filter(Boolean).join(' · ') || undefined,
     },
     {
       icon: <Search size={16} />,

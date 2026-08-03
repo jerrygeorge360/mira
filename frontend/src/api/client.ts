@@ -14,7 +14,31 @@ export interface ChatResponse {
   retrieval_mode: string;
   used_session_items: string[];
   used_memory_items: string[];
+  routing_decision?: Record<string, unknown> | null;
   trace_id: string | null;
+  llm_usage?: LlmUsageSummary | null;
+}
+
+export interface LlmUsageSummary {
+  run_id: string;
+  calls: number;
+  successful_calls: number;
+  provider_measured_calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cached_input_tokens: number;
+  reasoning_output_tokens: number;
+  estimated_input_tokens: number;
+  estimated_output_tokens: number;
+  gateway_input_tokens_original: number;
+  gateway_input_tokens_compressed: number;
+  gateway_tokens_saved: number;
+  paritok_calls: number;
+  gateway_measured_calls: number;
+  gateway_savings_fully_measured: boolean;
+  estimated_cost_usd: number;
+  fully_measured: boolean;
 }
 
 export type ChatStreamEvent =
@@ -26,9 +50,11 @@ export type ChatStreamEvent =
       user_observation_id: string | null;
       assistant_observation_id: string | null;
       retrieval_mode: string;
+      routing_decision?: Record<string, unknown> | null;
       used_session_items: string[];
       used_memory_items: string[];
       trace_id: string | null;
+      llm_usage?: LlmUsageSummary | null;
     }
   | { type: 'complete'; session_id: string }
   | { type: 'cancelled'; message: string }
@@ -119,12 +145,52 @@ export interface AdminProviderResponse {
   active: string | null;
   source: 'dashboard' | 'env' | 'default';
   model: string | null;
+  gateway: 'direct' | 'paritok';
+  gateway_source: 'explicit' | 'dashboard' | 'env' | 'default';
+  gateways: Array<'direct' | 'paritok'>;
+  paritok_upstream_profile: string | null;
+  paritok_compatible: boolean;
   providers: Array<{
     name: string;
     model: string;
     endpoint: string;
     has_cloud_embeddings: boolean;
   }>;
+}
+
+export interface AdminLlmUsageResponse {
+  generated_at: string;
+  period_days: number;
+  totals: {
+    calls: number;
+    successful_calls: number;
+    provider_measured_calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    estimated_input_tokens: number;
+    estimated_cost_usd: number;
+    fully_measured: boolean;
+  };
+  by_gateway: Array<{
+    name: string;
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    estimated_input_tokens: number;
+    average_latency_ms: number;
+  }>;
+  by_provider: Array<{
+    name: string;
+    calls: number;
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    estimated_input_tokens: number;
+    average_latency_ms: number;
+  }>;
+  recent_calls: Array<Record<string, unknown>>;
 }
 
 export const api = {
@@ -139,10 +205,19 @@ export const api = {
 
   adminProvider: () => req<AdminProviderResponse>('/admin/provider'),
 
+  adminLlmUsage: (days = 7) =>
+    req<AdminLlmUsageResponse>(`/admin/llm-usage?days=${days}&limit=30`),
+
   updateAdminProvider: (profile: string) =>
     req<AdminProviderResponse>('/admin/provider', {
       method: 'PUT',
       body: JSON.stringify({ profile }),
+    }),
+
+  updateAdminGateway: (gateway: 'direct' | 'paritok') =>
+    req<AdminProviderResponse>('/admin/gateway', {
+      method: 'PUT',
+      body: JSON.stringify({ gateway }),
     }),
 
   startDemo: () => req<{ status: string; workspace_id: string; expires_at: string }>(
@@ -225,6 +300,15 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
     ),
+
+  updateSession: (sessionId: string, update: { title?: string; is_starred?: boolean }) =>
+    req<{ session_id: string; title: string | null; is_starred: boolean }>(
+      `/sessions/${encodeURIComponent(sessionId)}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(update),
+      },
+    ),
 };
 
 async function streamReq(
@@ -277,6 +361,7 @@ function emitStreamLine(line: string, onEvent: (event: ChatStreamEvent) => void)
 export interface SessionSummary {
   session_id: string;
   title: string | null;
+  is_starred: boolean;
   user_id: string;
   status: string;
   created_at: string;
@@ -292,6 +377,9 @@ export interface ChatMessage {
   role: string;
   content: string;
   created_at: string;
+  retrieval_mode?: string | null;
+  context_scope?: string | null;
+  trace_id?: string | null;
 }
 
 export interface SessionMessagesResponse {

@@ -1,4 +1,4 @@
-import { Activity, Boxes, Cable, Check, Clock3, Cpu, ShieldCheck, Users } from 'lucide-react';
+import { Activity, Boxes, Cable, Check, Clock3, Cpu, Gauge, ShieldCheck, Users } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
@@ -10,6 +10,10 @@ export default function AdminView() {
     status: providerStatus,
     setData: setProviderData,
   } = useLiveData(() => api.adminProvider(), []);
+  const { data: usageData, status: usageStatus } = useLiveData(
+    () => api.adminLlmUsage(7),
+    [],
+  );
   const [switchingProvider, setSwitchingProvider] = useState<string | null>(null);
 
   if (status === 'loading') {
@@ -58,6 +62,7 @@ export default function AdminView() {
               <div className="admin-kv"><span>Active profile</span><strong>{providerData.active ?? 'none'}</strong></div>
               <div className="admin-kv"><span>Source</span><strong>{providerData.source}</strong></div>
               <div className="admin-kv"><span>Model</span><strong>{providerData.model ?? 'not configured'}</strong></div>
+              <h4 className="admin-control-heading">Choose the model provider</h4>
               <div className="admin-provider-list">
                 {providerData.providers.map(provider => {
                   const active = provider.name === providerData.active;
@@ -86,6 +91,63 @@ export default function AdminView() {
                   );
                 })}
               </div>
+              <div className="admin-gateway-control">
+                <div className="admin-gateway-copy">
+                  <Gauge size={17} />
+                  <span>
+                    <strong>Paritok compression</strong>
+                    <small>{providerData.paritok_compatible
+                      ? 'Reduce the selected context before it reaches the model provider.'
+                      : `Unavailable: the running proxy is configured for ${providerData.paritok_upstream_profile}.`}</small>
+                  </span>
+                </div>
+                <label className="admin-gateway-switch">
+                  <span>{providerData.gateway === 'paritok' ? 'On' : 'Off'}</span>
+                  <span className="toggle-switch">
+                    <input
+                      type="checkbox"
+                      role="switch"
+                      aria-label="Use Paritok context compression"
+                      checked={providerData.gateway === 'paritok'}
+                      disabled={!providerData.paritok_compatible || switchingProvider !== null}
+                      onChange={async event => {
+                        const gateway = event.target.checked ? 'paritok' : 'direct';
+                        setSwitchingProvider(`gateway:${gateway}`);
+                        try {
+                          setProviderData(await api.updateAdminGateway(gateway));
+                        } finally {
+                          setSwitchingProvider(null);
+                        }
+                      }}
+                    />
+                    <span className="toggle-slider" />
+                  </span>
+                </label>
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="admin-panel admin-usage-panel">
+          <div className="admin-panel-title"><Activity size={17} /><h3>LLM usage · 7 days</h3></div>
+          {usageStatus === 'loading' || !usageData ? (
+            <p className="admin-generated">Loading measured token usage...</p>
+          ) : (
+            <>
+              <div className="admin-kv"><span>Provider calls</span><strong>{usageData.totals.calls.toLocaleString()}</strong></div>
+              <div className="admin-kv"><span>Input tokens</span><strong>{usageData.totals.input_tokens.toLocaleString()}</strong></div>
+              <div className="admin-kv"><span>Output tokens</span><strong>{usageData.totals.output_tokens.toLocaleString()}</strong></div>
+              <div className="admin-kv">
+                <span>Measurement</span>
+                <strong>{usageData.totals.fully_measured ? 'Provider reported' : `${usageData.totals.provider_measured_calls}/${usageData.totals.calls} measured`}</strong>
+              </div>
+              {usageData.by_gateway.map(gateway => (
+                <div className="admin-kv" key={gateway.name}>
+                  <span>{gateway.name} · {gateway.calls} calls</span>
+                  <strong>{gateway.input_tokens.toLocaleString()} input</strong>
+                </div>
+              ))}
+              <p className="admin-generated">Prompts and responses are not stored in the usage ledger.</p>
             </>
           )}
         </section>

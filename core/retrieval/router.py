@@ -7,6 +7,8 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import re
+
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
 from core.retrieval.auto import route_retrieval as choose_retrieval_mode
@@ -15,6 +17,47 @@ from core.retrieval.quick import retrieve_quick
 from core.retrieval.relational import relational_retrieve
 
 SUPPORTED_MODES = frozenset({"auto", "quick", "deep", "relational"})
+GRAPH_ANCHOR_STOPWORDS = frozenset(
+    {
+        "and",
+        "about",
+        "are",
+        "can",
+        "could",
+        "did",
+        "does",
+        "for",
+        "from",
+        "have",
+        "how",
+        "just",
+        "more",
+        "not",
+        "purpose",
+        "should",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "would",
+        "you",
+        "your",
+        "was",
+        "were",
+    }
+)
 
 
 def route_retrieval(
@@ -48,7 +91,11 @@ def route_retrieval(
 
 
 def _matching_graph_node_ids(query: str, limit: int, workspace_id: str) -> list[str]:
-    terms = [term for term in query.split() if len(term) > 2]
+    terms = [
+        term
+        for term in re.findall(r"[\w.+-]+", query.casefold())
+        if len(term) > 2 and term not in GRAPH_ANCHOR_STOPWORDS
+    ]
     if not terms:
         return []
     with repository_connection() as connection:

@@ -9,11 +9,17 @@ import pytest
 from fastapi import HTTPException
 
 from api.auth import AuthenticatedWorkspace, is_platform_admin, require_platform_admin
-from api.routes.admin import admin_provider, update_admin_provider
+from api.routes.admin import (
+    admin_llm_usage,
+    admin_provider,
+    update_admin_gateway,
+    update_admin_provider,
+)
 from core.db.admin import get_admin_overview
 from core.db.repositories import (
     WorkspaceContext,
     configure_database,
+    create_llm_usage_event,
     create_workspace,
     repository_connection,
 )
@@ -23,6 +29,8 @@ from core.db.repositories import (
 def admin_database(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "admin.sqlite3"
     monkeypatch.setenv("MIRA_DB_PATH", str(path))
+    monkeypatch.delenv("MIRA_PARITOK_ENABLED", raising=False)
+    monkeypatch.delenv("PARITOK_UPSTREAM_PROFILE", raising=False)
     configure_database(path)
     return path
 
@@ -126,6 +134,84 @@ def test_admin_provider_uses_env_until_dashboard_override(
     assert updated["active"] == "gemini"
     assert updated["source"] == "dashboard"
     assert updated["model"] == "gemini-3.5-flash"
+
+
+def test_admin_gateway_switch_is_separate_from_provider(
+    admin_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del admin_database
+    monkeypatch.setenv("LLM_PROFILE", "deepseek")
+    monkeypatch.setenv("PARITOK_UPSTREAM_PROFILE", "deepseek")
+    admin = _auth("jerrygeorge360")
+
+    updated = update_admin_gateway({"gateway": "paritok"}, admin)
+
+    assert updated["active"] == "deepseek"
+    assert updated["gateway"] == "paritok"
+    assert updated["gateway_source"] == "dashboard"
+    assert updated["paritok_compatible"] is True
+
+
+def test_admin_gateway_rejects_provider_upstream_mismatch(
+    admin_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del admin_database
+    monkeypatch.setenv("LLM_PROFILE", "gemini")
+    monkeypatch.setenv("PARITOK_UPSTREAM_PROFILE", "deepseek")
+
+    with pytest.raises(HTTPException, match="configured for a different provider"):
+        update_admin_gateway({"gateway": "paritok"}, _auth("jerrygeorge360"))
+
+
+def test_provider_switch_disables_incompatible_paritok_gateway(
+    admin_database: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    del admin_database
+    monkeypatch.setenv("LLM_PROFILE", "deepseek")
+    monkeypatch.setenv("PARITOK_UPSTREAM_PROFILE", "deepseek")
+    admin = _auth("jerrygeorge360")
+    update_admin_gateway({"gateway": "paritok"}, admin)
+
+    updated = update_admin_provider({"profile": "gemini"}, admin)
+
+    assert updated["active"] == "gemini"
+    assert updated["gateway"] == "direct"
+    assert updated["paritok_compatible"] is False
+
+
+def test_admin_usage_reports_provider_counts_without_prompt_content(
+    admin_database: Path,
+) -> None:
+    del admin_database
+    create_llm_usage_event(
+        {
+            "workspace_id": "workspace_legacy_default",
+            "run_id": "admin-run",
+            "component": "agent",
+            "operation": "answer_generation",
+            "provider": "deepseek",
+            "model": "deepseek-chat",
+            "gateway": "direct",
+            "status": "succeeded",
+            "usage_source": "provider",
+            "input_tokens": 120,
+            "output_tokens": 30,
+            "total_tokens": 150,
+            "estimated_input_tokens": 118,
+            "latency_ms": 250,
+            "prompt_fingerprint": "fingerprint-only",
+        }
+    )
+
+    usage = admin_llm_usage(_auth("jerrygeorge360"), days=7, limit=30)
+
+    assert usage["totals"]["input_tokens"] == 120  # type: ignore[index]
+    assert usage["totals"]["fully_measured"] is True  # type: ignore[index]
+    assert usage["by_gateway"][0]["name"] == "direct"  # type: ignore[index]
+    assert "prompt" not in str(usage["recent_calls"]).casefold()
 
 
 def test_admin_provider_rejects_unknown_profile(admin_database: Path) -> None:

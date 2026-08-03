@@ -55,7 +55,9 @@ Architecture, Foresight, Qwen.
    Relational retrieval.
 4. **Foresight with temporal and contextual gating.** Future-relevant constraints are
    tracked using validity windows, a status lifecycle, relevance filtering, and a
-   safety bypass.
+   safety bypass. Cross-session lifecycle updates use embedding-ranked candidates and
+   a constrained, provenance-checked LLM verdict to resolve synonyms without granting
+   semantic similarity direct mutation authority.
 
 ## Architecture Summary
 
@@ -74,9 +76,12 @@ Retrieval offers four modes: **Quick** (direct facts via vector + keyword + atom
 lookup), **Deep** (graph-derived community summaries for broad synthesis), **Relational**
 (query-time graph traversal for change, conflict, causality, and evidence), and **Auto**
 (routing among the three with a structured sufficiency check that permits one retry).
-In the implementation, Auto also emits a traceable routing decision (`intent`, `route`,
-`used_memory`, confidence, and reason), allowing general knowledge questions to bypass
-memory while personal, procedural, mixed, and relational questions remain memory-grounded.
+In the implementation, Auto first classifies the required context scope (`general_knowledge`,
+`recent_conversation`, `session_memory`, `durable_memory`, or `mixed`) and then selects a
+retrieval mode only when durable evidence is required. It emits a traceable routing decision
+(`intent`, `context_scope`, `route`, `used_memory`, confidence, and reason), allowing general
+knowledge and recent conversational follow-ups to bypass durable retrieval while personal,
+mixed, and relational questions remain memory-grounded.
 
 Stores: **SQLite** is the source of truth for text content; **ChromaDB** is a rebuildable
 vector index that points back to SQLite row IDs; the **typed temporal graph** stores node

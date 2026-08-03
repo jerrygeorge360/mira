@@ -31,4 +31,6 @@ class ChatResponse(BaseModel):
     retrieval_mode: str
     used_session_items: list[str]
     used_memory_items: list[str]
+    routing_decision: dict[str, object] | None = None
     trace_id: str | None = None
+    llm_usage: dict[str, object] | None = None

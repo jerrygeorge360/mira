@@ -29,11 +29,28 @@ RESOLUTION_MARKERS = frozenset({"ignore that", "never mind", "nevermind", "drop 
 EXPIRATION_MARKERS = frozenset({"for now", "temporary", "just this response", "next reply only"})
 CORRECTION_PREFIX_RE = re.compile(r"^\s*(actually|correction)\b[:,-]?", re.IGNORECASE)
 TRANSITION_RE = re.compile(
-    r"\b(switched|switch|moved|move|migrated|migrate|changed|change)\s+from\b",
+    r"\b(switched|switch|moved|move|migrated|migrate|changed|change)"
+    r"(?:\s+(?:my|our|the)\s+[\w -]{1,60})?\s+from\b",
     re.IGNORECASE,
 )
 CORRECTION_NOT_RE = re.compile(
     r"\b(use|set|make|call|treat|store|prefer|reply|answer|assume)\b.+\bnot\b.+",
+    re.IGNORECASE,
+)
+NOT_ANYMORE_CORRECTION_RE = re.compile(r"\bnot\b.+\banymore\b", re.IGNORECASE)
+UNRESOLVED_DEICTIC_CORRECTIONS = frozenset(
+    {
+        "actually that is wrong",
+        "actually that's wrong",
+        "that is wrong",
+        "that's wrong",
+        "that is no longer true",
+        "that's no longer true",
+    }
+)
+CONTEXTUAL_TEMPORAL_AMENDMENT_RE = re.compile(
+    r"^(?:it|that|the\s+(?:class|deadline|exam|interview|meeting))\s+"
+    r"(?:has\s+been\s+|was\s+)?(?:moved|postponed|rescheduled|shifted)\b",
     re.IGNORECASE,
 )
 
@@ -43,9 +60,11 @@ def extract_session_operations(
     current_message: str,
     recent_turns: list[str],
     current_working_set: list[dict[str, object]],
+    *,
+    turn_purpose: str | None = None,
+    resolution_target_observation_id: str | None = None,
 ) -> list[SessionOperation]:
     """Extract provisional session-state operations from a new user turn."""
-    del recent_turns
     normalized_message = _normalize(current_message)
     if not normalized_message:
         return [_no_op(observation_id, current_message, "empty_message")]
@@ -53,16 +72,25 @@ def extract_session_operations(
         return [_no_op(observation_id, current_message, "sarcasm_or_irony")]
     if _is_low_confidence(normalized_message):
         return [_no_op(observation_id, current_message, "ambiguous_low_confidence")]
-    if _is_resolution_or_expiration(normalized_message):
-        return [
-            _resolution_operation(
-                observation_id,
-                current_message,
-                current_working_set,
-                op="expire" if _should_expire(normalized_message) else "resolve",
-            )
-        ]
-    correction = _extract_correction(observation_id, current_message, current_working_set)
+    if normalized_message.strip(" .!?") in UNRESOLVED_DEICTIC_CORRECTIONS:
+        return [_no_op(observation_id, current_message, "unresolved_correction_target")]
+    if turn_purpose == "casual_message":
+        return [_no_op(observation_id, current_message, "casual_turn")]
+    if turn_purpose == "resolution" or _is_resolution_or_expiration(normalized_message):
+        resolution = _resolution_operation(
+            observation_id,
+            current_message,
+            current_working_set,
+            op="expire" if _should_expire(normalized_message) else "resolve",
+            target_observation_id=resolution_target_observation_id,
+        )
+        return [resolution]
+    correction = _extract_correction(
+        observation_id,
+        current_message,
+        current_working_set,
+        recent_turns,
+    )
     if correction is not None:
         return [correction]
     open_question = _extract_open_question(observation_id, current_message)
@@ -81,9 +109,10 @@ def _extract_correction(
     observation_id: str,
     message: str,
     current_working_set: list[dict[str, object]],
+    recent_turns: list[str],
 ) -> SessionOperation | None:
     normalized_message = _normalize(message)
-    if not _looks_like_correction(normalized_message, current_working_set):
+    if not _looks_like_correction(normalized_message, current_working_set, recent_turns):
         return None
     superseded_items = _matching_working_set_ids(normalized_message, current_working_set)
     return _operation(
@@ -101,6 +130,7 @@ def _extract_correction(
 def _looks_like_correction(
     normalized_message: str,
     current_working_set: list[dict[str, object]],
+    recent_turns: list[str],
 ) -> bool:
     """Require explicit correction structure, not incidental words like "not"."""
     if CORRECTION_PREFIX_RE.search(normalized_message):
@@ -109,6 +139,14 @@ def _looks_like_correction(
         return True
     if CORRECTION_NOT_RE.search(normalized_message):
         return True
+    if NOT_ANYMORE_CORRECTION_RE.search(normalized_message):
+        return True
+    if CONTEXTUAL_TEMPORAL_AMENDMENT_RE.search(normalized_message):
+        recent_text = " ".join(_normalize(turn) for turn in recent_turns[-4:])
+        return any(
+            marker in recent_text
+            for marker in ("class", "deadline", "exam", "interview", "meeting")
+        )
     if " instead" in normalized_message or "instead " in normalized_message:
         return bool(current_working_set) or _contains_any(
             normalized_message,
@@ -201,8 +239,19 @@ def _resolution_operation(
     current_working_set: list[dict[str, object]],
     *,
     op: str,
+    target_observation_id: str | None,
 ) -> SessionOperation:
-    target_ids = _candidate_target_ids(current_working_set)
+    normalized_message = _normalize(message)
+    resolve_all = any(
+        marker in normalized_message for marker in ("all of that", "all of it", "everything")
+    )
+    target_ids = _candidate_target_ids(
+        current_working_set,
+        resolve_all=resolve_all,
+        target_observation_id=target_observation_id,
+    )
+    if not target_ids:
+        return _no_op(observation_id, message, "unresolved_resolution_target")
     return _operation(
         observation_id,
         message,
@@ -268,14 +317,30 @@ def _matching_working_set_ids(
     return ids
 
 
-def _candidate_target_ids(current_working_set: list[dict[str, object]]) -> list[str]:
-    ids: list[str] = []
+def _candidate_target_ids(
+    current_working_set: list[dict[str, object]],
+    *,
+    resolve_all: bool,
+    target_observation_id: str | None,
+) -> list[str]:
+    candidates: list[str] = []
     for item in current_working_set:
         item_id = item.get("id")
         status = item.get("status", "provisional")
         if isinstance(item_id, str) and status not in {"resolved", "expired", "rejected"}:
-            ids.append(item_id)
-    return ids
+            source_observations = item.get("source_observations")
+            sources = (
+                [value for value in source_observations if isinstance(value, str)]
+                if isinstance(source_observations, list)
+                else []
+            )
+            if resolve_all or (
+                target_observation_id is not None and target_observation_id in sources
+            ):
+                candidates.append(item_id)
+    if resolve_all:
+        return candidates
+    return candidates[:1]
 
 
 def _scope_for(message: str) -> str:

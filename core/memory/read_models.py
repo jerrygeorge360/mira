@@ -203,6 +203,7 @@ def list_memory_lifecycle_read_model(
     steps_by_observation = _slow_path_steps_by_observation(observation_ids, workspace_id)
     session_items_by_observation = _session_items_by_observation(observation_ids, workspace_id)
     artifact_counts_by_observation = _artifact_counts_by_observation(observation_ids, workspace_id)
+    usage_by_observation = _slow_path_usage_by_observation(observation_ids, workspace_id)
 
     lifecycle: list[MemoryRecord] = []
     for row in rows:
@@ -242,6 +243,7 @@ def list_memory_lifecycle_read_model(
                     },
                     "steps": steps_by_observation.get(observation_id, []),
                     "status": _slow_path_status(row, steps_by_observation.get(observation_id, [])),
+                    "llm_usage": usage_by_observation.get(observation_id, _empty_slow_path_usage()),
                 },
                 "artifacts": _artifact_counts(artifacts),
                 "artifact_ids": artifacts,
@@ -249,6 +251,119 @@ def list_memory_lifecycle_read_model(
             }
         )
     return lifecycle
+
+
+def _slow_path_usage_by_observation(
+    observation_ids: list[str], workspace_id: str
+) -> dict[str, MemoryRecord]:
+    if not observation_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in observation_ids)
+    rows = _fetch_all(
+        f"""
+        SELECT
+            observation_id,
+            operation,
+            gateway,
+            status,
+            usage_source,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            estimated_input_tokens,
+            gateway_input_tokens_original,
+            gateway_input_tokens_compressed,
+            gateway_tokens_saved
+        FROM llm_usage_events
+        WHERE workspace_id = ?
+          AND component = 'slow_path'
+          AND observation_id IN ({placeholders})
+        ORDER BY created_at ASC
+        """,  # nosec B608 - placeholders only; values remain parameterized
+        (workspace_id, *observation_ids),
+    )
+    summaries: dict[str, MemoryRecord] = {}
+    operations: dict[str, dict[str, MemoryRecord]] = {}
+    for row in rows:
+        observation_id = str(row["observation_id"])
+        summary = summaries.setdefault(observation_id, _empty_slow_path_usage())
+        summary["calls"] = _integer(summary["calls"]) + 1
+        if row.get("status") == "succeeded":
+            summary["successful_calls"] = _integer(summary["successful_calls"]) + 1
+        if row.get("usage_source") == "provider":
+            summary["provider_measured_calls"] = _integer(summary["provider_measured_calls"]) + 1
+        if row.get("gateway") == "paritok":
+            summary["paritok_calls"] = _integer(summary["paritok_calls"]) + 1
+            if row.get("gateway_tokens_saved") is not None:
+                summary["gateway_measured_calls"] = _integer(summary["gateway_measured_calls"]) + 1
+        for key in (
+            "input_tokens",
+            "output_tokens",
+            "total_tokens",
+            "estimated_input_tokens",
+            "gateway_input_tokens_original",
+            "gateway_input_tokens_compressed",
+            "gateway_tokens_saved",
+        ):
+            summary[key] = _integer(summary[key]) + _integer(row.get(key))
+
+        operation = str(row.get("operation") or "chat_completion")
+        operation_rows = operations.setdefault(observation_id, {})
+        operation_summary = operation_rows.setdefault(
+            operation,
+            {
+                "name": operation,
+                "calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "gateway_tokens_saved": 0,
+            },
+        )
+        operation_summary["calls"] = _integer(operation_summary["calls"]) + 1
+        operation_summary["input_tokens"] = _integer(operation_summary["input_tokens"]) + _integer(
+            row.get("input_tokens")
+        )
+        operation_summary["output_tokens"] = _integer(
+            operation_summary["output_tokens"]
+        ) + _integer(row.get("output_tokens"))
+        operation_summary["gateway_tokens_saved"] = _integer(
+            operation_summary["gateway_tokens_saved"]
+        ) + _integer(row.get("gateway_tokens_saved"))
+
+    for observation_id, summary in summaries.items():
+        summary["fully_measured"] = (
+            bool(summary["calls"]) and summary["calls"] == summary["provider_measured_calls"]
+        )
+        summary["gateway_savings_fully_measured"] = (
+            bool(summary["paritok_calls"])
+            and summary["paritok_calls"] == summary["gateway_measured_calls"]
+        )
+        summary["operations"] = list(operations.get(observation_id, {}).values())
+    return summaries
+
+
+def _empty_slow_path_usage() -> MemoryRecord:
+    return {
+        "calls": 0,
+        "successful_calls": 0,
+        "provider_measured_calls": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "estimated_input_tokens": 0,
+        "gateway_input_tokens_original": 0,
+        "gateway_input_tokens_compressed": 0,
+        "gateway_tokens_saved": 0,
+        "paritok_calls": 0,
+        "gateway_measured_calls": 0,
+        "fully_measured": False,
+        "gateway_savings_fully_measured": False,
+        "operations": [],
+    }
+
+
+def _integer(value: object) -> int:
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> MemoryRecord:

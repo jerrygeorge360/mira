@@ -35,6 +35,9 @@ def run_session_micro_path(
     observation_id: str,
     current_message: str,
     recent_turns: list[str],
+    *,
+    turn_purpose: str | None = None,
+    resolution_target_observation_id: str | None = None,
 ) -> list[str]:
     """Extract, validate, and apply provisional session state for a new turn.
 
@@ -49,6 +52,8 @@ def run_session_micro_path(
         current_message,
         recent_turns,
         current_working_set,
+        turn_purpose=turn_purpose,
+        resolution_target_observation_id=resolution_target_observation_id,
     )
 
     known_observation_ids = {observation_id}

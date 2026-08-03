@@ -188,6 +188,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         workspace_id TEXT NOT NULL,
         user_id TEXT NOT NULL,
         title TEXT,
+        is_starred INTEGER NOT NULL DEFAULT 0,
         status TEXT NOT NULL DEFAULT 'active',
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
@@ -453,6 +454,41 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS llm_usage_events (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        session_id TEXT,
+        observation_id TEXT,
+        component TEXT NOT NULL,
+        operation TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        gateway TEXT NOT NULL,
+        status TEXT NOT NULL,
+        usage_source TEXT NOT NULL,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        total_tokens INTEGER,
+        cached_input_tokens INTEGER,
+        reasoning_output_tokens INTEGER,
+        estimated_input_tokens INTEGER NOT NULL,
+        estimated_output_tokens INTEGER,
+        gateway_input_tokens_original INTEGER,
+        gateway_input_tokens_compressed INTEGER,
+        gateway_tokens_saved INTEGER,
+        latency_ms INTEGER NOT NULL,
+        estimated_cost_usd REAL,
+        provider_request_id TEXT,
+        prompt_fingerprint TEXT NOT NULL,
+        usage_json TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+        FOREIGN KEY (session_id) REFERENCES sessions (id),
+        FOREIGN KEY (observation_id) REFERENCES observations (id)
+    )
+    """,
+    """
     CREATE TABLE IF NOT EXISTS answer_traces (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -528,6 +564,9 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "ON foresight_records (workspace_id, status, valid_from, valid_until)",
     "CREATE INDEX IF NOT EXISTS idx_working_memory_workspace_status "
     "ON working_memory (workspace_id, status, priority)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_usage_workspace_created "
+    "ON llm_usage_events (workspace_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_llm_usage_run ON llm_usage_events (run_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_traces_workspace_session "
     "ON answer_traces (workspace_id, session_id, created_at)",
     """
@@ -553,6 +592,7 @@ _WORKSPACE_TABLES = (
     "working_memory",
     "retrieval_logs",
     "prompt_logs",
+    "llm_usage_events",
     "answer_traces",
 )
 
@@ -676,7 +716,9 @@ def initialize_database(database_path: str | Path) -> None:
             connection.execute(statement)
         _ensure_legacy_workspace(connection)
         _migrate_workspace_ownership(connection)
+        _migrate_session_metadata(connection)
         _migrate_slow_path_runtime(connection)
+        _migrate_llm_usage_gateway_metrics(connection)
         _migrate_atomic_facts_canonical(connection)
         _migrate_canonical_registry_uniqueness(connection)
         for statement in _INDEX_STATEMENTS:
@@ -745,6 +787,32 @@ def _migrate_slow_path_runtime(connection: sqlite3.Connection) -> None:
     queue_columns = _table_columns(connection, "slow_path_queue")
     if "quarantine_reason" not in queue_columns:
         connection.execute("ALTER TABLE slow_path_queue ADD COLUMN quarantine_reason TEXT")
+
+
+def _migrate_session_metadata(connection: sqlite3.Connection) -> None:
+    """Add user-managed conversation metadata to databases created before it existed."""
+    session_columns = _table_columns(connection, "sessions")
+    if "is_starred" not in session_columns:
+        connection.execute("ALTER TABLE sessions ADD COLUMN is_starred INTEGER NOT NULL DEFAULT 0")
+
+
+def _migrate_llm_usage_gateway_metrics(connection: sqlite3.Connection) -> None:
+    """Add request-scoped compression measurements to existing usage ledgers."""
+    columns = _table_columns(connection, "llm_usage_events")
+    statements = {
+        "gateway_input_tokens_original": (
+            "ALTER TABLE llm_usage_events ADD COLUMN gateway_input_tokens_original INTEGER"
+        ),
+        "gateway_input_tokens_compressed": (
+            "ALTER TABLE llm_usage_events ADD COLUMN gateway_input_tokens_compressed INTEGER"
+        ),
+        "gateway_tokens_saved": (
+            "ALTER TABLE llm_usage_events ADD COLUMN gateway_tokens_saved INTEGER"
+        ),
+    }
+    for column, statement in statements.items():
+        if column not in columns:
+            connection.execute(statement)
 
 
 def _migrate_canonical_registry_uniqueness(connection: sqlite3.Connection) -> None:

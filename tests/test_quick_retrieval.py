@@ -62,6 +62,31 @@ def test_chromadb_question_retrieves_relevant_observation_and_fact(database_path
     assert all("content" in result for result in results)
 
 
+def test_retracted_observation_is_not_returned_as_current_evidence(database_path: Path) -> None:
+    session_id = create_session("jerry")
+    target_id = save_observation(
+        session_id,
+        "user",
+        "I set the memory limit per container to 512MB.",
+    )
+    save_observation(
+        session_id,
+        "user",
+        "Undo what I just said.",
+        metadata={
+            "turn_purpose": "resolution",
+            "reference_resolution": {
+                "status": "resolved",
+                "target_observation_id": target_id,
+            },
+        },
+    )
+
+    results = retrieve_quick("What is my container memory limit?", session_id, limit=5)
+
+    assert target_id not in {str(result["source_id"]) for result in results}
+
+
 def test_deadline_question_retrieves_foresight_and_fact(database_path: Path) -> None:
     """Deadline questions retrieve active foresight and atomic fact evidence."""
     session_id = create_session("jerry")
@@ -115,6 +140,102 @@ def test_time_sensitive_question_retrieves_foresight_without_keyword_overlap(
     matching = [result for result in results if result["source_id"] == foresight_id]
     assert matching
     assert matching[0]["source"] == "foresight_records"
+
+
+def test_foresight_is_retrieved_across_sessions_in_same_workspace(database_path: Path) -> None:
+    """Foresight is durable workspace memory, not local to its source session."""
+    source_session_id = create_session("jerry")
+    query_session_id = create_session("jerry")
+    observation_id = save_observation(
+        source_session_id,
+        "user",
+        "I have a class tomorrow.",
+    )
+    foresight_id = create_foresight_record(
+        {
+            "content": "User has a class tomorrow.",
+            "reason": "User mentioned a class on the following day.",
+            "status": "active",
+            "source_observation_id": observation_id,
+        }
+    )
+
+    results = retrieve_quick("Do I have a class?", query_session_id, limit=5)
+
+    assert foresight_id in {str(result["source_id"]) for result in results}
+
+
+def test_assistant_foresight_is_not_used_as_user_memory(database_path: Path) -> None:
+    """An assistant acknowledgement is not independent evidence about the user."""
+    source_session_id = create_session("jerry")
+    query_session_id = create_session("jerry")
+    observation_id = save_observation(
+        source_session_id,
+        "assistant",
+        "I will remind you about your class tomorrow.",
+    )
+    foresight_id = create_foresight_record(
+        {
+            "content": "Remind the user about their class tomorrow.",
+            "reason": "Assistant acknowledged the user's class.",
+            "status": "active",
+            "source_observation_id": observation_id,
+        }
+    )
+
+    results = retrieve_quick("Do I have a class?", query_session_id, limit=5)
+
+    assert foresight_id not in {str(result["source_id"]) for result in results}
+
+
+def test_quick_retrieval_drops_current_question_and_unrelated_keyword_noise(
+    database_path: Path,
+) -> None:
+    """Auxiliary words do not admit unrelated facts or the query observation itself."""
+    session_id = create_session("jerry")
+    question_id = save_observation(session_id, "user", "Do I have a class?")
+    unrelated_observation_id = save_observation(
+        session_id,
+        "user",
+        "The Holocaust was a genocide.",
+    )
+    unrelated_fact_id = create_atomic_fact(
+        {
+            "subject": "the Holocaust",
+            "predicate": "is",
+            "object": "a genocide",
+            "confidence": 0.95,
+            "source_observation_id": unrelated_observation_id,
+        }
+    )
+
+    results = retrieve_quick("Do I have a class?", session_id, limit=8)
+    source_ids = {str(result["source_id"]) for result in results}
+
+    assert question_id not in source_ids
+    assert unrelated_fact_id not in source_ids
+
+
+def test_quick_retrieval_uses_assistant_history_only_when_explicitly_requested(
+    database_path: Path,
+) -> None:
+    """Previous model output is not evidence about the user unless directly requested."""
+    session_id = create_session("jerry")
+    assistant_id = save_observation(
+        session_id,
+        "assistant",
+        "I previously said your class starts at nine.",
+    )
+
+    user_memory_results = retrieve_quick("Do I have a class?", session_id, limit=8)
+    assistant_history_results = retrieve_quick(
+        "What did you say about my class?",
+        session_id,
+        limit=8,
+    )
+
+    assert assistant_id not in {str(result["source_id"]) for result in user_memory_results}
+    assert assistant_id in {str(result["source_id"]) for result in assistant_history_results}
 
 
 def test_duplicates_are_merged_by_source_id(database_path: Path) -> None:
