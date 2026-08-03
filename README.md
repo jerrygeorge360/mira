@@ -8,7 +8,9 @@
 memories for each turn, builds a bounded prompt, and measures what every model call costs.**
 
 [Live product](https://mira.ninja) | [Architecture](docs/architecture.md) |
-[Technical report](docs/mira-paper.md) | [MIT License](LICENSE)
+[Technical report](docs/mira-paper.md) | [Apache 2.0 License](LICENSE)
+
+Built with [Paritok](https://github.com/Paritok-official/paritok-4b-v1).
 
 ## Token-Efficiency Hackathon
 
@@ -240,4 +242,7 @@ make type
 
 ## License
 
-MIRA is licensed under the [MIT License](LICENSE).
+This submission branch is licensed under the
+[Apache License 2.0](LICENSE). See [NOTICE](NOTICE) for the retained notice covering earlier
+MIT-licensed distributions. Other Git branches retain their own license files unless this license
+commit is merged into them.
