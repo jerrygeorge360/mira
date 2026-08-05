@@ -89,7 +89,8 @@ incorrectly attributed to an earlier foreground response.
 Requirements: Docker Compose, a supported model-provider key, and a Paritok API key.
 
 ```bash
-git clone https://github.com/jerrygeorge360/mira.git
+git clone --branch feat/paritok-token-efficiency --single-branch \
+  https://github.com/jerrygeorge360/mira.git
 cd mira
 ```
 
