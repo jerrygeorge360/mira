@@ -7,8 +7,9 @@
 **MIRA is an inspectable memory layer for AI agents. It retrieves the smallest useful set of
 memories for each turn, builds a bounded prompt, and measures what every model call costs.**
 
-[Live product](https://mira.ninja) | [Architecture](docs/architecture.md) |
-[Technical report](docs/mira-paper.md) | [Apache 2.0 License](LICENSE)
+[Live product](https://mira.ninja) | [Demo video](https://youtu.be/fGkiMCPK-tg) |
+[Architecture](docs/architecture.md) | [Technical report](docs/mira-paper.md) |
+[Apache 2.0 License](LICENSE)
 
 Built with [Paritok](https://github.com/Paritok-official/paritok-4b-v1).
 
