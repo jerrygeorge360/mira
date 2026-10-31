@@ -1,0 +1,115 @@
+name: mira
+
+x-api-build: &api-build
+  context: .
+  dockerfile: Dockerfile
+  target: base
+
+x-data-volumes: &data-volumes
+  - mira-sqlite:/data/sqlite
+  - mira-chroma:/data/chroma
+  - mira-model-cache:/data/model-cache
+
+x-provider-env: &provider-env
+  LLM_PROFILE: ${LLM_PROFILE:-dashscope}
+  LLM_API_KEY: ${LLM_API_KEY}
+  LLM_RESPONSE_FORMAT: ${LLM_RESPONSE_FORMAT:-auto}
+  EMBEDDING_MODE: local
+  LOCAL_EMBEDDING_PROVIDER: fastembed
+  LOCAL_EMBEDDING_MODEL: BAAI/bge-small-en-v1.5
+  LOCAL_EMBEDDING_CACHE_DIR: /data/model-cache
+  EMBEDDING_FALLBACK: error
+  MIRA_DB_PATH: /data/sqlite/mira.db
+  CHROMA_DB_PATH: /data/chroma
+
+services:
+  api:
+    image: mira-api:coolify
+    build: *api-build
+    environment:
+      <<: *provider-env
+      MIRA_AUTH_MODE: github
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_CALLBACK_URL: https://mira.ninja/api/auth/github/callback
+      APP_BASE_URL: https://mira.ninja
+      COOKIE_SECURE: "true"
+      MIRA_API_CORS_ORIGINS: https://mira.ninja
+      MIRA_ADMIN_GITHUB_LOGINS: ${MIRA_ADMIN_GITHUB_LOGINS:-jerrygeorge360}
+      MIRA_OAUTH_ISSUER_URL: https://mira.ninja
+      MIRA_MCP_PUBLIC_URL: https://mira.ninja/mcp
+    volumes: *data-volumes
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  worker:
+    image: mira-api:coolify
+    build: *api-build
+    command: ["python", "-m", "scripts.run_worker", "--batch-size", "20", "--poll-interval", "2"]
+    environment:
+      <<: *provider-env
+    volumes: *data-volumes
+    depends_on:
+      api:
+        condition: service_healthy
+
+  mcp:
+    image: mira-api:coolify
+    build: *api-build
+    command: ["uvicorn", "integrations.mcp.service:app", "--host", "0.0.0.0", "--port", "8090"]
+    environment:
+      <<: *provider-env
+      MIRA_MCP_API_KEY: ${MIRA_MCP_API_KEY}
+      MIRA_MCP_WORKSPACE_ID: workspace_legacy_default
+      MIRA_MCP_PUBLIC_URL: https://mira.ninja/mcp
+      MIRA_OAUTH_ISSUER_URL: https://mira.ninja
+    volumes: *data-volumes
+    expose:
+      - "8090"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8090/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_API_URL: /api
+    expose:
+      - "80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  gateway:
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile.coolify
+    expose:
+      - "80"
+    depends_on:
+      api:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+      frontend:
+        condition: service_healthy
+
+volumes:
+  mira-sqlite:
+  mira-chroma:
+  mira-model-cache:
