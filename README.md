@@ -62,10 +62,10 @@ queued observation
 - **Session Working Set** for immediate goals, corrections, decisions, constraints, and open questions.
 - **Durable memory** backed by SQLite with observations, facts, graph records, reflections, foresight, and retrieval traces.
 - **Correction-aware memory** where newer facts supersede older ones without deleting history.
-- **Typed memory graph** connecting observations, entities, evidence, contradictions, and relationships.
+- **Typed memory graph** connecting observations, entities, evidence, and relationships such as `SUPERSEDED_BY` and `CONTRADICTS`.
 - **Multiple retrieval modes** including Quick, Deep, Relational, and Auto routing.
 - **Inspectable traces** showing what memory was retrieved and why.
-- **Ambient runtime context** without permanently storing transient information.
+- **Ambient runtime context** without permanently storing transient information, assembled within a prompt token budget.
 - **Multiple LLM providers** including DeepSeek, Gemini, DashScope, SiliconFlow, and local embeddings.
 - **Multiple interfaces** including FastAPI, Web UI, Streamlit, Slack, and MCP.
 
@@ -104,7 +104,11 @@ This allows agents to reason over long-lived memory while preserving provenance 
 
 ---
 
-# Architecture
+## Session memory vs. cross-session memory
+
+The Session Working Set handles immediate corrections and goals on the session micro-path. A background slow path extracts durable facts for cross-session retrieval, keeping the current answer responsive while preserving knowledge for later conversations.
+
+## Architecture flow
 
 SQLite is the source of truth.
 
@@ -138,7 +142,7 @@ More detail: [docs/architecture.md](docs/architecture.md).
 
 ---
 
-# Quick Start
+## Setup
 
 Python 3.11 is expected.
 
@@ -219,6 +223,16 @@ The API handles requests while the worker continuously processes durable memory 
 
 ---
 
+## Demo
+
+With the API, worker, and frontend running, open `http://localhost:5173`, sign in using the configured authentication mode, and ask MIRA to remember a project detail. Correct that detail in a later message, then inspect its answer and retrieval trace. See [the demo script](docs/demo-script.md) for a guided walkthrough.
+
+## Makefile commands
+
+Use `make api`, `make worker`, and `make frontend-dev` to run the services locally. Use `make check` for the project checks, `make provider-check` to validate the selected LLM provider, and `make local-eval` for local evaluation.
+
+---
+
 # Authentication & Workspaces
 
 MIRA isolates memory by workspace.
@@ -245,9 +259,9 @@ See the deployment documentation for the complete production configuration.
 
 ---
 
-# Docker
+## Docker local development
 
-Run the complete development environment:
+Run the complete development environment. To avoid conflicts with other local services, set `API_PORT=18000 FRONTEND_PORT=15173` before starting Compose when needed:
 
 ```bash
 docker compose build
@@ -262,7 +276,7 @@ http://localhost:5173
 
 Persistent data is stored under:
 
-- `.docker-data/sqlite/`
+- `.docker-data/sqlite/mira.db`
 - `.docker-data/chroma/`
 - `.docker-data/model-cache/`
 
@@ -340,7 +354,7 @@ MIRA is designed for applications that need long-lived, inspectable memory, incl
 
 ---
 
-# Implementation Status
+## Implementation status
 
 MIRA includes a complete end-to-end memory pipeline:
 
@@ -362,7 +376,7 @@ Some areas remain prototype-grade and are being actively improved, but the core 
 
 ---
 
-# Roadmap
+## Roadmap
 
 Current priorities include:
 
@@ -374,7 +388,7 @@ Current priorities include:
 
 ---
 
-# Architecture Decision Records
+## Architecture decision records
 
 Major design decisions are documented in [`docs/adr`](docs/adr):
 
@@ -397,7 +411,7 @@ Major design decisions are documented in [`docs/adr`](docs/adr):
 
 ---
 
-# Team
+## Team ownership
 
 - **Jerry** — Architecture, memory runtime, retrieval, prompt construction, and LLM integration.
 - **Kelechi** — Database, infrastructure, deployment, Slack integration, and MCP.
