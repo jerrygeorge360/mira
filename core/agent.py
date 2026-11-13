@@ -252,8 +252,9 @@ def handle_user_message(
 
     _raise_if_cancelled(should_cancel)
     tool_calls = _structured_tool_calls(session_id, user_message)
+    tool_context_items = [tool_result_context_record(tool_call) for tool_call in tool_calls]
     if tool_calls:
-        retrieved.extend(tool_result_context_record(tool_call) for tool_call in tool_calls)
+        retrieved.extend(tool_context_items)
     # Surface any unresolved contradiction among the retrieved facts so the answer flags
     # the conflict instead of asserting one contested value as settled.
     _emit_progress(progress_callback, "verification", "Checking corrections and conflicts.")
@@ -297,13 +298,14 @@ def handle_user_message(
     # Context pack + prompt.
     _emit_progress(progress_callback, "context", "Preparing answer context.")
     ambient_context = build_ambient_context(session_id)
+    prompt_retrieved = [*retrieved, *tool_context_items]
     context_pack = merge_context_sources(
         current_message=user_message,
         recent_turns=recent_turns,
         session_items=session_items,
         durable_memory_items=hot_memory_items,
         ambient_context=ambient_context,
-        retrieved_items=retrieved,
+        retrieved_items=prompt_retrieved,
     )
     if verification.get("uncertainty"):
         context_pack.append(
@@ -363,7 +365,7 @@ def handle_user_message(
         "used_session_items": used_session_items,
         "used_memory_items": used_memory_items,
         "routing_decision": dict(decision),
-        "retrieval_trace": _retrieval_trace(decision, retrieval_mode, retrieved),
+        "retrieval_trace": _retrieval_trace(decision, retrieval_mode, prompt_retrieved),
         "tool_calls": tool_calls,
         "trace_id": trace_id,
     }
