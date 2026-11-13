@@ -297,6 +297,11 @@ def assess_runtime_trust(
     if status in INACTIVE_STATUSES:
         runtime = RUNTIME_INELIGIBLE
         freshness = {**freshness, "freshness": "invalid"}
+    elif str(evidence.get("source", "")) == "structured_tool":
+        # Structured tools are deterministic, internal evidence assembled by MIRA.
+        # They are not external claims and must remain available to the prompt and
+        # trace even though their result is not a user-authored memory record.
+        runtime = RUNTIME_TRUSTED
     elif not provenance["complete"]:
         runtime = (
             RUNTIME_INELIGIBLE if provenance["workspace_match"] is False else RUNTIME_CONDITIONAL

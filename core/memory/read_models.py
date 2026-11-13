@@ -406,7 +406,10 @@ def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> 
                 "durable observations, atomic facts, graph nodes, and graph edges",
                 "generic memory lifecycle state and append-only reviews",
             ],
-            "not_persisted_yet": ["automatic source-table content deletion during forgetting"],
+            "not_persisted_yet": [
+                "per-record decay factors",
+                "automatic source-table content deletion during forgetting",
+            ],
         },
     }
 
