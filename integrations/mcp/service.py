@@ -104,6 +104,40 @@ def create_mcp_server() -> FastMCP:
             },
         )
 
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["inspect_memory_state"])
+    def inspect_memory_state(source_type: str, source_id: str) -> dict[str, object]:
+        return call(
+            "inspect_memory_state",
+            {"source_type": source_type, "source_id": source_id},
+        )
+
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["memory_sleep"])
+    def memory_sleep(max_items: int = 100) -> dict[str, object]:
+        return call("memory_sleep", {"max_items": max_items})
+
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["forget_memory"])
+    def forget_memory(memory_id: str, reason: str) -> dict[str, object]:
+        return call("forget_memory", {"memory_id": memory_id, "reason": reason})
+
+    @mcp.tool(description=MCP_TOOL_DESCRIPTIONS["answer_feedback"])
+    def answer_feedback(
+        trace_id: str,
+        answer_correct: bool | None = None,
+        verified: bool = False,
+        refuted: bool = False,
+        evidence: object | None = None,
+    ) -> dict[str, object]:
+        return call(
+            "answer_feedback",
+            {
+                "trace_id": trace_id,
+                "answer_correct": answer_correct,
+                "verified": verified,
+                "refuted": refuted,
+                "evidence": evidence,
+            },
+        )
+
     @mcp.custom_route("/health", methods=["GET"])
     async def health(_request: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "service": "mira-mcp"})

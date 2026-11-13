@@ -42,6 +42,10 @@ async def test_mcp_service_registers_protocol_tools(database_path: Path) -> None
         "inspect_graph",
         "list_active_foresight",
         "run_retrieval_query",
+        "inspect_memory_state",
+        "memory_sleep",
+        "forget_memory",
+        "answer_feedback",
     }
     assert all(
         tools[name].description == description

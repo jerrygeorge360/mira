@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.memory.lifecycle import is_historical_query
 from core.retrieval.auto import route_retrieval as choose_retrieval_mode
 from core.retrieval.deep import retrieve_deep
 from core.retrieval.quick import retrieve_quick
@@ -22,6 +23,8 @@ def route_retrieval(
     mode: str = "auto",
     limit: int = 8,
     session_id: str | None = None,
+    *,
+    workspace_id: str | None = None,
 ) -> list[dict[str, object]]:
     """Route a query through the requested public retrieval mode."""
     if limit < 1:
@@ -34,17 +37,26 @@ def route_retrieval(
         selected_mode = str(decision.get("mode", "quick"))
         if selected_mode == "general":
             return []
-    workspace_id = (
+    workspace_id = workspace_id or (
         workspace_id_for_session(session_id) if session_id is not None else LEGACY_WORKSPACE_ID
     )
+    historical = is_historical_query(query)
     if selected_mode == "deep":
-        return retrieve_deep(query, session_id, limit)
+        return retrieve_deep(
+            query, session_id, limit, workspace_id=workspace_id, historical=historical
+        )
     if selected_mode == "relational":
         anchors = _matching_graph_node_ids(query, limit, workspace_id)
         if anchors:
-            return relational_retrieve(anchors, set(), limit, workspace_id=workspace_id)
-        return retrieve_quick(query, session_id, limit)
-    return retrieve_quick(query, session_id, limit)
+            return relational_retrieve(
+                anchors, set(), limit, workspace_id=workspace_id, historical=historical, query=query
+            )
+        return retrieve_quick(
+            query, session_id, limit, workspace_id=workspace_id, historical=historical
+        )
+    return retrieve_quick(
+        query, session_id, limit, workspace_id=workspace_id, historical=historical
+    )
 
 
 def _matching_graph_node_ids(query: str, limit: int, workspace_id: str) -> list[str]:

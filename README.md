@@ -422,6 +422,7 @@ Major design decisions are documented in [`docs/adr`](docs/adr):
 
 - [MIRA paper](docs/mira-paper.md)
 - [Architecture overview](docs/architecture.md)
+- [Memory lifecycle](docs/memory-lifecycle.md)
 - [Alibaba Cloud deployment proof](docs/alibaba-cloud-deployment.md)
 - [Demo script](docs/demo-script.md)
 - [Contributing guide](CONTRIBUTING.md)

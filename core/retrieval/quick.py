@@ -7,10 +7,19 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import math
 import re
+from datetime import UTC, datetime
 
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.memory.lifecycle import (
+    is_historical_query,
+    lifecycle_for_retrieval,
+    record_retrieval,
+    retrieval_lifecycle_eligible,
+    retrieval_source_type,
+)
 from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
 from core.retrieval.vector import vector_search
 
@@ -22,6 +31,8 @@ ACTIVE_STATUS_SCORE = {"active": 1.0, "pending": 0.8, "resolved": 0.4}
 # Reciprocal rank fusion constant (standard ~60): dampens the weight of top ranks so
 # fusion is stable and scale-independent across the semantic and keyword retrievers.
 RRF_K = 60
+RECENCY_HALF_LIFE_DAYS = 30.0
+RECENCY_HALF_LIFE_SECONDS = RECENCY_HALF_LIFE_DAYS * 24.0 * 60.0 * 60.0
 # Structured-first: validated derived memory is the current answer surface; the raw
 # observation log is fallback/evidence, so it is weighted down rather than dropped.
 SOURCE_WEIGHT = {
@@ -55,6 +66,7 @@ def retrieve_quick(
     limit: int,
     *,
     workspace_id: str | None = None,
+    historical: bool = False,
 ) -> list[Evidence]:
     """Retrieve prompt-ready direct evidence for specific factual questions."""
     if limit < 1:
@@ -66,24 +78,43 @@ def retrieve_quick(
     if workspace_id is not None and session_workspace not in {None, workspace_id}:
         raise ValueError("session does not belong to the requested workspace")
     workspace_id = workspace_id or session_workspace or LEGACY_WORKSPACE_ID
+    historical = is_historical_query(query, historical=historical)
     candidates = [
-        *_semantic_candidates(query, limit, workspace_id),
+        *_semantic_candidates(query, limit, workspace_id, historical=historical),
         *_keyword_observation_candidates(query, workspace_id, limit),
-        *_atomic_fact_candidates(query, workspace_id, limit),
-        *_foresight_candidates(query, session_id, workspace_id),
+        *_atomic_fact_candidates(query, workspace_id, limit, historical=historical),
+        *_foresight_candidates(query, session_id, workspace_id, historical=historical),
         *_recent_observation_candidates(query, session_id, limit),
     ]
+    candidates = _enrich_lifecycle(candidates, workspace_id, query=query, historical=historical)
     deduplicated = _merge_duplicates(candidates)
     ranked = _rank_candidates(deduplicated)
-    return ranked[:limit]
+    selected = ranked[:limit]
+    for item in selected:
+        item["relevance_score"] = _float(item.get("score"))
+        source_type = _lifecycle_source_type(str(item.get("source", "")))
+        if source_type is not None:
+            record_retrieval(
+                source_type,
+                str(item["source_id"]),
+                workspace_id,
+                evidence={
+                    "relevance_score": item.get("relevance_score"),
+                    "freshness_score": item.get("freshness_score"),
+                    "trust_score": item.get("trust_score"),
+                },
+            )
+    return selected
 
 
-def quick_retrieve(query: str, limit: int = 8) -> list[Evidence]:
+def quick_retrieve(query: str, limit: int = 8, *, historical: bool = False) -> list[Evidence]:
     """Retrieve direct fact candidates without session scoping."""
-    return retrieve_quick(query, session_id=None, limit=limit)
+    return retrieve_quick(query, session_id=None, limit=limit, historical=historical)
 
 
-def _semantic_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
+def _semantic_candidates(
+    query: str, limit: int, workspace_id: str, *, historical: bool = False
+) -> list[Evidence]:
     candidates: list[Evidence] = []
     pointers = vector_search(
         query,
@@ -97,7 +128,9 @@ def _semantic_candidates(query: str, limit: int, workspace_id: str) -> list[Evid
         )
         if record is None:
             continue
-        if not _semantic_record_is_active(str(pointer["sqlite_table"]), record):
+        if not _semantic_record_is_active(
+            str(pointer["sqlite_table"]), record, historical=historical
+        ):
             continue
         candidates.append(
             _evidence(
@@ -138,8 +171,12 @@ def _keyword_observation_candidates(
     ]
 
 
-def _atomic_fact_candidates(query: str, workspace_id: str, limit: int) -> list[Evidence]:
-    results = keyword_search_atomic_facts(query, limit, workspace_id=workspace_id)
+def _atomic_fact_candidates(
+    query: str, workspace_id: str, limit: int, *, historical: bool = False
+) -> list[Evidence]:
+    results = keyword_search_atomic_facts(
+        query, limit, workspace_id=workspace_id, include_inactive=historical
+    )
     return [
         _evidence(
             source="atomic_facts",
@@ -157,12 +194,18 @@ def _atomic_fact_candidates(query: str, workspace_id: str, limit: int) -> list[E
     ]
 
 
-def _foresight_candidates(query: str, session_id: str | None, workspace_id: str) -> list[Evidence]:
+def _foresight_candidates(
+    query: str,
+    session_id: str | None,
+    workspace_id: str,
+    *,
+    historical: bool = False,
+) -> list[Evidence]:
     tokens = _tokens(query)
     if not tokens:
         return []
     is_foresight_query = _is_foresight_query(query)
-    rows = _fetch_foresight_rows(session_id, workspace_id)
+    rows = _fetch_foresight_rows(session_id, workspace_id, historical=historical)
     candidates: list[Evidence] = []
     for record in rows:
         content = str(record["content"])
@@ -248,6 +291,78 @@ def _merge_duplicates(candidates: list[Evidence]) -> list[Evidence]:
             existing_sources.append(source)
         existing["sources"] = existing_sources
     return list(merged.values())
+
+
+def _enrich_lifecycle(
+    candidates: list[Evidence],
+    workspace_id: str,
+    *,
+    query: str | None = None,
+    historical: bool = False,
+) -> list[Evidence]:
+    """Attach lifecycle diagnostics and exclude archived/forgotten candidates."""
+    enriched: list[Evidence] = []
+    for candidate in candidates:
+        source_type = _lifecycle_source_type(str(candidate.get("source", "")))
+        if source_type is None:
+            enriched.append(candidate)
+            continue
+        try:
+            raw_record = candidate.get("record")
+            lifecycle = lifecycle_for_retrieval(
+                source_type,
+                str(candidate["source_id"]),
+                workspace_id,
+                record=raw_record if isinstance(raw_record, dict) else None,
+                query=query,
+                historical=historical,
+            )
+        except ValueError:
+            continue
+        if not bool(lifecycle.get("eligible", True)):
+            continue
+        candidate["memory_state"] = lifecycle
+        candidate["freshness_score"] = lifecycle.get("freshness_score", 0.0)
+        candidate["trust_score"] = lifecycle.get("trust_score", 0.0)
+        candidate["authority"] = {
+            "class": lifecycle.get("source_authority", "unknown"),
+            "score": _authority_score(str(lifecycle.get("source_authority", "unknown"))),
+        }
+        candidate["provenance"] = _provenance_for_candidate(source_type, candidate)
+        candidate["prompt_eligible"] = True
+        enriched.append(candidate)
+    return enriched
+
+
+def _lifecycle_source_type(source: str) -> str | None:
+    return retrieval_source_type(source)
+
+
+def _provenance_for_candidate(source_type: str, candidate: Evidence) -> dict[str, object]:
+    record = candidate.get("record")
+    record = record if isinstance(record, dict) else {}
+    source_observation_ids: list[str] = []
+    raw_source = record.get("source_observation_id")
+    if isinstance(raw_source, str) and raw_source:
+        source_observation_ids.append(raw_source)
+    return {
+        "record_type": source_type,
+        "record_id": str(candidate["source_id"]),
+        "source_observation_ids": source_observation_ids,
+    }
+
+
+def _authority_score(authority: str) -> float:
+    return {
+        "direct_observation": 0.95,
+        "structured_derivation": 0.82,
+        "temporal_derivation": 0.78,
+        "synthesized_reflection": 0.68,
+        "community_synthesis": 0.62,
+        "promoted_working_memory": 0.72,
+        "untrusted_observation": 0.25,
+        "unknown": 0.4,
+    }.get(authority, 0.4)
 
 
 def _evidence(
@@ -348,40 +463,50 @@ def _fetch_record(table: str, record_id: str, workspace_id: str) -> dict[str, ob
     return None if row is None else dict(row)
 
 
-def _semantic_record_is_active(table: str, record: dict[str, object]) -> bool:
+def _semantic_record_is_active(
+    table: str, record: dict[str, object], *, historical: bool = False
+) -> bool:
     """Keep observations (immutable evidence); drop non-active reflections.
 
     Stale, invalidated, or superseded reflections must stop controlling current
     reasoning (paper, Reflection Validity Update). The vector index still points at
     them, so they are filtered here rather than being surfaced with a soft penalty.
     """
-    if table != "reflections":
-        return True
-    return str(record.get("status", "active")) == "active"
+    return retrieval_lifecycle_eligible(table, record=record, historical=historical)
 
 
-def _fetch_foresight_rows(session_id: str | None, workspace_id: str) -> list[dict[str, object]]:
+def _fetch_foresight_rows(
+    session_id: str | None, workspace_id: str, *, historical: bool = False
+) -> list[dict[str, object]]:
     with repository_connection() as connection:
         if session_id is None:
+            status_clause = "" if historical else "AND status IN (?, ?)"
+            parameters: tuple[object, ...] = (workspace_id,)
+            if not historical:
+                parameters += ("active", "pending")
             rows = connection.execute(
-                """
+                f"""
                 SELECT * FROM foresight_records
-                WHERE workspace_id = ? AND status IN (?, ?)
+                WHERE workspace_id = ? {status_clause}
                 ORDER BY created_at DESC
-                """,
-                (workspace_id, "active", "pending"),
+                """,  # nosec B608
+                parameters,
             ).fetchall()
         else:
+            status_clause = "" if historical else "AND foresight_records.status IN (?, ?)"
+            parameters = (workspace_id, session_id)
+            if not historical:
+                parameters = (workspace_id, "active", "pending", session_id)
             rows = connection.execute(
-                """
+                f"""
                 SELECT foresight_records.*
                 FROM foresight_records
                 JOIN observations ON observations.id = foresight_records.source_observation_id
                 WHERE foresight_records.workspace_id = ?
-                  AND foresight_records.status IN (?, ?) AND observations.session_id = ?
+                  {status_clause} AND observations.session_id = ?
                 ORDER BY foresight_records.created_at DESC
-                """,
-                (workspace_id, "active", "pending", session_id),
+                """,  # nosec B608
+                parameters,
             ).fetchall()
     return [dict(row) for row in rows]
 
@@ -433,8 +558,27 @@ def _normalized_keyword_score(record: dict[str, object]) -> float:
     return min(1.0, _float(record.get("score")) / 10.0)
 
 
-def _recency_score(record: dict[str, object]) -> float:
-    return 1.0 if record.get("created_at") else 0.0
+def _recency_score(record: dict[str, object], *, as_of: datetime | None = None) -> float:
+    """Return exponential freshness decay instead of a created-at presence flag.
+
+    A 30-day half-life keeps recent context useful while allowing older, still
+    authoritative memories to remain retrievable. Missing or malformed timestamps
+    are treated as having no freshness signal; trust is assessed separately.
+    """
+    raw_timestamp = record.get("updated_at") or record.get("created_at")
+    if not isinstance(raw_timestamp, str) or not raw_timestamp.strip():
+        return 0.0
+    try:
+        timestamp = datetime.fromisoformat(raw_timestamp.replace("Z", "+00:00"))
+    except ValueError:
+        return 0.0
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=UTC)
+    reference = as_of or datetime.now(UTC)
+    if reference.tzinfo is None:
+        reference = reference.replace(tzinfo=UTC)
+    age_seconds = max(0.0, (reference - timestamp).total_seconds())
+    return max(0.0, min(1.0, math.exp(-math.log(2.0) * age_seconds / RECENCY_HALF_LIFE_SECONDS)))
 
 
 def _confidence(record: dict[str, object]) -> float:

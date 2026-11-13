@@ -44,6 +44,7 @@ from core.retrieval.auto import (
 )
 from core.retrieval.router import route_retrieval as retrieve_by_mode
 from core.retrieval.sufficiency import resolve_with_one_retry
+from core.retrieval.trust import verify_before_answer
 from core.session.hydration import hydrate_session_from_memory
 from core.session.micro_path import run_session_micro_path
 from core.session.working_set import (
@@ -207,10 +208,16 @@ def handle_user_message(
         _raise_if_cancelled(should_cancel)
 
     # Routed retrieval of cross-session memory.
+    sufficiency_result: dict[str, object]
     if not _decision_uses_memory(decision):
         retrieval_mode = GENERAL_RETRIEVAL_MODE
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
         retrieved: list[dict[str, object]] = []
+        sufficiency_result = {
+            "sufficient": True,
+            "checked": False,
+            "reason": "general_knowledge_mode",
+        }
     else:
         retrieval_mode = str(decision["mode"])
         log_retrieval_route(session_id, retrieval_mode, str(decision.get("reason", "")))
@@ -232,10 +239,16 @@ def handle_user_message(
             resolution = resolve_with_one_retry(user_message, _retrieve)
             resolved_context = resolution.get("context")
             retrieved = resolved_context if isinstance(resolved_context, list) else []
+            sufficiency_result = dict(resolution)
             if resolution.get("retries"):
                 _emit_progress(progress_callback, "retry", "Expanded the memory search once.")
         else:
             retrieved = _retrieve(user_message)
+            sufficiency_result = {
+                "sufficient": bool(retrieved),
+                "checked": False,
+                "retrieved_count": len(retrieved),
+            }
 
     _raise_if_cancelled(should_cancel)
     tool_calls = _structured_tool_calls(session_id, user_message)
@@ -247,7 +260,25 @@ def handle_user_message(
     retrieved.extend(
         resolve_retrieved_contradictions(_retrieved_fact_ids(retrieved), query=user_message)
     )
-    trace.record_retrieval(retrieval_mode, retrieved)
+    verification = verify_before_answer(
+        user_message,
+        retrieved,
+        require_evidence=_decision_uses_memory(decision),
+    )
+    assessed_items = verification.get("assessed", [])
+    retrieval_evidence = (
+        [item for item in assessed_items if isinstance(item, dict)]
+        if isinstance(assessed_items, list)
+        else []
+    )
+    eligible_items = verification.get("eligible", [])
+    retrieved = (
+        [item for item in eligible_items if isinstance(item, dict)]
+        if isinstance(eligible_items, list)
+        else []
+    )
+    trace.record_sufficiency({**sufficiency_result, "verification": verification})
+    trace.record_retrieval(retrieval_mode, retrieval_evidence)
     _raise_if_cancelled(should_cancel)
 
     # Hot memory: pull active working-memory items for prompt context.
@@ -274,6 +305,14 @@ def handle_user_message(
         ambient_context=ambient_context,
         retrieved_items=retrieved,
     )
+    if verification.get("uncertainty"):
+        context_pack.append(
+            {
+                "section": "verification_guardrail",
+                "content": f"{verification['instruction']} {verification['uncertainty']}",
+                "source_ids": [],
+            }
+        )
     trace.record_prompt_sections(context_pack)
     prompt = build_prompt_from_context(user_message, context_pack, answer_mode=answer_mode)
 
@@ -301,7 +340,7 @@ def handle_user_message(
         user_observation_id=user_observation_id,
         query=user_message,
         retrieval_mode=retrieval_mode,
-        retrieved=retrieved,
+        retrieved=retrieval_evidence,
         routing_decision=decision,
         used_session_items=used_session_items,
         used_memory_items=used_memory_items,
@@ -695,10 +734,7 @@ def _log_traces(
             "session_id": session_id,
             "query": query,
             "retrieval_mode": retrieval_mode,
-            "retrieved_records_json": [
-                {"source": item.get("source"), "id": item.get("id") or item.get("source_id")}
-                for item in retrieved
-            ],
+            "retrieved_records_json": [_retrieval_trace_record(item) for item in retrieved],
             "sufficiency_json": {
                 "routing_decision": routing_decision,
                 "retrieved_count": len(retrieved),
@@ -719,3 +755,30 @@ def _log_traces(
         }
     )
     return retrieval_log_id, prompt_log_id
+
+
+def _retrieval_trace_record(item: dict[str, object]) -> dict[str, object]:
+    """Persist detailed, non-content retrieval evidence for later feedback/audit."""
+    source_id = item.get("id") or item.get("source_id")
+    keys = (
+        "source",
+        "score",
+        "relevance_score",
+        "semantic_score",
+        "keyword_score",
+        "recency_score",
+        "freshness_score",
+        "confidence",
+        "status",
+        "trust_score",
+        "prompt_eligible",
+        "authority",
+        "provenance",
+        "validity",
+        "memory_state",
+    )
+    record: dict[str, object] = {"source": item.get("source"), "id": source_id}
+    for key in keys[1:]:
+        if key in item and item[key] is not None:
+            record[key] = item[key]
+    return record

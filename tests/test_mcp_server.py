@@ -31,6 +31,10 @@ EXPECTED_TOOLS = {
     "inspect_graph",
     "list_active_foresight",
     "run_retrieval_query",
+    "inspect_memory_state",
+    "memory_sleep",
+    "forget_memory",
+    "answer_feedback",
 }
 MCP_CONTEXT = WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="configured")
 

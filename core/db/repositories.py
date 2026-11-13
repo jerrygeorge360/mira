@@ -147,6 +147,7 @@ UPDATED_AT_TABLES: frozenset[str] = frozenset(
         "foresight_records",
         "community_summaries",
         "working_memory",
+        "memory_state",
     }
 )
 
@@ -338,6 +339,57 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "memory_state": frozenset(
+        {
+            "id",
+            "source_type",
+            "source_id",
+            "source_authority",
+            "last_accessed_at",
+            "last_verified_at",
+            "successful_uses",
+            "failed_uses",
+            "verification_count",
+            "refuted_count",
+            "retention_score",
+            "stability",
+            "pinned",
+            "lifecycle_status",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "memory_reviews": frozenset(
+        {
+            "id",
+            "memory_state_id",
+            "trace_id",
+            "event_type",
+            "retrieved",
+            "answer_correct",
+            "answer_wrong",
+            "verified",
+            "refuted",
+            "reinforced",
+            "evidence",
+            "created_at",
+        }
+    ),
+    "memory_sleep_runs": frozenset(
+        {
+            "id",
+            "status",
+            "started_at",
+            "completed_at",
+            "reviewed_count",
+            "reinforced_count",
+            "weakened_count",
+            "consolidated_count",
+            "archived_count",
+            "forgotten_count",
+            "details",
+        }
+    ),
 }
 
 _WORKSPACE_OWNED_TABLES = frozenset(
@@ -358,6 +410,9 @@ _WORKSPACE_OWNED_TABLES = frozenset(
         "retrieval_logs",
         "prompt_logs",
         "answer_traces",
+        "memory_state",
+        "memory_reviews",
+        "memory_sleep_runs",
     }
 )
 for _workspace_table in _WORKSPACE_OWNED_TABLES:

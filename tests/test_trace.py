@@ -209,6 +209,66 @@ class TestTraceBuilder:
         assert fetched["community_summary_ids_json"] == ["cs-1"]
         assert fetched["graph_path_ids_json"] == []
         assert "obs-3" in fetched["retrieved_observation_ids_json"]
+        assert builder.retrieved_reflection_ids == ["ref-1"]
+        assert "ref-1" not in fetched["retrieved_observation_ids_json"]
+
+    def test_builder_classifies_non_legacy_sources_explicitly(self, database_path: Path) -> None:
+        session_id = create_session("test-user")
+        user_obs = _create_observation(session_id)
+        assistant_obs = _create_observation(session_id)
+        builder = TraceBuilder(session_id, user_obs)
+        builder.assistant_observation_id = assistant_obs
+
+        builder.record_retrieval(
+            "quick",
+            [
+                {"source": "foresight_records", "source_id": "future-1"},
+                {"source": "structured_tool", "id": "tool:inspect_memory"},
+                {"source": "contradiction", "source_id": "conflict:fact-a:fact-b"},
+                {"source": "new_source", "id": "unknown-1"},
+            ],
+        )
+
+        assert builder.retrieved_foresight_ids == ["future-1"]
+        assert builder.structured_tool_ids == ["tool:inspect_memory"]
+        assert builder.contradiction_ids == ["conflict:fact-a:fact-b"]
+        assert builder.unclassified_ids == ["unknown-1"]
+        assert builder.retrieved_observation_ids == []
+        assert [item["source_classification"] for item in builder.detailed_evidence] == [
+            "foresight",
+            "structured_tool",
+            "contradiction",
+            "unclassified",
+        ]
+
+    def test_detailed_evidence_is_not_inserted_without_schema_support(
+        self, database_path: Path
+    ) -> None:
+        session_id = create_session("test-user")
+        user_obs = _create_observation(session_id)
+        assistant_obs = _create_observation(session_id)
+        builder = TraceBuilder(session_id, user_obs)
+        builder.assistant_observation_id = assistant_obs
+        builder.record_retrieval(
+            "quick",
+            [
+                {
+                    "source": "atomic_facts",
+                    "source_id": "fact-1",
+                    "score": 0.91,
+                    "confidence": 0.88,
+                    "record": {"source_observation_id": "obs-source"},
+                }
+            ],
+        )
+
+        trace_id = builder.build()
+        fetched = get_answer_trace(trace_id)
+
+        assert builder.detailed_evidence[0]["score"] == 0.91
+        assert builder.detailed_evidence[0]["source_classification"] == "atomic_fact"
+        assert fetched is not None
+        assert "detailed_evidence_json" not in fetched
 
     def test_builder_graph_paths(self, database_path: Path) -> None:
         session_id = create_session("test-user")
@@ -384,7 +444,7 @@ def test_trace_links_to_retrieval_and_prompt_logs(
             assert pl_row is not None
 
 
-def test_trace_sufficiency_is_null_when_unavailable(
+def test_trace_records_verification_even_when_memory_is_not_used(
     database_path: Path, fake_qwen: _CapturingQwen
 ) -> None:
     session_id = create_session("jerry")
@@ -392,7 +452,9 @@ def test_trace_sufficiency_is_null_when_unavailable(
 
     fetched = get_answer_trace(str(response["trace_id"]))
     assert fetched is not None
-    assert fetched["sufficiency_json"] is None
+    assert isinstance(fetched["sufficiency_json"], dict)
+    assert "verification" in fetched["sufficiency_json"]
+    assert fetched["sufficiency_json"]["verification"]["sufficient"] is True
 
 
 def test_multiple_turns_produce_separate_traces(

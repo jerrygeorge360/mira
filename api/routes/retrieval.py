@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 
-from api.auth import WorkspaceAuth
+from api.auth import WorkspaceAuth, require_csrf
 from api.dependencies import fetch_one
-from api.schemas.retrieval import RetrievalTraceResponse
+from api.schemas.retrieval import (
+    AnswerFeedbackRequest,
+    AnswerFeedbackResponse,
+    RetrievalTraceResponse,
+)
 from core.db.repositories import bind_workspace
+from core.memory.lifecycle import record_feedback_for_trace
 
 router = APIRouter(prefix="/retrieval", tags=["retrieval"])
 
@@ -50,6 +55,29 @@ def get_retrieval_trace(
         created_at=str(trace["created_at"]) if trace.get("created_at") else None,
         evidence=_trace_evidence(trace, retrieval_log),
     )
+
+
+@router.post("/traces/{trace_id}/feedback", response_model=AnswerFeedbackResponse)
+def submit_answer_feedback(
+    trace_id: str,
+    request: Request,
+    payload: AnswerFeedbackRequest,
+    auth: WorkspaceAuth,
+) -> AnswerFeedbackResponse:
+    """Record a bounded answer verdict against the trace's retrieved memories."""
+    require_csrf(request, auth)
+    try:
+        updated = record_feedback_for_trace(
+            trace_id,
+            auth.context.workspace_id,
+            answer_correct=payload.answer_correct,
+            verified=payload.verified,
+            refuted=payload.refuted,
+            evidence=payload.evidence,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return AnswerFeedbackResponse(trace_id=trace_id, updated=updated)
 
 
 def _trace_evidence(

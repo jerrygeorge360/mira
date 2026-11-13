@@ -19,6 +19,10 @@ from datetime import datetime, timezone
 
 from core.db.repositories import enum_values, repository_connection
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.memory.lifecycle import (
+    is_historical_query,
+    lifecycle_for_retrieval,
+)
 
 RelationEvidence = dict[str, object]
 
@@ -35,6 +39,8 @@ def relational_retrieve(
     limit: int = 20,
     *,
     workspace_id: str = LEGACY_WORKSPACE_ID,
+    historical: bool = False,
+    query: str | None = None,
 ) -> list[RelationEvidence]:
     """Traverse contradiction, supersession, causality, and evidence relations.
 
@@ -50,17 +56,22 @@ def relational_retrieve(
         return []
 
     allowed_relations = _resolve_relation_types(relation_types)
+    historical = is_historical_query(query, historical=historical)
     node_cache: dict[str, dict[str, object] | None] = {}
-    origin_node_ids = _resolve_origin_nodes(entity_ids, node_cache, workspace_id)
+    origin_node_ids = _resolve_origin_nodes(
+        entity_ids, node_cache, workspace_id, historical=historical
+    )
 
     evidence: list[RelationEvidence] = []
     seen_edges: set[str] = set()
     for origin_node_id in origin_node_ids:
-        for edge in _incident_edges(origin_node_id, allowed_relations, workspace_id):
+        for edge in _incident_edges(
+            origin_node_id, allowed_relations, workspace_id, historical=historical
+        ):
             edge_id = str(edge["id"])
             if edge_id in seen_edges:
                 continue
-            item = _relation_evidence(origin_node_id, edge, node_cache)
+            item = _relation_evidence(origin_node_id, edge, node_cache, historical=historical)
             if item is None:
                 continue
             seen_edges.add(edge_id)
@@ -84,11 +95,15 @@ def _resolve_origin_nodes(
     entity_ids: list[str],
     node_cache: dict[str, dict[str, object] | None],
     workspace_id: str,
+    *,
+    historical: bool = False,
 ) -> list[str]:
     origin_ids: list[str] = []
     seen: set[str] = set()
     for entity_id in entity_ids:
-        for node_id in _node_ids_for_anchor(entity_id, node_cache, workspace_id):
+        for node_id in _node_ids_for_anchor(
+            entity_id, node_cache, workspace_id, historical=historical
+        ):
             if node_id not in seen:
                 seen.add(node_id)
                 origin_ids.append(node_id)
@@ -99,9 +114,13 @@ def _node_ids_for_anchor(
     anchor_id: str,
     node_cache: dict[str, dict[str, object] | None],
     workspace_id: str,
+    *,
+    historical: bool = False,
 ) -> list[str]:
     direct_node = _fetch_node(anchor_id, node_cache, workspace_id)
-    if direct_node is not None:
+    if direct_node is not None and _node_is_eligible(
+        direct_node, node_cache, workspace_id, historical=historical
+    ):
         return [anchor_id]
     with repository_connection() as connection:
         rows = connection.execute(
@@ -114,15 +133,21 @@ def _node_ids_for_anchor(
         record = dict(row)
         node_id = str(record["id"])
         node_cache[node_id] = record
-        node_ids.append(node_id)
+        if _node_is_eligible(record, node_cache, workspace_id, historical=historical):
+            node_ids.append(node_id)
     return node_ids
 
 
 def _incident_edges(
-    node_id: str, allowed_relations: frozenset[str], workspace_id: str
+    node_id: str,
+    allowed_relations: frozenset[str],
+    workspace_id: str,
+    *,
+    historical: bool = False,
 ) -> list[dict[str, object]]:
     relation_placeholders = ", ".join("?" for _ in allowed_relations)
     parameters = (workspace_id, node_id, node_id, *sorted(allowed_relations))
+    invalidated_clause = "" if historical else "AND invalidated_at IS NULL"
     with repository_connection() as connection:
         rows = connection.execute(
             f"""
@@ -130,7 +155,7 @@ def _incident_edges(
             FROM graph_edges
             WHERE workspace_id = ?
               AND (source_node_id = ? OR target_node_id = ?)
-              AND invalidated_at IS NULL
+              {invalidated_clause}
               AND edge_type IN ({relation_placeholders})
             ORDER BY created_at ASC
             """,  # nosec B608
@@ -143,14 +168,32 @@ def _relation_evidence(
     origin_node_id: str,
     edge: dict[str, object],
     node_cache: dict[str, dict[str, object] | None],
+    *,
+    historical: bool = False,
 ) -> RelationEvidence | None:
     workspace_id = str(edge["workspace_id"])
+    if not _record_is_eligible("graph_edges", edge, workspace_id, historical=historical):
+        return None
     source_node = _fetch_node(str(edge["source_node_id"]), node_cache, workspace_id)
     target_node = _fetch_node(str(edge["target_node_id"]), node_cache, workspace_id)
     if source_node is None or target_node is None:
         return None
-
     relation = str(edge["edge_type"])
+    if not _node_source_is_eligible(
+        source_node,
+        workspace_id,
+        historical=historical,
+        allow_superseded=relation == "SUPERSEDED_BY",
+    ):
+        return None
+    if not _node_source_is_eligible(
+        target_node,
+        workspace_id,
+        historical=historical,
+        allow_superseded=relation == "SUPERSEDED_BY",
+    ):
+        return None
+
     direction = "outgoing" if str(edge["source_node_id"]) == origin_node_id else "incoming"
     related_node = target_node if direction == "outgoing" else source_node
     confidence = _float(edge.get("confidence"))
@@ -194,6 +237,83 @@ def _fetch_node(
     record = None if row is None else dict(row)
     node_cache[node_id] = record
     return record
+
+
+def _node_is_eligible(
+    node: dict[str, object],
+    node_cache: dict[str, dict[str, object] | None],
+    workspace_id: str,
+    *,
+    historical: bool = False,
+) -> bool:
+    return _record_is_eligible("graph_nodes", node, workspace_id, historical=historical)
+
+
+def _node_source_is_eligible(
+    node: dict[str, object],
+    workspace_id: str,
+    *,
+    historical: bool = False,
+    allow_superseded: bool = False,
+) -> bool:
+    source_table = node.get("source_table")
+    source_id = node.get("source_id")
+    if not isinstance(source_table, str) or not isinstance(source_id, str):
+        return True
+    source = _fetch_source_record(source_table, source_id, workspace_id)
+    if source is None:
+        return True
+    return _record_is_eligible(
+        source_table,
+        source,
+        workspace_id,
+        historical=historical,
+        allow_superseded=allow_superseded,
+    )
+
+
+def _record_is_eligible(
+    source_type: str,
+    record: dict[str, object],
+    workspace_id: str,
+    *,
+    historical: bool = False,
+    allow_superseded: bool = False,
+) -> bool:
+    try:
+        state = lifecycle_for_retrieval(
+            source_type,
+            str(record["id"]),
+            workspace_id,
+            record=record,
+            historical=historical,
+            allow_superseded=allow_superseded,
+        )
+    except ValueError:
+        return False
+    return bool(state.get("eligible", True))
+
+
+def _fetch_source_record(
+    source_table: str, source_id: str, workspace_id: str
+) -> dict[str, object] | None:
+    if source_table not in {
+        "observations",
+        "atomic_facts",
+        "reflections",
+        "foresight_records",
+        "community_summaries",
+        "working_memory",
+        "graph_nodes",
+        "graph_edges",
+    }:
+        return None
+    with repository_connection() as connection:
+        row = connection.execute(
+            f"SELECT * FROM {source_table} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (source_id, workspace_id),
+        ).fetchone()
+    return None if row is None else dict(row)
 
 
 def _ranking_key(evidence: RelationEvidence) -> tuple[float, float, str]:

@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 
-from api.auth import WorkspaceAuth
+from api.auth import WorkspaceAuth, require_csrf
 from api.schemas.memory import (
     ItemsResponse,
+    MemoryForgetRequest,
+    MemoryForgetResponse,
     MemoryGraphResponse,
     MemoryHealthResponse,
     MemoryLifecycleResponse,
+    MemorySleepRequest,
+    MemorySleepResponse,
 )
+from core.memory.lifecycle import forget_memory_by_id, list_memory_states
 from core.memory.read_models import (
     get_memory_graph_read_model,
     get_memory_health_read_model,
@@ -19,6 +24,7 @@ from core.memory.read_models import (
     list_memory_lifecycle_read_model,
     list_reflections_read_model,
 )
+from core.memory.slow_path import run_memory_sleep_once
 
 router = APIRouter(tags=["memory"])
 
@@ -58,6 +64,61 @@ def get_memory_health(auth: WorkspaceAuth) -> MemoryHealthResponse:
     return MemoryHealthResponse(
         health=get_memory_health_read_model(workspace_id=auth.context.workspace_id)
     )
+
+
+@router.get("/memory/states", response_model=ItemsResponse)
+def get_memory_states(
+    auth: WorkspaceAuth,
+    include_inactive: bool = True,
+    limit: int = Query(default=100, ge=1, le=1000),
+) -> ItemsResponse:
+    """Return generic lifecycle state without replacing source read models."""
+    return ItemsResponse(
+        items=list_memory_states(
+            auth.context.workspace_id,
+            limit=limit,
+            include_inactive=include_inactive,
+        )
+    )
+
+
+@router.post("/memory/sleep", response_model=MemorySleepResponse)
+def sleep_memory(
+    request: Request,
+    payload: MemorySleepRequest,
+    auth: WorkspaceAuth,
+) -> MemorySleepResponse:
+    """Run one bounded retention/consolidation cycle for this workspace."""
+    require_csrf(request, auth)
+    try:
+        result = run_memory_sleep_once(auth.context.workspace_id, max_items=payload.max_items)
+    except ValueError as error:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return MemorySleepResponse(sleep=result)
+
+
+@router.post("/memory/{memory_id}/forget", response_model=MemoryForgetResponse)
+def forget_memory_route(
+    memory_id: str,
+    request: Request,
+    payload: MemoryForgetRequest,
+    auth: WorkspaceAuth,
+) -> MemoryForgetResponse:
+    """Forget one lifecycle memory without deleting its source or history."""
+    require_csrf(request, auth)
+    try:
+        memory = forget_memory_by_id(
+            memory_id,
+            auth.context.workspace_id,
+            reason=payload.reason,
+        )
+    except ValueError as error:
+        if str(error) in {"memory_id not found", "memory_id must not be empty"}:
+            raise HTTPException(status_code=404, detail="memory_id not found") from error
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return MemoryForgetResponse(memory=memory)
 
 
 @router.get("/foresight", response_model=ItemsResponse)

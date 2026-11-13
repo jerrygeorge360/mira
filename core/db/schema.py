@@ -16,6 +16,7 @@ from pathlib import Path
 LEGACY_WORKSPACE_ID = "workspace_legacy_default"
 LEGACY_WORKSPACE_SLUG = "legacy-default"
 WORKSPACE_MIGRATION_ID = "0002_workspace_ownership"
+MEMORY_LIFECYCLE_MIGRATION_ID = "0003_memory_lifecycle"
 
 # SQLite is the source of truth for ISSUE-005. Enum-like fields intentionally remain
 # TEXT columns here; repository helpers validate allowed values before writes.
@@ -478,6 +479,65 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         FOREIGN KEY (assistant_observation_id) REFERENCES observations (id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_state (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        source_type TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        source_authority TEXT NOT NULL DEFAULT 'unknown',
+        last_accessed_at TEXT,
+        last_verified_at TEXT,
+        successful_uses INTEGER NOT NULL DEFAULT 0,
+        failed_uses INTEGER NOT NULL DEFAULT 0,
+        verification_count INTEGER NOT NULL DEFAULT 0,
+        refuted_count INTEGER NOT NULL DEFAULT 0,
+        retention_score REAL NOT NULL DEFAULT 0.5,
+        stability REAL NOT NULL DEFAULT 30.0,
+        pinned INTEGER NOT NULL DEFAULT 0,
+        lifecycle_status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (workspace_id, source_type, source_id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_reviews (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        memory_state_id TEXT NOT NULL,
+        trace_id TEXT,
+        event_type TEXT NOT NULL,
+        retrieved INTEGER NOT NULL DEFAULT 0,
+        answer_correct INTEGER,
+        answer_wrong INTEGER NOT NULL DEFAULT 0,
+        verified INTEGER NOT NULL DEFAULT 0,
+        refuted INTEGER NOT NULL DEFAULT 0,
+        reinforced INTEGER NOT NULL DEFAULT 0,
+        evidence TEXT,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+        FOREIGN KEY (memory_state_id) REFERENCES memory_state (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_sleep_runs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        status TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        reviewed_count INTEGER NOT NULL DEFAULT 0,
+        reinforced_count INTEGER NOT NULL DEFAULT 0,
+        weakened_count INTEGER NOT NULL DEFAULT 0,
+        consolidated_count INTEGER NOT NULL DEFAULT 0,
+        archived_count INTEGER NOT NULL DEFAULT 0,
+        forgotten_count INTEGER NOT NULL DEFAULT 0,
+        details TEXT,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
 )
 
 _INDEX_STATEMENTS: tuple[str, ...] = (
@@ -530,6 +590,16 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "ON working_memory (workspace_id, status, priority)",
     "CREATE INDEX IF NOT EXISTS idx_traces_workspace_session "
     "ON answer_traces (workspace_id, session_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_state_workspace_status "
+    "ON memory_state (workspace_id, lifecycle_status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_state_source "
+    "ON memory_state (workspace_id, source_type, source_id)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_reviews_workspace_created "
+    "ON memory_reviews (workspace_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_reviews_state_created "
+    "ON memory_reviews (memory_state_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_sleep_workspace_started "
+    "ON memory_sleep_runs (workspace_id, started_at)",
     """
     CREATE INDEX IF NOT EXISTS idx_atomic_facts_canonical
     ON atomic_facts (canonical_subject_id, canonical_predicate_id)
@@ -554,6 +624,9 @@ _WORKSPACE_TABLES = (
     "retrieval_logs",
     "prompt_logs",
     "answer_traces",
+    "memory_state",
+    "memory_reviews",
+    "memory_sleep_runs",
 )
 
 _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
@@ -640,6 +713,18 @@ _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
         SELECT RAISE(ABORT, 'reflection evidence must share one workspace');
     END
     """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_memory_review_state_workspace
+    BEFORE INSERT ON memory_reviews
+    WHEN NOT EXISTS (
+        SELECT 1 FROM memory_state
+        WHERE memory_state.id = NEW.memory_state_id
+          AND memory_state.workspace_id = NEW.workspace_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'memory review must share its state workspace');
+    END
+    """,
 )
 
 # Canonical registries seed the alias vocabulary that lets contradiction/supersession
@@ -686,6 +771,10 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
             (WORKSPACE_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (MEMORY_LIFECYCLE_MIGRATION_ID, _now()),
         )
         connection.commit()
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()

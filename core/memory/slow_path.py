@@ -51,6 +51,7 @@ from core.memory.graph import (
     extract_entities,
     link_entity_mention,
 )
+from core.memory.lifecycle import run_memory_sleep
 from core.memory.reflection import (
     find_reflections_derived_from,
     invalidate_reflection_if_unsupported,
@@ -90,6 +91,7 @@ DURABLE_SCOPES = frozenset({"project", "cross_session"})
 # relations under the same subject do not.
 _SIMILARITY_THRESHOLD = 0.72
 _SIMILARITY_CANDIDATE_LIMIT = 25
+_SLEEP_CHANGE_CANDIDATE_LIMIT = 25
 
 SLOW_PATH_STEP_NAMES = frozenset(
     {
@@ -406,6 +408,230 @@ def run_semantic_passes(
                 succeeded=semantic_result.succeeded,
             )
     return semantic_results
+
+
+def run_memory_sleep_once(
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+    *,
+    max_items: int = 50,
+    now: str | None = None,
+) -> dict[str, object]:
+    """Run one bounded, deterministic memory-maintenance cycle.
+
+    This is an explicit maintenance entry point; the normal worker does not call it.
+    It intentionally avoids reflection synthesis, community summarization, foresight
+    detection, embeddings, and other LLM/API work. The existing lifecycle retention API
+    is called once, then exact workspace-scoped fact and reflection maintenance runs
+    under a fixed per-pass cap. Historical rows are retained; state changes are recorded
+    through the existing supersession/reflection status mechanisms.
+    """
+    if max_items < 1:
+        raise ValueError("max_items must be a positive integer")
+    require_active_workspace(workspace_id)
+
+    effective_now = now or _now()
+    errors: list[str] = []
+    lifecycle: dict[str, object] = {}
+    try:
+        # One lifecycle call per bounded sleep run; never call it inside a record loop.
+        lifecycle = run_memory_sleep(
+            workspace_id,
+            max_items,
+            now=effective_now,
+        )
+    except Exception as error:  # noqa: BLE001 - maintenance reports and continues
+        errors.append(f"memory_sleep: {str(error) or error.__class__.__name__}")
+
+    facts = _sleep_active_facts(workspace_id, max_items)
+    changes_found, changes_applied, duplicates_consolidated, change_errors = _refresh_sleep_changes(
+        workspace_id, facts
+    )
+    errors.extend(change_errors)
+
+    reflections = _sleep_active_reflections(workspace_id, max_items)
+    reflections_updated, reflection_errors = _refresh_sleep_reflections(reflections)
+    errors.extend(reflection_errors)
+
+    return {
+        "workspace_id": workspace_id,
+        "max_items": max_items,
+        "reviewed": len(facts) + len(reflections),
+        "facts_reviewed": len(facts),
+        "reflections_reviewed": len(reflections),
+        "changes_found": changes_found,
+        "changes_applied": changes_applied,
+        "duplicates_consolidated": duplicates_consolidated,
+        "reflections_updated": reflections_updated,
+        "lifecycle": lifecycle,
+        "errors": errors,
+    }
+
+
+def _sleep_active_facts(workspace_id: str, limit: int) -> list[dict[str, object]]:
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM atomic_facts
+            WHERE workspace_id = ? AND status = 'active'
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (workspace_id, limit),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _sleep_active_reflections(workspace_id: str, limit: int) -> list[str]:
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id FROM reflections
+            WHERE workspace_id = ? AND status = 'active'
+            ORDER BY updated_at ASC, id ASC
+            LIMIT ?
+            """,
+            (workspace_id, limit),
+        ).fetchall()
+    return [str(row["id"]) for row in rows]
+
+
+def _refresh_sleep_changes(
+    workspace_id: str,
+    facts: list[dict[str, object]],
+) -> tuple[int, int, int, list[str]]:
+    """Apply bounded exact-key duplicate and change maintenance without an LLM."""
+    changes_found = 0
+    changes_applied = 0
+    duplicates_consolidated = 0
+    errors: list[str] = []
+
+    for fact in facts:
+        fact_id = str(fact["id"])
+        prior_ids = _sleep_prior_fact_ids(workspace_id, fact)
+        if not prior_ids:
+            continue
+
+        # Same canonical subject/predicate/object is a deterministic duplicate. Keep the
+        # newer row as the live representative and preserve the older row plus provenance.
+        for prior_id in prior_ids:
+            prior = _fetch_fact(prior_id)
+            current = _fetch_fact(fact_id)
+            if not prior or not current:
+                continue
+            if str(prior.get("status")) != "active" or str(current.get("status")) != "active":
+                continue
+            if _sleep_fact_value(prior) != _sleep_fact_value(current):
+                continue
+            if _relation_edge_exists_by_fact(prior_id, fact_id, "SUPERSEDED_BY"):
+                continue
+            try:
+                apply_supersession(
+                    prior_id,
+                    fact_id,
+                    _sleep_fact_evidence(prior, current),
+                )
+            except Exception as error:  # noqa: BLE001 - one record must not stop sleep
+                errors.append(f"duplicate:{prior_id}:{str(error) or error.__class__.__name__}")
+                continue
+            changes_found += 1
+            changes_applied += 1
+            duplicates_consolidated += 1
+
+        current = _fetch_fact(fact_id)
+        if not current or str(current.get("status")) != "active":
+            continue
+        active_prior_ids = [
+            prior_id
+            for prior_id in _sleep_prior_fact_ids(workspace_id, current)
+            if (prior := _fetch_fact(prior_id)) is not None
+            and str(prior.get("status")) == "active"
+            and _sleep_fact_value(prior) != _sleep_fact_value(current)
+        ]
+        for change in detect_memory_change(fact_id, active_prior_ids):
+            source_id = str(change["source_id"])
+            target_id = str(change["target_id"])
+            relation = str(change["relation"])
+            if _relation_edge_exists_by_fact(source_id, target_id, relation):
+                continue
+            source = _fetch_fact(source_id)
+            target = _fetch_fact(target_id)
+            if not source or not target:
+                continue
+            if str(source.get("status")) != "active" or str(target.get("status")) != "active":
+                continue
+            try:
+                change_evidence = change.get("evidence")
+                evidence = list(change_evidence) if isinstance(change_evidence, list) else []
+                if relation == "SUPERSEDED_BY":
+                    apply_supersession(source_id, target_id, evidence)
+                elif relation == "CONTRADICTS":
+                    apply_contradiction(source_id, target_id, evidence)
+                else:
+                    continue
+            except Exception as error:  # noqa: BLE001 - one record must not stop sleep
+                errors.append(f"change:{source_id}:{str(error) or error.__class__.__name__}")
+                continue
+            changes_found += 1
+            changes_applied += 1
+
+    return changes_found, changes_applied, duplicates_consolidated, errors
+
+
+def _sleep_prior_fact_ids(workspace_id: str, fact: dict[str, object]) -> list[str]:
+    subject_id = fact.get("canonical_subject_id")
+    predicate_id = fact.get("canonical_predicate_id")
+    if not subject_id or not predicate_id:
+        return []
+    current_key = (str(fact.get("created_at", "")), str(fact["id"]))
+    with repository_connection() as connection:
+        rows = connection.execute(
+            """
+            SELECT id, created_at FROM atomic_facts
+            WHERE workspace_id = ?
+              AND canonical_subject_id = ?
+              AND canonical_predicate_id = ?
+              AND status = 'active'
+              AND id != ?
+            ORDER BY created_at ASC, id ASC
+            LIMIT ?
+            """,
+            (
+                workspace_id,
+                str(subject_id),
+                str(predicate_id),
+                str(fact["id"]),
+                _SLEEP_CHANGE_CANDIDATE_LIMIT,
+            ),
+        ).fetchall()
+    return [
+        str(row["id"]) for row in rows if (str(row["created_at"]), str(row["id"])) < current_key
+    ]
+
+
+def _sleep_fact_value(fact: dict[str, object]) -> str:
+    return " ".join(str(fact.get("object", "")).split()).casefold()
+
+
+def _sleep_fact_evidence(*facts: dict[str, object]) -> list[str]:
+    return sorted(
+        {str(fact["source_observation_id"]) for fact in facts if fact.get("source_observation_id")}
+    )
+
+
+def _refresh_sleep_reflections(reflection_ids: list[str]) -> tuple[int, list[str]]:
+    updated: list[str] = []
+    errors: list[str] = []
+    for reflection_id in reflection_ids:
+        try:
+            before = _reflection_status(reflection_id)
+            invalidate_reflection_if_unsupported(reflection_id)
+            after = _reflection_status(reflection_id)
+        except Exception as error:  # noqa: BLE001 - one record must not stop sleep
+            errors.append(f"reflection:{reflection_id}:{str(error) or error.__class__.__name__}")
+            continue
+        if after != before:
+            updated.append(reflection_id)
+    return len(updated), errors
 
 
 def _validate_queue_workspace(record: dict[str, object]) -> str:
@@ -836,11 +1062,15 @@ def _shortlist_candidate_facts(fact: dict[str, object]) -> list[dict[str, object
             SELECT id, subject, predicate, object, canonical_subject_id,
                    canonical_predicate_id, source_observation_id
             FROM atomic_facts
-            WHERE status = 'active' AND id != ?
+            WHERE workspace_id = ? AND status = 'active' AND id != ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (fact_id, _LLM_CHANGE_CANDIDATE_SCAN),
+            (
+                str(fact.get("workspace_id") or LEGACY_WORKSPACE_ID),
+                fact_id,
+                _LLM_CHANGE_CANDIDATE_SCAN,
+            ),
         ).fetchall()
     target = embed_text(new_text)
     scored: list[tuple[float, dict[str, object]]] = []
@@ -1503,21 +1733,31 @@ def _active_prior_fact_ids(fact: dict[str, object]) -> list[str]:
         rows = connection.execute(
             """
             SELECT id FROM atomic_facts
-            WHERE canonical_subject_id = ?
+            WHERE workspace_id = ?
+              AND canonical_subject_id = ?
               AND canonical_predicate_id = ?
               AND status = 'active'
               AND id != ?
             ORDER BY created_at ASC
             """,
-            (str(canonical_subject_id), str(canonical_predicate_id), str(fact["id"])),
+            (
+                str(fact.get("workspace_id") or LEGACY_WORKSPACE_ID),
+                str(canonical_subject_id),
+                str(canonical_predicate_id),
+                str(fact["id"]),
+            ),
         ).fetchall()
     exact = [str(row["id"]) for row in rows]
     if exact:
         return exact
-    return _similar_prior_fact_ids(fact, str(canonical_subject_id))
+    return _similar_prior_fact_ids(
+        fact, str(canonical_subject_id), str(fact.get("workspace_id") or LEGACY_WORKSPACE_ID)
+    )
 
 
-def _similar_prior_fact_ids(fact: dict[str, object], canonical_subject_id: str) -> list[str]:
+def _similar_prior_fact_ids(
+    fact: dict[str, object], canonical_subject_id: str, workspace_id: str
+) -> list[str]:
     """Fallback pairing: recent same-subject facts with an embedding-similar predicate.
 
     Exact canonical matching misses facts whose predicate wording landed in a different
@@ -1530,13 +1770,14 @@ def _similar_prior_fact_ids(fact: dict[str, object], canonical_subject_id: str) 
         rows = connection.execute(
             """
             SELECT id, predicate FROM atomic_facts
-            WHERE canonical_subject_id = ?
+            WHERE workspace_id = ?
+              AND canonical_subject_id = ?
               AND status = 'active'
               AND id != ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (canonical_subject_id, str(fact["id"]), _SIMILARITY_CANDIDATE_LIMIT),
+            (workspace_id, canonical_subject_id, str(fact["id"]), _SIMILARITY_CANDIDATE_LIMIT),
         ).fetchall()
     if not rows:
         return []

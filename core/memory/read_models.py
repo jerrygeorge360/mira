@@ -78,7 +78,7 @@ def list_foresight_read_model(
                 "ORDER BY created_at DESC LIMIT ?",
                 (workspace_id, "active", limit),
             )
-        return list_active_foresight(session_id)[:limit]
+        return list_active_foresight(session_id, workspace_id=workspace_id)[:limit]
 
     query = (
         "SELECT * FROM foresight_records WHERE workspace_id = ? AND status = ? "
@@ -236,8 +236,8 @@ def list_memory_lifecycle_read_model(
 def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> MemoryRecord:
     """Return persisted memory tier counts and retention state.
 
-    This view only reports signals the current architecture records. It does not
-    invent decay, access-reinforcement, or summarization events.
+    This view reports both existing source-table tiers and the generic lifecycle
+    sidecar without replacing source-table status semantics.
     """
     with repository_connection() as connection:
         hot_statuses = _status_counts(
@@ -267,6 +267,17 @@ def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> 
             connection,
             "SELECT status, COUNT(*) AS count FROM foresight_records "
             "WHERE workspace_id = ? GROUP BY status",
+            (workspace_id,),
+        )
+        lifecycle_statuses = _status_counts(
+            connection,
+            "SELECT lifecycle_status AS status, COUNT(*) AS count FROM memory_state "
+            "WHERE workspace_id = ? GROUP BY lifecycle_status",
+            (workspace_id,),
+        )
+        last_sleep = _fetch_all(
+            "SELECT * FROM memory_sleep_runs WHERE workspace_id = ? "
+            "ORDER BY started_at DESC LIMIT 1",
             (workspace_id,),
         )
         durable_counts = {
@@ -376,6 +387,13 @@ def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> 
                 "resolved_foresight": foresight_statuses.get("resolved", 0),
                 "expired_foresight": foresight_statuses.get("expired", 0),
                 "cancelled_foresight": foresight_statuses.get("cancelled", 0),
+                "archived_memory": lifecycle_statuses.get("archived", 0),
+                "forgotten_memory": lifecycle_statuses.get("forgotten", 0),
+                "weakened_memory": lifecycle_statuses.get("weakened", 0),
+            },
+            "lifecycle": {
+                "statuses": lifecycle_statuses,
+                "last_sleep": last_sleep[0] if last_sleep else None,
             },
         },
         "recent_movements": recent_movements,
@@ -386,13 +404,9 @@ def get_memory_health_read_model(*, workspace_id: str = LEGACY_WORKSPACE_ID) -> 
                 "reflection statuses",
                 "foresight statuses",
                 "durable observations, atomic facts, graph nodes, and graph edges",
+                "generic memory lifecycle state and append-only reviews",
             ],
-            "not_persisted_yet": [
-                "per-record decay factors",
-                "retrieval access reinforcement",
-                "recursive summarization events",
-                "warm-to-cold archival movement history",
-            ],
+            "not_persisted_yet": ["automatic source-table content deletion during forgetting"],
         },
     }
 
