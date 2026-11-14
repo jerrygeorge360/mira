@@ -18,11 +18,14 @@ import {
   Trash2,
   Gauge,
   LibraryBig,
+  X,
 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import BrandMark from './BrandMark';
+import { useGlideHighlight } from './useGlideHighlight';
 
 const PRIMARY_VIEWS = [
   { label: 'Chat', icon: <MessageSquare size={16} /> },
@@ -59,6 +62,31 @@ export default function Rail() {
     [sessionId, authUser?.workspaceId, historyRefreshKey],
   );
   const threads = data?.sessions ?? [];
+  const glide = useGlideHighlight<HTMLDivElement>();
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const searchRef = useRef<HTMLInputElement>(null);
+  const needle = query.trim().toLowerCase();
+  const visibleThreads = needle
+    ? threads.filter((t) => (t.title || 'Untitled chat').toLowerCase().includes(needle))
+    : threads;
+
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+
+  // collapsing hides history, so drop any search with it
+  useEffect(() => {
+    if (railCollapsed) {
+      setSearchOpen(false);
+      setQuery('');
+    }
+  }, [railCollapsed]);
+
+  function closeSearch() {
+    setSearchOpen(false);
+    setQuery('');
+  }
 
   function startNewChat() {
     setView('Chat');
@@ -139,16 +167,19 @@ export default function Rail() {
       )}
 
       {/* nav body */}
-      <div className="rail-body">
+      <div className="rail-body" ref={glide.ref}>
+        <span className="rail-glide" aria-hidden="true" style={glide.style} />
         {/* primary views */}
         {PRIMARY_VIEWS.map(({ label, icon }) => (
           <button
             key={label}
+            data-glide-row
             className={`rail-nav-btn${view === label ? ' active' : ''}`}
             onClick={() => setView(label)}
+            title={railCollapsed ? label : undefined}
           >
             {icon}
-            {!railCollapsed && label}
+            <span className="rail-label">{label}</span>
           </button>
         ))}
 
@@ -157,12 +188,13 @@ export default function Rail() {
         {MEMORY_VIEWS.map(({ label, icon }) => (
           <button
             key={label}
+            data-glide-row
             className={`rail-nav-btn${view === label ? ' active' : ''}`}
             onClick={() => setView(label)}
             title={railCollapsed ? label : undefined}
           >
             {icon}
-            {!railCollapsed && label}
+            <span className="rail-label">{label}</span>
           </button>
         ))}
 
@@ -170,12 +202,13 @@ export default function Rail() {
           <>
             {!railCollapsed && <div className="rail-section-label">Platform</div>}
             <button
+              data-glide-row
               className={`rail-nav-btn${view === 'Administration' ? ' active' : ''}`}
               onClick={() => setView('Administration')}
               title={railCollapsed ? 'Administration' : undefined}
             >
               <Gauge size={16} />
-              {!railCollapsed && 'Administration'}
+              <span className="rail-label">Administration</span>
             </button>
           </>
         )}
@@ -183,13 +216,45 @@ export default function Rail() {
         {/* history section */}
         {!railCollapsed && (
           <>
-            <div className="rail-section-label">History</div>
-            {threads.map(t => (
+            <div className={`rail-history-head${searchOpen ? ' searching' : ''}`}>
+              <div className="rail-section-label" aria-hidden={searchOpen}>History</div>
+              {threads.length > 0 && (
+                <button
+                  type="button"
+                  className="rail-history-search-btn"
+                  aria-label="Search chats"
+                  aria-expanded={searchOpen}
+                  tabIndex={searchOpen ? -1 : 0}
+                  onClick={() => setSearchOpen(true)}
+                >
+                  <Search size={13} />
+                </button>
+              )}
+              <div className="rail-history-search" aria-hidden={!searchOpen}>
+                <Search size={13} />
+                <input
+                  ref={searchRef}
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') closeSearch();
+                  }}
+                  placeholder="Search chats"
+                  aria-label="Search chat history"
+                  tabIndex={searchOpen ? 0 : -1}
+                />
+                <button type="button" aria-label="Close chat search" onClick={closeSearch} tabIndex={searchOpen ? 0 : -1}>
+                  <X size={13} />
+                </button>
+              </div>
+            </div>
+            {visibleThreads.map(t => (
               <div
                 key={t.session_id}
                 className={`rail-history-row${activeThread === t.session_id ? ' active' : ''}`}
               >
                 <button
+                  data-glide-row
                   className="rail-history-btn"
                   onClick={() => selectThread(t.session_id)}
                 >
@@ -210,6 +275,9 @@ export default function Rail() {
               <div className="rail-history-empty">
                 {status === 'offline' ? 'Backend offline' : 'No conversations yet'}
               </div>
+            )}
+            {threads.length > 0 && visibleThreads.length === 0 && (
+              <div className="rail-history-empty">No chats match “{query.trim()}”</div>
             )}
           </>
         )}

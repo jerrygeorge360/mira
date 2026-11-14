@@ -1,9 +1,11 @@
 import { useState, useRef, useEffect } from 'react';
-import { Paperclip, Send, Sparkles } from 'lucide-react';
+import { ChevronDown, FileUp, GitBranch, Network, Paperclip, Plus, Route, Send, Sparkles, Workflow } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import LoadingState from './LoadingState';
 import AssistantMessage, { type MessageMeta } from './AssistantMessage';
+import type { TraceStep } from './ThinkingTrace';
+import ComposerMenu, { type MenuRow } from './ComposerMenu';
 import { api } from '../api/client';
 
 type Message = {
@@ -12,7 +14,30 @@ type Message = {
   /** answered in this session (not loaded from history), so it streams in */
   live?: boolean;
   meta?: MessageMeta;
+  /** the agent's stage events for this turn, shown as a thinking trace */
+  steps?: TraceStep[];
+  startedAt?: number;
+  /** send → first answer token */
+  thoughtMs?: number;
 };
+
+type RoutingStrategy = 'fast' | 'accurate';
+
+const ROUTING: Record<RoutingStrategy, { label: string; desc: string }> = {
+  fast: { label: 'Fast', desc: 'Rule-based routing' },
+  accurate: { label: 'Accurate', desc: 'LLM routes each question · slower' },
+};
+const ROUTING_KEY = 'mira.routingStrategy';
+
+function readRouting(): RoutingStrategy {
+  try {
+    return localStorage.getItem(ROUTING_KEY) === 'accurate' ? 'accurate' : 'fast';
+  } catch {
+    return 'fast';
+  }
+}
+
+type Command = MenuRow & { run: () => void };
 
 export default function ChatView() {
   const {
@@ -22,9 +47,15 @@ export default function ChatView() {
     setUseRealAgent,
     sessionId,
     setSessionId,
+    lastTraceId,
     setLastTraceId,
     setView,
   } = useApp();
+  const [routing, setRouting] = useState<RoutingStrategy>(readRouting);
+  const [routingOpen, setRoutingOpen] = useState(false);
+  const [routingActive, setRoutingActive] = useState<number | null>(null);
+  const [menuActive, setMenuActive] = useState<number | null>(0);
+  const [menuDismissed, setMenuDismissed] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -119,21 +150,36 @@ export default function ChatView() {
       const body = {
         message: text,
         session_id: sessionId ?? undefined,
+        routing_strategy: routing,
       };
+      const startedAt = Date.now();
+      const steps: TraceStep[] = [];
+      let thoughtMs: number | undefined;
+      const turn = (content: string, extra?: Partial<Message>): Message => ({
+        role: 'assistant',
+        content,
+        steps: [...steps],
+        startedAt,
+        thoughtMs,
+        ...extra,
+      });
       try {
         let assistantText = '';
         let meta: MessageMeta | undefined;
-        const show = () => setMessages([...next, { role: 'assistant', content: assistantText, live: true, meta }]);
+        const show = () => setMessages([...next, turn(assistantText, { live: true, meta })]);
         const controller = new AbortController();
         streamAbortRef.current = controller;
         await api.chatStream(
           body,
           (event) => {
             if (event.type === 'stage') {
+              steps.push({ stage: event.stage, message: event.message, at: Date.now() });
               setStatus(event.message);
+              show();
               return;
             }
             if (event.type === 'answer') {
+              if (thoughtMs === undefined) thoughtMs = Date.now() - startedAt;
               assistantText += event.delta;
               show();
               return;
@@ -173,13 +219,13 @@ export default function ChatView() {
         );
         streamAbortRef.current = null;
         if (!assistantText) {
-          setMessages([...next, { role: 'assistant', content: 'No answer was returned.' }]);
+          setMessages([...next, turn('No answer was returned.')]);
         }
       } catch (err) {
         streamAbortRef.current = null;
         const message = (err as Error).message;
         if (!message.includes('API 404')) {
-          setMessages([...next, { role: 'assistant', content: `Error: ${message}` }]);
+          setMessages([...next, turn(`Error: ${message}`)]);
           setStatus('Backend error');
         } else {
           const res = await api.chat(body);
@@ -227,6 +273,78 @@ export default function ChatView() {
     send({ text: userTurn.content, base: messages.slice(0, userIndex) });
   }
 
+  function chooseRouting(next: RoutingStrategy) {
+    setRouting(next);
+    setRoutingOpen(false);
+    try {
+      localStorage.setItem(ROUTING_KEY, next);
+    } catch {
+      /* private mode: the choice just won't persist */
+    }
+  }
+
+  // "/" commands run real app actions; the menu opens only while the draft is a lone /word
+  const commands: Command[] = [
+    {
+      key: 'new',
+      label: '/new',
+      desc: 'Start a new chat',
+      icon: <Plus size={14} />,
+      run: () => {
+        setActiveThread('new');
+        setSessionId(null);
+      },
+    },
+    ...(lastTraceId
+      ? [{ key: 'trace', label: '/trace', desc: 'Open the last retrieval trace', icon: <Route size={14} />, run: () => setView('Retrieval Trace') }]
+      : []),
+    { key: 'pipeline', label: '/pipeline', desc: 'What memory did with recent turns', icon: <Workflow size={14} />, run: () => setView('Memory Pipeline') },
+    { key: 'graph', label: '/graph', desc: 'Browse the memory graph', icon: <Network size={14} />, run: () => setView('Memory Graph') },
+    { key: 'docs', label: '/docs', desc: 'Add or manage documents', icon: <FileUp size={14} />, run: () => setView('Knowledge Bases') },
+    ...(useRealAgent
+      ? (Object.keys(ROUTING) as RoutingStrategy[]).map((key) => ({
+          key,
+          label: `/${key}`,
+          desc: `Switch to ${ROUTING[key].label.toLowerCase()} memory routing`,
+          icon: <GitBranch size={14} />,
+          run: () => chooseRouting(key),
+        }))
+      : []),
+  ];
+  const slash = /^\/([\w-]*)$/.exec(input);
+  const commandQuery = slash ? slash[1].toLowerCase() : null;
+  const commandRows = commandQuery === null ? [] : commands.filter((c) => c.key.startsWith(commandQuery));
+  const commandMenuOpen = commandQuery !== null && !menuDismissed;
+
+  useEffect(() => {
+    setMenuActive(0);
+  }, [commandQuery]);
+
+  function runCommand(row: MenuRow) {
+    const command = commands.find((c) => c.key === row.key);
+    setInput('');
+    setMenuDismissed(false);
+    command?.run();
+    composerRef.current?.focus();
+  }
+
+  const routingRows: MenuRow[] = (Object.keys(ROUTING) as RoutingStrategy[]).map((key) => ({
+    key,
+    label: ROUTING[key].label,
+    desc: ROUTING[key].desc,
+    selected: routing === key,
+  }));
+
+  // close the routing picker on any press outside it
+  useEffect(() => {
+    if (!routingOpen) return;
+    const close = (event: PointerEvent) => {
+      if (!(event.target as Element).closest('.composer-routing')) setRoutingOpen(false);
+    };
+    document.addEventListener('pointerdown', close);
+    return () => document.removeEventListener('pointerdown', close);
+  }, [routingOpen]);
+
   function openTrace(traceId: string) {
     setLastTraceId(traceId);
     setView('Retrieval Trace');
@@ -246,6 +364,9 @@ export default function ChatView() {
                   animate={Boolean(m.live)}
                   streaming={loading && i === messages.length - 1}
                   meta={m.meta}
+                  steps={m.steps}
+                  startedAt={m.startedAt}
+                  thoughtMs={m.thoughtMs}
                   onRetry={i === messages.length - 1 && !loading ? () => retry(i) : undefined}
                   onOpenTrace={openTrace}
                 />
@@ -298,6 +419,19 @@ export default function ChatView() {
           </span>
         </div>
         <div className="chat-composer">
+          {commandMenuOpen && (
+            <ComposerMenu
+              id="chat-commands"
+              label="Commands"
+              className="composer-menu-commands"
+              rows={commandRows}
+              active={commandRows.length ? menuActive : null}
+              onActiveChange={setMenuActive}
+              onPick={runCommand}
+              empty={`No command matches /${commandQuery}`}
+              footer="↑↓ to move · Enter to run · Esc to close"
+            />
+          )}
           <button
             className="composer-attach"
             type="button"
@@ -313,16 +447,81 @@ export default function ChatView() {
             placeholder="Message MIRA"
             rows={1}
             value={input}
+            role="combobox"
+            aria-expanded={commandMenuOpen}
+            aria-controls={commandMenuOpen ? 'chat-commands' : undefined}
+            aria-activedescendant={
+              commandMenuOpen && menuActive !== null && commandRows[menuActive]
+                ? `chat-commands-${commandRows[menuActive].key}`
+                : undefined
+            }
             onChange={e => {
               setInput(e.target.value);
+              setMenuDismissed(false);
             }}
             onKeyDown={e => {
+              if (commandMenuOpen && commandRows.length) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  const n = commandRows.length;
+                  setMenuActive((i) => {
+                    const current = i ?? 0;
+                    return e.key === 'ArrowDown' ? (current + 1) % n : (current - 1 + n) % n;
+                  });
+                  return;
+                }
+                if ((e.key === 'Enter' && !e.shiftKey) || e.key === 'Tab') {
+                  e.preventDefault();
+                  runCommand(commandRows[menuActive ?? 0] ?? commandRows[0]);
+                  return;
+                }
+              }
+              if (e.key === 'Escape' && (commandMenuOpen || routingOpen)) {
+                e.preventDefault();
+                setMenuDismissed(true);
+                setRoutingOpen(false);
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 send();
               }
             }}
           />
+          {useRealAgent && (
+            <div className="composer-routing">
+              {routingOpen && (
+                <ComposerMenu
+                  id="chat-routing"
+                  label="Memory routing"
+                  className="composer-menu-routing"
+                  clearOnLeave
+                  rows={routingRows}
+                  active={routingActive}
+                  onActiveChange={setRoutingActive}
+                  onPick={(row) => {
+                    chooseRouting(row.key as RoutingStrategy);
+                    composerRef.current?.focus();
+                  }}
+                />
+              )}
+              <button
+                type="button"
+                className="composer-routing-trigger"
+                aria-haspopup="listbox"
+                aria-expanded={routingOpen}
+                aria-label={`Memory routing: ${ROUTING[routing].label}`}
+                title="How MIRA decides which memory to search"
+                onClick={() => {
+                  setRoutingOpen((o) => !o);
+                  setRoutingActive(null);
+                }}
+              >
+                {ROUTING[routing].label}
+                <ChevronDown size={12} />
+              </button>
+            </div>
+          )}
           <button className="composer-send" onClick={() => send()} disabled={loading || !input.trim()} aria-label="Send message">
             <Send size={16} />
           </button>

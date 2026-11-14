@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Check, ChevronDown, Copy, CornerDownRight, RotateCcw } from 'lucide-react';
+import ThinkingTrace, { type TraceStep } from './ThinkingTrace';
 
 /* ─────────────────────────────────────────────────────────
  * ASSISTANT MESSAGE — streaming text for the chat thread
@@ -56,6 +57,9 @@ export default function AssistantMessage({
   animate = false,
   streaming = false,
   meta,
+  steps,
+  startedAt,
+  thoughtMs,
   onRetry,
   onOpenTrace,
 }: {
@@ -65,6 +69,10 @@ export default function AssistantMessage({
   /** the backend is still sending this answer */
   streaming?: boolean;
   meta?: MessageMeta;
+  /** stage events for this turn (live answers only) */
+  steps?: TraceStep[];
+  startedAt?: number;
+  thoughtMs?: number;
   /** offered only on the latest answer */
   onRetry?: () => void;
   onOpenTrace?: (traceId: string) => void;
@@ -92,7 +100,10 @@ export default function AssistantMessage({
 
   return (
     <div className="assistant-message">
-      <MarkdownText content={shown} animate={animate} caret={!done} />
+      {steps && steps.length > 0 && (
+        <ThinkingTrace steps={steps} working={streaming && !content} startedAt={startedAt} thoughtMs={thoughtMs} />
+      )}
+      {content && <MarkdownText content={shown} animate={animate} caret={!done} />}
 
       <div className={`assistant-actions${done ? ' visible' : ''}`} aria-hidden={!done}>
         <button type="button" className="assistant-action" onClick={copy} aria-label={copied ? 'Copied' : 'Copy answer'} title={copied ? 'Copied' : 'Copy'} tabIndex={done ? 0 : -1}>

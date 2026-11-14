@@ -4,6 +4,7 @@ import { formatTime, useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import MemorySleepPanel from './MemorySleepPanel';
 import LoadingState from './LoadingState';
+import HealthInsights from './HealthInsights';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -62,6 +63,17 @@ export default function MemoryHealthView() {
         <h2>Memory Health</h2>
         <p>What is hot, what is durable, and which records have left active use.</p>
       </div>
+
+      <HealthInsights
+        tiers={tierCards.map(({ key, tier }) => ({
+          key,
+          label: tier.label,
+          count: tier.count,
+          description: tier.description,
+          capacity: tier.capacity,
+          pressure: tier.pressure,
+        }))}
+      />
 
       <div className="health-tier-grid">
         {tierCards.map(({ key, icon, tone, tier }) => (

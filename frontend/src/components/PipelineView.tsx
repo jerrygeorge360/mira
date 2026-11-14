@@ -17,6 +17,7 @@ import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
+import PipelineJournal from './PipelineJournal';
 
 type LifecycleRow = {
   observation?: Record<string, unknown>;
@@ -141,31 +142,7 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
         ))}
       </div>
 
-      <details className="pipeline-details">
-        <summary>Step journal and artifact ids</summary>
-        <div className="pipeline-detail-columns">
-          <div>
-            <h4>Slow-path steps</h4>
-            {steps.length ? (
-              <ul className="pipeline-step-list">
-                {steps.map((step) => (
-                  <li key={`${step.step_name}-${step.updated_at}`}>
-                    <span>{labelize(text(step.step_name))}</span>
-                    <strong className={step.last_error ? 'danger' : ''}>{labelize(text(step.status))}</strong>
-                    {step.last_error ? <small>{text(step.last_error)}</small> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No slow-path step journal entries yet.</p>
-            )}
-          </div>
-          <div>
-            <h4>Artifact ids</h4>
-            <pre>{JSON.stringify(artifactIds, null, 2)}</pre>
-          </div>
-        </div>
-      </details>
+      <PipelineJournal steps={steps} artifactIds={artifactIds} artifactLabels={ARTIFACTS} />
     </article>
   );
 }
