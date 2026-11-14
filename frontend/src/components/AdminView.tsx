@@ -2,6 +2,7 @@ import { Activity, Boxes, Cable, Check, Clock3, Cpu, ShieldCheck, Users } from '
 import { useState } from 'react';
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
+import LoadingState from './LoadingState';
 
 export default function AdminView() {
   const { data, status } = useLiveData(() => api.adminOverview(), []);
@@ -13,7 +14,7 @@ export default function AdminView() {
   const [switchingProvider, setSwitchingProvider] = useState<string | null>(null);
 
   if (status === 'loading') {
-    return <div className="view-empty"><div className="view-empty-msg">Loading platform overview...</div></div>;
+    return <div className="view-empty"><LoadingState label="Loading platform overview" /></div>;
   }
   if (status === 'offline' || !data) {
     return (
@@ -52,7 +53,7 @@ export default function AdminView() {
         <section className="admin-panel admin-provider-panel">
           <div className="admin-panel-title"><Cpu size={17} /><h3>Model provider</h3></div>
           {providerStatus === 'loading' || !providerData ? (
-            <p className="admin-generated">Loading provider profiles...</p>
+            <LoadingState label="Loading provider profiles" />
           ) : (
             <>
               <div className="admin-kv"><span>Active profile</span><strong>{providerData.active ?? 'none'}</strong></div>

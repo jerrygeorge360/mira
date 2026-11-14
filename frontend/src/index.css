@@ -5845,3 +5845,205 @@ select:focus-visible {
   .knowledge-document-row { grid-template-columns: 30px minmax(0, 1fr); }
   .knowledge-document-actions { grid-column: 2; justify-content: space-between; }
 }
+
+/* ── Loading state: pixel-grid loader + shimmer label + elapsed timer ── */
+.loading-state {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: fit-content;
+}
+.loading-state-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+.loading-grid {
+  display: grid;
+  flex-shrink: 0;
+  grid-template-columns: repeat(3, 4px);
+  gap: 1.5px;
+}
+.loading-cell {
+  width: 4px;
+  height: 4px;
+  border-radius: 1px;
+  background: var(--text);
+  opacity: 0.15;
+}
+.loading-cell.round { border-radius: 50%; }
+.loading-cell.idle { opacity: 0.07; }
+.loading-state-label {
+  font-size: 13px;
+  font-weight: 500;
+  color: transparent;
+  background-image: linear-gradient(90deg, var(--faint) 35%, var(--text) 50%, var(--faint) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: shimmer-text 1.4s linear infinite;
+}
+.loading-state-elapsed {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 12px;
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+.loading-state-card {
+  margin-top: 8px;
+  width: 224px;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--surface-soft);
+  box-shadow: var(--shadow);
+  transform-origin: top left;
+  animation: pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+.loading-state-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.loading-state-card-fallback {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 10px;
+  color: var(--faint);
+}
+/* centred inside the dashed empty-state boxes */
+.view-empty .loading-state,
+.knowledge-bases-loading .loading-state { margin: 0 auto; }
+
+@keyframes pixel-on {
+  0%, 100% { opacity: 0.15; }
+  40% { opacity: 1; }
+}
+@keyframes shimmer-text {
+  from { background-position: 100% 0; }
+  to { background-position: -100% 0; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-cell { animation: none !important; }
+  .loading-state-label { animation: none; color: var(--muted); background: none; }
+  .loading-state-card { animation: none; }
+}
+
+/* ── Assistant message: streamed words, action row, recalled items ── */
+.assistant-message { min-width: 0; }
+.stream-word { animation: word-in 320ms cubic-bezier(0.23, 1, 0.32, 1) both; }
+.stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 0.95em;
+  margin-left: 2px;
+  border-radius: 2px;
+  background: var(--text);
+  vertical-align: -0.12em;
+  animation: caret-blink 1s steps(1) infinite;
+}
+/* keep the caret on the same line as the last streamed paragraph */
+.chat-markdown > p:has(+ .stream-caret) { display: inline; }
+.assistant-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 8px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 400ms ease;
+}
+.assistant-actions.visible { opacity: 1; pointer-events: auto; }
+.assistant-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--faint);
+  transition: background var(--transition), color var(--transition);
+}
+.assistant-action:hover { background: var(--surface-soft); color: var(--text); }
+.assistant-sources-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 6px;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  transition: background var(--transition), color var(--transition);
+}
+.assistant-sources-toggle:hover { background: var(--surface-soft); color: var(--text); }
+.assistant-sources-chevron { transition: transform 250ms cubic-bezier(0.23, 1, 0.32, 1); }
+.assistant-sources-toggle[aria-expanded='true'] .assistant-sources-chevron { transform: rotate(180deg); }
+.assistant-sources {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition: grid-template-rows 300ms cubic-bezier(0.23, 1, 0.32, 1), opacity 300ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.assistant-sources.open { grid-template-rows: 1fr; opacity: 1; }
+.assistant-sources-inner { overflow: hidden; }
+.assistant-sources-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  white-space: normal;
+}
+.assistant-source-group { display: grid; gap: 4px; }
+.assistant-source-label { font-size: 11px; font-weight: 600; color: var(--faint); text-transform: uppercase; letter-spacing: 0.04em; }
+.assistant-source-ids { display: flex; flex-wrap: wrap; gap: 4px; }
+.assistant-source-id {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 10.5px;
+  animation: pop-in 250ms cubic-bezier(0.23, 1, 0.32, 1) both;
+}
+.assistant-trace-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 12px;
+}
+.assistant-trace-link:hover { text-decoration: underline; }
+
+@keyframes word-in {
+  from { opacity: 0; filter: blur(4px); }
+  to { opacity: 1; filter: blur(0); }
+}
+@keyframes caret-blink {
+  0%, 50% { opacity: 1; }
+  50.01%, 100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stream-word, .stream-caret, .assistant-source-id { animation: none; }
+  .assistant-actions, .assistant-sources, .assistant-sources-chevron { transition: none; }
+}

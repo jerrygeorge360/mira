@@ -1,11 +1,18 @@
 import { useState, useRef, useEffect } from 'react';
-import type { ReactNode } from 'react';
 import { Paperclip, Send, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
+import LoadingState from './LoadingState';
+import AssistantMessage, { type MessageMeta } from './AssistantMessage';
 import { api } from '../api/client';
 
-type Message = { role: 'user' | 'assistant'; content: string };
+type Message = {
+  role: 'user' | 'assistant';
+  content: string;
+  /** answered in this session (not loaded from history), so it streams in */
+  live?: boolean;
+  meta?: MessageMeta;
+};
 
 export default function ChatView() {
   const {
@@ -22,7 +29,9 @@ export default function ChatView() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('New chat');
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  // Follow new content only while the reader is at the bottom; scrolling up to read stops it.
+  const pinnedRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // The session whose messages are currently loaded, so we don't reload after sending.
@@ -42,6 +51,7 @@ export default function ChatView() {
       .sessionMessages(activeThread)
       .then((res) => {
         if (!active) return;
+        pinnedRef.current = true;
         setMessages(res.messages.map((m) => ({ role: m.role as Message['role'], content: m.content })));
         setStatus(`${res.messages.length} message${res.messages.length === 1 ? '' : 's'}`);
         loadedRef.current = activeThread;
@@ -58,8 +68,22 @@ export default function ChatView() {
   }, [activeThread]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+    const el = listRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    // the streamed answer keeps growing after each delta, so follow DOM changes, not state
+    const follow = new MutationObserver(() => {
+      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
+    });
+    el.addEventListener('scroll', onScroll, { passive: true });
+    follow.observe(el, { childList: true, subtree: true, characterData: true });
+    return () => {
+      el.removeEventListener('scroll', onScroll);
+      follow.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     adjustComposerHeight();
@@ -78,14 +102,18 @@ export default function ChatView() {
     composer.style.height = `${Math.min(composer.scrollHeight, 170)}px`;
   }
 
-  async function send() {
-    const text = input.trim();
-    if (!text) return;
-    setInput('');
-    if (composerRef.current) composerRef.current.style.height = 'auto';
-    const next: Message[] = [...messages, { role: 'user', content: text }];
+  async function send(retry?: { text: string; base: Message[] }) {
+    const text = retry ? retry.text : input.trim();
+    if (!text || loading) return;
+    if (!retry) {
+      setInput('');
+      if (composerRef.current) composerRef.current.style.height = 'auto';
+    }
+    const next: Message[] = [...(retry ? retry.base : messages), { role: 'user', content: text }];
+    pinnedRef.current = true;
     setMessages(next);
     setLoading(true);
+    setStatus('Thinking');
 
     if (useRealAgent) {
       const body = {
@@ -94,6 +122,8 @@ export default function ChatView() {
       };
       try {
         let assistantText = '';
+        let meta: MessageMeta | undefined;
+        const show = () => setMessages([...next, { role: 'assistant', content: assistantText, live: true, meta }]);
         const controller = new AbortController();
         streamAbortRef.current = controller;
         await api.chatStream(
@@ -105,7 +135,7 @@ export default function ChatView() {
             }
             if (event.type === 'answer') {
               assistantText += event.delta;
-              setMessages([...next, { role: 'assistant', content: assistantText }]);
+              show();
               return;
             }
             if (event.type === 'trace') {
@@ -117,6 +147,13 @@ export default function ChatView() {
                 }
               }
               if (event.trace_id) setLastTraceId(event.trace_id);
+              meta = {
+                usedMemoryItems: event.used_memory_items ?? [],
+                usedSessionItems: event.used_session_items ?? [],
+                traceId: event.trace_id,
+                retrievalMode: event.retrieval_mode,
+              };
+              if (assistantText) show();
               setStatus(`Real backend · ${event.retrieval_mode}`);
               return;
             }
@@ -154,7 +191,20 @@ export default function ChatView() {
             }
           }
           if (res.trace_id) setLastTraceId(res.trace_id);
-          setMessages([...next, { role: 'assistant', content: res.answer }]);
+          setMessages([
+            ...next,
+            {
+              role: 'assistant',
+              content: res.answer,
+              live: true,
+              meta: {
+                usedMemoryItems: res.used_memory_items ?? [],
+                usedSessionItems: res.used_session_items ?? [],
+                traceId: res.trace_id,
+                retrievalMode: res.retrieval_mode,
+              },
+            },
+          ]);
           setStatus(`Real backend · ${res.retrieval_mode}`);
         }
       }
@@ -162,22 +212,46 @@ export default function ChatView() {
       await new Promise(r => setTimeout(r, 600));
       const reply =
         "I've pulled context from your durable memory and session working set. The main signal is still active — let me know if you'd like a deeper trace or a retrieval breakdown.";
-      setMessages([...next, { role: 'assistant', content: reply }]);
+      setMessages([...next, { role: 'assistant', content: reply, live: true }]);
       setStatus('Demo response · quick retrieval');
     }
     setLoading(false);
   }
 
 
+  /** Re-ask the user turn that produced the answer at `index`. */
+  function retry(index: number) {
+    const userIndex = index - 1;
+    const userTurn = messages[userIndex];
+    if (!userTurn || userTurn.role !== 'user') return;
+    send({ text: userTurn.content, base: messages.slice(0, userIndex) });
+  }
+
+  function openTrace(traceId: string) {
+    setLastTraceId(traceId);
+    setView('Retrieval Trace');
+  }
+
   return (
     <div className="chat-view">
       {/* messages */}
-      <div className="chat-messages">
+      <div className="chat-messages" ref={listRef}>
         {messages.map((m, i) => (
           <div key={i} className={`chat-turn ${m.role}`}>
             {m.role === 'assistant' && <div className="bot-avatar"><BrandMark size={17} /></div>}
             <div className="chat-bubble">
-              {m.role === 'assistant' ? <MarkdownText content={m.content} /> : m.content}
+              {m.role === 'assistant' ? (
+                <AssistantMessage
+                  content={m.content}
+                  animate={Boolean(m.live)}
+                  streaming={loading && i === messages.length - 1}
+                  meta={m.meta}
+                  onRetry={i === messages.length - 1 && !loading ? () => retry(i) : undefined}
+                  onOpenTrace={openTrace}
+                />
+              ) : (
+                m.content
+              )}
             </div>
           </div>
         ))}
@@ -194,15 +268,14 @@ export default function ChatView() {
           </div>
         )}
 
-        {loading && (
+        {loading && messages[messages.length - 1]?.role !== 'assistant' && (
           <div className="chat-turn">
             <div className="bot-avatar"><BrandMark size={17} /></div>
-            <div className="chat-bubble" style={{ color: 'var(--muted)' }}>
-              <span style={{ animation: 'pulse 1s infinite' }}>{status}</span>
+            <div className="chat-bubble">
+              <LoadingState label={status} />
             </div>
           </div>
         )}
-        <div ref={bottomRef} />
       </div>
 
       {/* composer */}
@@ -250,7 +323,7 @@ export default function ChatView() {
               }
             }}
           />
-          <button className="composer-send" onClick={send} disabled={loading || !input.trim()} aria-label="Send message">
+          <button className="composer-send" onClick={() => send()} disabled={loading || !input.trim()} aria-label="Send message">
             <Send size={16} />
           </button>
         </div>
@@ -258,128 +331,4 @@ export default function ChatView() {
       </div>
     </div>
   );
-}
-
-function MarkdownText({ content }: { content: string }) {
-  const lines = content.split(/\r?\n/);
-  const nodes: ReactNode[] = [];
-  let paragraph: string[] = [];
-  let listItems: string[] = [];
-  let orderedItems: string[] = [];
-  let codeLines: string[] = [];
-  let inCode = false;
-
-  function flushParagraph() {
-    if (!paragraph.length) return;
-    nodes.push(
-      <p key={`p-${nodes.length}`}>
-        {renderInline(paragraph.join(' '))}
-      </p>
-    );
-    paragraph = [];
-  }
-
-  function flushList() {
-    if (listItems.length) {
-      nodes.push(
-        <ul key={`ul-${nodes.length}`}>
-          {listItems.map((item, index) => (
-            <li key={`${index}-${item}`}>{renderInline(item)}</li>
-          ))}
-        </ul>
-      );
-      listItems = [];
-    }
-    if (orderedItems.length) {
-      nodes.push(
-        <ol key={`ol-${nodes.length}`}>
-          {orderedItems.map((item, index) => (
-            <li key={`${index}-${item}`}>{renderInline(item)}</li>
-          ))}
-        </ol>
-      );
-      orderedItems = [];
-    }
-  }
-
-  function flushCode() {
-    if (!codeLines.length) return;
-    nodes.push(
-      <pre key={`code-${nodes.length}`}>
-        <code>{codeLines.join('\n')}</code>
-      </pre>
-    );
-    codeLines = [];
-  }
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed.startsWith('```')) {
-      if (inCode) {
-        flushCode();
-        inCode = false;
-      } else {
-        flushParagraph();
-        flushList();
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      codeLines.push(line);
-      continue;
-    }
-    if (!trimmed) {
-      flushParagraph();
-      flushList();
-      continue;
-    }
-    const heading = /^(#{1,3})\s+(.+)$/.exec(trimmed);
-    if (heading) {
-      flushParagraph();
-      flushList();
-      const level = heading[1].length;
-      const text = heading[2];
-      const Tag = (`h${level}` as 'h1' | 'h2' | 'h3');
-      nodes.push(<Tag key={`h-${nodes.length}`}>{renderInline(text)}</Tag>);
-      continue;
-    }
-    const bullet = /^[-*]\s+(.+)$/.exec(trimmed);
-    if (bullet) {
-      flushParagraph();
-      orderedItems = [];
-      listItems.push(bullet[1]);
-      continue;
-    }
-    const ordered = /^\d+\.\s+(.+)$/.exec(trimmed);
-    if (ordered) {
-      flushParagraph();
-      listItems = [];
-      orderedItems.push(ordered[1]);
-      continue;
-    }
-    paragraph.push(trimmed);
-  }
-
-  flushParagraph();
-  flushList();
-  if (inCode) flushCode();
-
-  return <div className="chat-markdown">{nodes.length ? nodes : content}</div>;
-}
-
-function renderInline(text: string): ReactNode[] {
-  const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g).filter(Boolean);
-  return parts.map((part, index) => {
-    if (part.startsWith('`') && part.endsWith('`')) {
-      return <code key={index}>{part.slice(1, -1)}</code>;
-    }
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>;
-    }
-    if (part.startsWith('*') && part.endsWith('*')) {
-      return <em key={index}>{part.slice(1, -1)}</em>;
-    }
-    return part;
-  });
 }

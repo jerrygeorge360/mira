@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import MemorySleepPanel from './MemorySleepPanel';
+import LoadingState from './LoadingState';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -37,7 +38,7 @@ export default function MemoryHealthView() {
   const movements = asArray(health.recent_movements).map(toMovement);
 
   if (status === 'loading') {
-    return <div className="view-empty"><div className="view-empty-msg">Loading memory health...</div></div>;
+    return <div className="view-empty"><LoadingState label="Loading memory health" /></div>;
   }
   if (status === 'offline') {
     return (

@@ -18,6 +18,7 @@ import {
   type KnowledgeBaseDocumentsResponse,
   type KnowledgeBaseListResponse,
 } from '../api/client';
+import LoadingState from './LoadingState';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_LABEL = '10 MB';
@@ -213,7 +214,7 @@ export default function KnowledgeBasesView() {
             <span>{knowledgeBases.length}</span>
           </div>
           {basesState === 'loading' ? (
-            <div className="knowledge-bases-loading">Loading libraries…</div>
+            <div className="knowledge-bases-loading"><LoadingState label="Loading libraries" /></div>
           ) : knowledgeBases.length === 0 ? (
             <div className="knowledge-bases-empty">
               <FolderPlus size={22} />
@@ -329,7 +330,7 @@ export default function KnowledgeBasesView() {
                   <span>{documents.length} total</span>
                 </div>
                 {documentsState === 'loading' ? (
-                  <div className="knowledge-bases-loading">Loading documents…</div>
+                  <div className="knowledge-bases-loading"><LoadingState label="Loading documents" /></div>
                 ) : documentsState === 'error' ? null : documents.length === 0 ? (
                   <div className="knowledge-bases-empty">
                     <FileText size={22} />
