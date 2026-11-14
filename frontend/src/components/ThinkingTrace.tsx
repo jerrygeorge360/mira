@@ -1,16 +1,19 @@
-import { useEffect, useState } from 'react';
-import { Check, ChevronDown, Sparkles } from 'lucide-react';
+import { useEffect, useId, useState } from 'react';
+import { Check, ChevronRight } from 'lucide-react';
 
 /* ─────────────────────────────────────────────────────────
- * THINKING TRACE — the agent's memory run, as it happens
+ * THINKING TRACE — the agent's memory run, as a Reasoning line
  *
- * Built from the real `stage` events the chat stream sends
- * (routing, retrieval, verification, …). While the agent works,
- * the trace is open: finished steps get a muted check and their
- * duration, the current one a spinner. When the answer starts
- * streaming it collapses to a one-line summary that stays
- * expandable. Opening or closing it by hand wins over the auto
- * behaviour.
+ * Follows the shadcn/ui Reasoning pattern (a Trace line with a
+ * collapsible): the line reads "Thinking" and is open while the
+ * agent works, then reads "Thought for 5s" and closes once the
+ * answer starts. Opening or closing it by hand wins over the
+ * auto behaviour.
+ *
+ * MIRA's model sends no reasoning text, so what sits inside is
+ * the real `stage` events of the turn (routing, retrieval,
+ * verification, …): finished steps get a check and their
+ * duration, the current one a spinner.
  * ───────────────────────────────────────────────────────── */
 
 export type TraceStep = { stage: string; message: string; at: number };
@@ -42,62 +45,59 @@ export default function ThinkingTrace({
   thoughtMs,
 }: {
   steps: TraceStep[];
-  /** no answer text yet: the trace is open and the last step is in progress */
+  /** no answer text yet: the line is open and the last step is in progress */
   working: boolean;
   /** when the turn was sent, for the live timer */
   startedAt?: number;
-  /** send → first answer token, for the settled summary */
+  /** send → first answer token, for the settled title */
   thoughtMs?: number;
 }) {
-  const [manual, setManual] = useState<boolean | null>(null);
-  const expanded = manual ?? working;
+  const [manual, setManual] = useState<boolean>();
+  const open = manual ?? working;
   const now = useNow(working);
+  const contentId = useId();
 
   if (!steps.length) return null;
 
-  const elapsed = startedAt ? now - startedAt : 0;
-  const current = steps[steps.length - 1];
-  const summary = `Worked through ${steps.length} ${steps.length === 1 ? 'step' : 'steps'}${
-    thoughtMs !== undefined ? ` in ${formatSeconds(thoughtMs)}` : ''
-  }`;
+  const title = working ? 'Thinking' : thoughtMs !== undefined ? `Thought for ${formatSeconds(thoughtMs)}` : 'Thought';
 
   return (
-    <div className={`thinking-trace${working ? ' working' : ''}`}>
+    <div className="reasoning">
       <button
         type="button"
-        className="thinking-trace-header"
-        aria-expanded={expanded}
-        onClick={() => setManual(!expanded)}
+        className="reasoning-trigger"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={() => setManual(!open)}
       >
-        <Sparkles size={14} className="thinking-trace-icon" />
-        <span role="status" className="thinking-trace-status">
-          {working ? (
-            <span className="thinking-trace-active">{stepLabel(current.message)}</span>
-          ) : (
-            <span className="thinking-trace-done">{summary}</span>
+        <span className="reasoning-line" data-status={working ? 'running' : undefined}>
+          <span role="status" className="reasoning-title">
+            {title}
+          </span>
+          {working && startedAt !== undefined && (
+            <span className="reasoning-description">{formatSeconds(now - startedAt)}</span>
           )}
         </span>
-        {working && startedAt && <span className="thinking-trace-elapsed">{formatSeconds(elapsed)}</span>}
-        <ChevronDown size={14} className="thinking-trace-chevron" />
+        <ChevronRight size={14} className="reasoning-chevron" aria-hidden="true" />
       </button>
 
-      <div className={`thinking-trace-body${expanded ? ' open' : ''}`}>
-        <div className="thinking-trace-inner">
-          <ol className="thinking-trace-steps">
+      <div id={contentId} className={`reasoning-content${open ? ' open' : ''}`} inert={!open}>
+        <div className="reasoning-content-clip">
+          <ol className="reasoning-steps">
             {steps.map((step, i) => {
               const inProgress = working && i === steps.length - 1;
               const next = steps[i + 1];
               const duration = next ? next.at - step.at : null;
               return (
-                <li key={`${step.stage}-${i}`} className="thinking-trace-step">
+                <li key={`${step.stage}-${i}`} className="reasoning-step">
                   {inProgress ? (
-                    <span className="thinking-trace-spinner" aria-label="In progress" />
+                    <span className="reasoning-spinner" aria-label="In progress" />
                   ) : (
-                    <Check size={13} strokeWidth={2.5} className="thinking-trace-check" aria-hidden="true" />
+                    <Check size={13} strokeWidth={2.5} className="reasoning-check" aria-hidden="true" />
                   )}
-                  <span className="thinking-trace-label">{stepLabel(step.message)}</span>
+                  <span className="reasoning-step-label">{stepLabel(step.message)}</span>
                   {duration !== null && duration >= 50 && (
-                    <span className="thinking-trace-duration">{formatSeconds(duration)}</span>
+                    <span className="reasoning-description">{formatSeconds(duration)}</span>
                   )}
                 </li>
               );

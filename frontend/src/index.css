@@ -5971,29 +5971,29 @@ select:focus-visible {
   .assistant-actions, .assistant-sources, .assistant-sources-chevron { transition: none; }
 }
 
-/* ── Thinking trace: live stage list above an assistant answer ── */
-.thinking-trace { display: flex; flex-direction: column; margin-bottom: 6px; white-space: normal; }
-.thinking-trace-header {
-  display: inline-flex;
+/* ── Reasoning line: "Thinking" → "Thought for 5s" above an assistant answer ── */
+.reasoning { display: flex; flex-direction: column; min-width: 0; margin-bottom: 6px; white-space: normal; }
+.reasoning-trigger {
+  display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   width: fit-content;
-  margin-left: -6px;
-  padding: 3px 6px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 0;
   border: 0;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
-  color: var(--faint);
-  transition: background var(--transition);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+  transition: color var(--transition);
 }
-.thinking-trace-header:hover { background: var(--surface-soft); }
-.thinking-trace-icon { flex-shrink: 0; transition: color 200ms ease; }
-.thinking-trace.working .thinking-trace-icon { color: var(--muted); }
-.thinking-trace-status { display: contents; }
-.thinking-trace-active {
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
+.reasoning-trigger:hover { color: var(--text); }
+.reasoning-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.reasoning-line { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; }
+.reasoning-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reasoning-line[data-status='running'] .reasoning-title {
   color: transparent;
   background-image: linear-gradient(90deg, var(--faint) 35%, var(--text) 50%, var(--faint) 65%);
   background-size: 200% 100%;
@@ -6001,59 +6001,42 @@ select:focus-visible {
   background-clip: text;
   animation: shimmer-text 1.4s linear infinite;
 }
-.thinking-trace-done {
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  color: var(--muted);
-  animation: fade-in-soft 350ms ease-out both;
-}
-.thinking-trace-elapsed {
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+.reasoning-description {
+  flex-shrink: 0;
   font-size: 12px;
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
-.thinking-trace-chevron { flex-shrink: 0; transition: transform 300ms cubic-bezier(0.23, 1, 0.32, 1); }
-.thinking-trace-header[aria-expanded='true'] .thinking-trace-chevron { transform: rotate(180deg); }
-.thinking-trace-body {
+.reasoning-chevron { flex-shrink: 0; transition: transform 200ms ease; }
+.reasoning-trigger[aria-expanded='true'] .reasoning-chevron { transform: rotate(90deg); }
+.reasoning-content {
   display: grid;
   grid-template-rows: 0fr;
-  opacity: 0;
-  transition: grid-template-rows 400ms cubic-bezier(0.23, 1, 0.32, 1), opacity 400ms cubic-bezier(0.23, 1, 0.32, 1);
+  min-width: 0;
+  transition: grid-template-rows 200ms ease;
 }
-.thinking-trace-body.open { grid-template-rows: 1fr; opacity: 1; }
-.thinking-trace-inner { overflow: hidden; }
-.thinking-trace-steps {
-  position: relative;
+.reasoning-content.open { grid-template-rows: 1fr; }
+.reasoning-content-clip { min-width: 0; overflow: hidden; }
+.reasoning-steps {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  margin: 2px 0 0 6px;
-  padding: 4px 0 4px 14px;
+  margin: 8px 0 4px 7px;
+  padding: 0 4px 0 16px;
+  border-left: 1px solid var(--border);
   list-style: none;
+  color: var(--muted);
 }
-/* the rail grows with the list */
-.thinking-trace-steps::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0;
-  bottom: 6px;
-  width: 1px;
-  background: var(--border);
-}
-.thinking-trace-step {
+.reasoning-step {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 24px;
   font-size: 12.5px;
-  color: var(--text);
   animation: fade-up 320ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
-.thinking-trace-check { flex-shrink: 0; color: var(--faint); }
-.thinking-trace-spinner {
+.reasoning-check { flex-shrink: 0; color: var(--faint); }
+.reasoning-spinner {
   flex-shrink: 0;
   width: 12px;
   height: 12px;
@@ -6063,14 +6046,7 @@ select:focus-visible {
   border-top-color: var(--muted);
   animation: trace-spin 700ms linear infinite;
 }
-.thinking-trace-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.thinking-trace-duration {
-  flex-shrink: 0;
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-  font-size: 11px;
-  color: var(--faint);
-  font-variant-numeric: tabular-nums;
-}
+.reasoning-step-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 @keyframes trace-spin { to { transform: rotate(360deg); } }
 @keyframes fade-up {
@@ -6079,10 +6055,10 @@ select:focus-visible {
 }
 @keyframes fade-in-soft { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .thinking-trace-active { animation: none; color: var(--muted); background: none; }
-  .thinking-trace-done, .thinking-trace-step { animation: none; }
-  .thinking-trace-spinner { animation-duration: 1.6s; }
-  .thinking-trace-body, .thinking-trace-chevron { transition: none; }
+  .reasoning-line[data-status='running'] .reasoning-title { animation: none; color: inherit; background: none; }
+  .reasoning-step { animation: none; }
+  .reasoning-spinner { animation-duration: 1.6s; }
+  .reasoning-content, .reasoning-chevron { transition: none; }
 }
 
 /* ── Pipeline journal: slow-path steps as rows + artifact chips ── */
