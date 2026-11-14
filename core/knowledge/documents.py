@@ -60,6 +60,20 @@ class DocumentProcessingError(RuntimeError):
     """Raised when an uploaded document cannot be extracted or indexed."""
 
 
+def _aws_error_detail(error: Exception) -> str:
+    """Return a safe AWS error code/message without exposing credentials."""
+    response = getattr(error, "response", None)
+    if isinstance(response, dict):
+        details = response.get("Error")
+        if isinstance(details, dict):
+            code = str(details.get("Code") or error.__class__.__name__).strip()
+            message = str(details.get("Message") or "").strip()
+            if message:
+                return f"{code}: {message}"
+            return code
+    return error.__class__.__name__
+
+
 @dataclass(frozen=True)
 class DocumentLimits:
     max_bytes: int = MAX_DOCUMENT_BYTES
@@ -186,7 +200,9 @@ class S3DocumentStorage:
                 ServerSideEncryption="AES256",
             )
         except Exception as error:
-            raise DocumentStorageError(f"S3 upload failed for {key}") from error
+            raise DocumentStorageError(
+                f"S3 upload failed ({_aws_error_detail(error)})"
+            ) from error
 
     def download(self, key: str) -> bytes:
         try:
