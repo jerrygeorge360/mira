@@ -111,6 +111,8 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "working_memory_status": frozenset({"active", "demoted", "expired", "superseded"}),
     "retrieval_mode": frozenset({"quick", "deep", "relational", "auto", "general"}),
+    "knowledge_base_status": frozenset({"active", "deleted"}),
+    "document_status": frozenset({"uploaded", "processing", "ready", "failed", "deleted"}),
 }
 
 JSON_COLUMNS: frozenset[str] = frozenset(
@@ -152,6 +154,8 @@ UPDATED_AT_TABLES: frozenset[str] = frozenset(
         "community_summaries",
         "working_memory",
         "memory_state",
+        "knowledge_bases",
+        "documents",
     }
 )
 
@@ -411,6 +415,44 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "updated_at",
         }
     ),
+    "knowledge_bases": frozenset(
+        {"id", "name", "description", "status", "created_at", "updated_at"}
+    ),
+    "documents": frozenset(
+        {
+            "id",
+            "knowledge_base_id",
+            "filename",
+            "mime_type",
+            "size_bytes",
+            "s3_bucket",
+            "s3_key",
+            "checksum_sha256",
+            "status",
+            "error_message",
+            "page_count",
+            "extracted_char_count",
+            "created_at",
+            "updated_at",
+            "processed_at",
+            "deleted_at",
+        }
+    ),
+    "document_chunks": frozenset(
+        {
+            "id",
+            "knowledge_base_id",
+            "document_id",
+            "chunk_index",
+            "content",
+            "heading",
+            "page_start",
+            "page_end",
+            "char_start",
+            "char_end",
+            "created_at",
+        }
+    ),
 }
 
 _WORKSPACE_OWNED_TABLES = frozenset(
@@ -435,6 +477,9 @@ _WORKSPACE_OWNED_TABLES = frozenset(
         "memory_reviews",
         "memory_sleep_runs",
         "memory_sleep_schedule",
+        "knowledge_bases",
+        "documents",
+        "document_chunks",
     }
 )
 for _workspace_table in _WORKSPACE_OWNED_TABLES:
@@ -798,6 +843,226 @@ class WorkspaceRepository:
             (trace_id, self.workspace_id),
         )
         return rows[0] if rows else None
+
+
+def create_knowledge_base(
+    name: str,
+    *,
+    workspace_id: str,
+    description: str | None = None,
+    knowledge_base_id: str | None = None,
+    status: str = "active",
+) -> str:
+    """Create a workspace-owned document knowledge base."""
+    if not name.strip():
+        raise ValueError("knowledge base name must not be empty")
+    validate_enum_value("knowledge_base_status", status)
+    require_active_workspace(workspace_id)
+    return _insert_with_generated_id(
+        "knowledge_bases",
+        {
+            "id": knowledge_base_id or _new_id(),
+            "workspace_id": workspace_id,
+            "name": name.strip(),
+            "description": description.strip() if isinstance(description, str) else description,
+            "status": status,
+        },
+    )
+
+
+def get_knowledge_base(
+    knowledge_base_id: str, *, workspace_id: str, include_deleted: bool = False
+) -> RepositoryRecord | None:
+    """Fetch a knowledge base only when it belongs to the requested workspace."""
+    status_clause = "" if include_deleted else " AND status = 'active'"
+    rows = _fetch_all(
+        f"SELECT * FROM knowledge_bases WHERE id = ? AND workspace_id = ?{status_clause}",
+        (knowledge_base_id, workspace_id),
+    )
+    return rows[0] if rows else None
+
+
+def list_knowledge_bases(
+    *, workspace_id: str, include_deleted: bool = False
+) -> list[RepositoryRecord]:
+    """List knowledge bases for one workspace, never across workspace boundaries."""
+    status_clause = "" if include_deleted else " AND status = 'active'"
+    return _fetch_all(
+        f"""
+        SELECT * FROM knowledge_bases
+        WHERE workspace_id = ?{status_clause}
+        ORDER BY updated_at DESC, id ASC
+        """,
+        (workspace_id,),
+    )
+
+
+def create_document(
+    document: RepositoryRecord, *, workspace_id: str | None = None
+) -> str:
+    """Insert a document row after validating its workspace and lifecycle status."""
+    prepared = dict(document)
+    effective_workspace = str(prepared.get("workspace_id") or workspace_id or "")
+    if not effective_workspace:
+        raise ValueError("document workspace_id is required")
+    if str(prepared.get("workspace_id", effective_workspace)) != effective_workspace:
+        raise ValueError("document workspace_id does not match the requested workspace")
+    required = {
+        "knowledge_base_id",
+        "filename",
+        "mime_type",
+        "size_bytes",
+        "s3_bucket",
+        "s3_key",
+        "checksum_sha256",
+        "status",
+    }
+    _require_fields("documents", prepared, required)
+    validate_enum_value("document_status", str(prepared["status"]))
+    if (
+        get_knowledge_base(str(prepared["knowledge_base_id"]), workspace_id=effective_workspace)
+        is None
+    ):
+        raise ValueError("knowledge base not found in workspace")
+    prepared["workspace_id"] = effective_workspace
+    return _insert_with_generated_id("documents", prepared)
+
+
+def get_document(
+    document_id: str, *, workspace_id: str, include_deleted: bool = False
+) -> RepositoryRecord | None:
+    """Fetch one document with an explicit workspace boundary."""
+    status_clause = "" if include_deleted else " AND status != 'deleted'"
+    rows = _fetch_all(
+        f"SELECT * FROM documents WHERE id = ? AND workspace_id = ?{status_clause}",
+        (document_id, workspace_id),
+    )
+    return rows[0] if rows else None
+
+
+def list_documents(
+    knowledge_base_id: str,
+    *,
+    workspace_id: str,
+    include_deleted: bool = False,
+) -> list[RepositoryRecord]:
+    """List documents in one workspace-owned knowledge base."""
+    status_clause = "" if include_deleted else " AND documents.status != 'deleted'"
+    return _fetch_all(
+        f"""
+        SELECT documents.*
+        FROM documents
+        JOIN knowledge_bases
+          ON knowledge_bases.id = documents.knowledge_base_id
+         AND knowledge_bases.workspace_id = documents.workspace_id
+        WHERE documents.knowledge_base_id = ?
+          AND documents.workspace_id = ?{status_clause}
+        ORDER BY documents.created_at DESC, documents.id ASC
+        """,
+        (knowledge_base_id, workspace_id),
+    )
+
+
+def update_document(
+    document_id: str,
+    *,
+    workspace_id: str,
+    status: str | None = None,
+    error_message: str | None = None,
+    page_count: int | None = None,
+    extracted_char_count: int | None = None,
+    processed_at: str | None = None,
+    deleted_at: str | None = None,
+) -> None:
+    """Update mutable processing fields for one workspace-owned document."""
+    if status is not None:
+        validate_enum_value("document_status", status)
+    fields: dict[str, object] = {
+        "status": status,
+        "error_message": error_message,
+        "page_count": page_count,
+        "extracted_char_count": extracted_char_count,
+        "processed_at": processed_at,
+        "deleted_at": deleted_at,
+        "updated_at": _now(),
+    }
+    assignments = [f"{column} = ?" for column, value in fields.items() if value is not None]
+    values = tuple(value for value in fields.values() if value is not None)
+    if not assignments:
+        raise ValueError("document update requires at least one value")
+    with _connect() as connection:
+        cursor = connection.execute(
+            f"UPDATE documents SET {', '.join(assignments)} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (*values, document_id, workspace_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Document not found in workspace: {document_id}")
+
+
+def create_document_chunk(chunk: RepositoryRecord, *, workspace_id: str | None = None) -> str:
+    """Insert one chunk with parent workspace checks enforced by SQLite triggers."""
+    prepared = dict(chunk)
+    effective_workspace = str(prepared.get("workspace_id") or workspace_id or "")
+    if not effective_workspace:
+        raise ValueError("document chunk workspace_id is required")
+    prepared["workspace_id"] = effective_workspace
+    _require_fields(
+        "document_chunks",
+        prepared,
+        {"knowledge_base_id", "document_id", "chunk_index", "content"},
+    )
+    if not str(prepared["content"]).strip():
+        raise ValueError("document chunk content must not be empty")
+    return _insert_with_generated_id("document_chunks", prepared)
+
+
+def get_document_chunk(
+    chunk_id: str, *, workspace_id: str
+) -> RepositoryRecord | None:
+    """Fetch one chunk only within its owning workspace."""
+    rows = _fetch_all(
+        "SELECT * FROM document_chunks WHERE id = ? AND workspace_id = ?",
+        (chunk_id, workspace_id),
+    )
+    return rows[0] if rows else None
+
+
+def list_document_chunks(
+    document_id: str, *, workspace_id: str
+) -> list[RepositoryRecord]:
+    """List chunks in stable source order for one workspace-owned document."""
+    return _fetch_all(
+        """
+        SELECT * FROM document_chunks
+        WHERE document_id = ? AND workspace_id = ?
+        ORDER BY chunk_index ASC, id ASC
+        """,
+        (document_id, workspace_id),
+    )
+
+
+def delete_document_chunks(document_id: str, *, workspace_id: str) -> list[str]:
+    """Delete indexed chunk rows and return their ids for vector cleanup."""
+    chunks = list_document_chunks(document_id, workspace_id=workspace_id)
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM document_chunks WHERE document_id = ? AND workspace_id = ?",
+            (document_id, workspace_id),
+        )
+    return [str(chunk["id"]) for chunk in chunks]
+
+
+def mark_document_deleted(document_id: str, *, workspace_id: str) -> list[str]:
+    """Mark a document deleted and remove its chunks from SQLite."""
+    chunk_ids = delete_document_chunks(document_id, workspace_id=workspace_id)
+    update_document(
+        document_id,
+        workspace_id=workspace_id,
+        status="deleted",
+        deleted_at=_now(),
+        error_message=None,
+    )
+    return chunk_ids
 
 
 def create_session(

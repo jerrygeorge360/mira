@@ -24,6 +24,7 @@ from api.routes import (
     chat,
     evaluation,
     health,
+    knowledge_bases,
     memory,
     oauth,
     retrieval,
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router)
     app.include_router(sessions.router)
     app.include_router(memory.router)
+    app.include_router(knowledge_bases.router)
     app.include_router(retrieval.router)
     app.include_router(worker.router)
     app.include_router(evaluation.router)

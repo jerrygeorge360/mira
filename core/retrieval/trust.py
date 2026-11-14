@@ -44,6 +44,7 @@ AUTHORITY_SCORES = {
     "session_context": 0.70,
     "synthesized_reflection": 0.68,
     "community_synthesis": 0.62,
+    "document_source": 0.88,
     "untrusted_observation": 0.25,
     "unknown": 0.40,
 }
@@ -213,6 +214,8 @@ def assess_source_authority(evidence: dict[str, object]) -> str:
         return AUTHORITY_PROVISIONAL_SESSION
     if source in {"atomic_facts", "foresight_records", "graph_edge", "graph_path"}:
         return AUTHORITY_DERIVED_VALIDATED
+    if source == "document_chunks":
+        return "document_source"
     return {
         "reflections": "derived_conditional",
         "reflection": "derived_conditional",
@@ -244,6 +247,13 @@ def assess_provenance_completeness(
         evidence.get("member_node_ids") or evidence.get("provenance")
     ):
         missing.append("member_node_ids")
+    elif source == "document_chunks":
+        provenance = evidence.get("provenance")
+        if not isinstance(provenance, dict):
+            provenance = {}
+        for key in ("chunk_id", "document_id", "knowledge_base_id"):
+            if not (evidence.get(key) or record.get(key) or provenance.get(key)):
+                missing.append(key)
     if not workspace_match:
         missing.append("workspace_match")
     return {"complete": not missing, "missing": missing, "workspace_match": workspace_match}
@@ -274,7 +284,7 @@ def assess_freshness(
 
 def assess_stability(evidence: dict[str, object]) -> str:
     source = str(evidence.get("source", ""))
-    if source in {"atomic_facts", "graph_edge", "community_summary", "reflections", "reflection"}:
+    if source in {"atomic_facts", "graph_edge", "community_summary", "reflections", "reflection", "document_chunks"}:
         return "durable_derived"
     if source == "session_working_set":
         return "current_session"

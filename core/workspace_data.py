@@ -52,6 +52,7 @@ _DELETE_STATEMENTS: tuple[tuple[str, str], ...] = (
 def delete_workspace_data(workspace_id: str) -> dict[str, int]:
     """Delete product data for one workspace while preserving auth/account rows."""
     counts: dict[str, int] = {}
+    counts.update(_delete_workspace_knowledge_data(workspace_id))
     for collection in chroma.SUPPORTED_COLLECTIONS:
         chroma.delete_workspace_vectors(collection, workspace_id=workspace_id)
 
@@ -61,3 +62,23 @@ def delete_workspace_data(workspace_id: str) -> dict[str, int]:
             cursor = connection.execute(statement, (workspace_id,) * parameter_count)
             counts[table] = max(cursor.rowcount, 0)
     return counts
+
+
+def _delete_workspace_knowledge_data(workspace_id: str) -> dict[str, int]:
+    """Ask the optional Knowledge Base service to clean S3 and document vectors."""
+    try:
+        from core.knowledge import service
+    except ModuleNotFoundError as error:
+        if error.name in {"core.knowledge", "core.knowledge.service"}:
+            return {}
+        raise
+
+    cleanup = getattr(service, "delete_workspace_knowledge_data", None)
+    if not callable(cleanup):
+        return {}
+    result = cleanup(workspace_id=workspace_id)
+    if isinstance(result, dict):
+        return {f"knowledge_{key}": int(value) for key, value in result.items()}
+    if isinstance(result, int):
+        return {"knowledge_documents": result}
+    return {}

@@ -21,6 +21,7 @@ from core.memory.lifecycle import (
     retrieval_source_type,
 )
 from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
+from core.retrieval.documents import retrieve_document_chunks
 from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]
@@ -39,6 +40,7 @@ SOURCE_WEIGHT = {
     "atomic_facts": 1.0,
     "foresight_records": 1.0,
     "reflections": 0.9,
+    "document_chunks": 1.05,
     "recent_observations": 0.6,
     "observations": 0.45,
 }
@@ -83,6 +85,7 @@ def retrieve_quick(
         *_semantic_candidates(query, limit, workspace_id, historical=historical),
         *_keyword_observation_candidates(query, workspace_id, limit),
         *_atomic_fact_candidates(query, workspace_id, limit, historical=historical),
+        *_document_candidates(query, workspace_id, limit),
         *_foresight_candidates(query, session_id, workspace_id, historical=historical),
         *_recent_observation_candidates(query, session_id, limit),
     ]
@@ -145,6 +148,41 @@ def _semantic_candidates(
                 record=record,
             )
         )
+    return candidates
+
+
+def _document_candidates(query: str, workspace_id: str, limit: int) -> list[Evidence]:
+    """Retrieve source-document evidence without creating lifecycle memory state."""
+    try:
+        matches = retrieve_document_chunks(query, workspace_id=workspace_id, limit=limit)
+    except Exception:
+        # A missing/temporarily unavailable document index must not break memory retrieval.
+        return []
+    tokens = _tokens(query)
+    candidates: list[Evidence] = []
+    for match in matches:
+        record = match.get("record")
+        if not isinstance(record, dict):
+            continue
+        content = str(match.get("content", ""))
+        evidence = _evidence(
+            source="document_chunks",
+            source_id=str(match.get("chunk_id", record.get("id", ""))),
+            content=content,
+            semantic_score=_float(match.get("relevance_score")),
+            keyword_score=_lexical_score(tokens, content),
+            recency=_recency_score(record),
+            confidence=1.0,
+            status="active",
+            record={**record, "status": "active"},
+        )
+        evidence["knowledge_base_id"] = match.get("knowledge_base_id")
+        evidence["document_id"] = match.get("document_id")
+        evidence["filename"] = match.get("filename")
+        evidence["page_start"] = match.get("page_start")
+        evidence["page_end"] = match.get("page_end")
+        evidence["provenance"] = match.get("provenance", {})
+        candidates.append(evidence)
     return candidates
 
 

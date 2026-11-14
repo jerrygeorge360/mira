@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ReactNode } from 'react';
-import { Send, Sparkles } from 'lucide-react';
+import { Paperclip, Send, Sparkles } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import { api } from '../api/client';
@@ -16,6 +16,7 @@ export default function ChatView() {
     sessionId,
     setSessionId,
     setLastTraceId,
+    setView,
   } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -224,6 +225,15 @@ export default function ChatView() {
           </span>
         </div>
         <div className="chat-composer">
+          <button
+            className="composer-attach"
+            type="button"
+            onClick={() => setView('Knowledge Bases')}
+            title="Add a document"
+            aria-label="Add a document"
+          >
+            <Paperclip size={17} />
+          </button>
           <textarea
             ref={composerRef}
             className="composer-input"

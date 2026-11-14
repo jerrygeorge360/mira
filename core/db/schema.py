@@ -18,6 +18,7 @@ LEGACY_WORKSPACE_SLUG = "legacy-default"
 WORKSPACE_MIGRATION_ID = "0002_workspace_ownership"
 MEMORY_LIFECYCLE_MIGRATION_ID = "0003_memory_lifecycle"
 MEMORY_SLEEP_SCHEDULER_MIGRATION_ID = "0004_memory_sleep_scheduler"
+KNOWLEDGE_BASE_DOCUMENTS_MIGRATION_ID = "0005_knowledge_base_documents"
 
 # SQLite is the source of truth for ISSUE-005. Enum-like fields intentionally remain
 # TEXT columns here; repository helpers validate allowed values before writes.
@@ -557,6 +558,61 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS knowledge_bases (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS documents (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        knowledge_base_id TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        size_bytes INTEGER NOT NULL,
+        s3_bucket TEXT NOT NULL,
+        s3_key TEXT NOT NULL,
+        checksum_sha256 TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error_message TEXT,
+        page_count INTEGER,
+        extracted_char_count INTEGER,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        processed_at TEXT,
+        deleted_at TEXT,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+        FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS document_chunks (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        knowledge_base_id TEXT NOT NULL,
+        document_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        heading TEXT,
+        page_start INTEGER,
+        page_end INTEGER,
+        char_start INTEGER,
+        char_end INTEGER,
+        created_at TEXT NOT NULL,
+        UNIQUE (document_id, chunk_index),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+        FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases (id),
+        FOREIGN KEY (document_id) REFERENCES documents (id)
+    )
+    """,
 )
 
 _INDEX_STATEMENTS: tuple[str, ...] = (
@@ -623,6 +679,14 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "ON memory_sleep_runs (workspace_id, status, started_at)",
     "CREATE INDEX IF NOT EXISTS idx_memory_sleep_schedule_due "
     "ON memory_sleep_schedule (automatic_sleep_enabled, next_sleep_at)",
+    "CREATE INDEX IF NOT EXISTS idx_knowledge_bases_workspace_status "
+    "ON knowledge_bases (workspace_id, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_workspace_status "
+    "ON documents (workspace_id, status, updated_at)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_knowledge_base "
+    "ON documents (knowledge_base_id, status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_document_chunks_workspace "
+    "ON document_chunks (workspace_id, knowledge_base_id, document_id, chunk_index)",
     """
     CREATE INDEX IF NOT EXISTS idx_atomic_facts_canonical
     ON atomic_facts (canonical_subject_id, canonical_predicate_id)
@@ -651,6 +715,9 @@ _WORKSPACE_TABLES = (
     "memory_reviews",
     "memory_sleep_runs",
     "memory_sleep_schedule",
+    "knowledge_bases",
+    "documents",
+    "document_chunks",
 )
 
 _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
@@ -749,6 +816,33 @@ _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
         SELECT RAISE(ABORT, 'memory review must share its state workspace');
     END
     """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_document_knowledge_base_workspace
+    BEFORE INSERT ON documents
+    WHEN NOT EXISTS (
+        SELECT 1 FROM knowledge_bases
+        WHERE id = NEW.knowledge_base_id AND workspace_id = NEW.workspace_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'document knowledge base must share its workspace');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_document_chunk_workspace
+    BEFORE INSERT ON document_chunks
+    WHEN NOT EXISTS (
+        SELECT 1
+        FROM documents
+        JOIN knowledge_bases ON knowledge_bases.id = documents.knowledge_base_id
+        WHERE documents.id = NEW.document_id
+          AND documents.workspace_id = NEW.workspace_id
+          AND knowledge_bases.id = NEW.knowledge_base_id
+          AND knowledge_bases.workspace_id = NEW.workspace_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'document chunk parents must share its workspace');
+    END
+    """,
 )
 
 # Canonical registries seed the alias vocabulary that lets contradiction/supersession
@@ -783,10 +877,15 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute("PRAGMA foreign_keys = OFF")
         for statement in _TABLE_STATEMENTS:
             connection.execute(statement)
+        # Commit the DDL batch before the upgrade helpers perform inserts and
+        # index/trigger work. This keeps schema initialization recoverable on
+        # SQLite filesystems that serialize long DDL transactions.
+        connection.commit()
         _ensure_legacy_workspace(connection)
         _migrate_workspace_ownership(connection)
         _migrate_slow_path_runtime(connection)
         _migrate_memory_sleep_scheduler(connection)
+        _migrate_knowledge_base_documents(connection)
         _migrate_atomic_facts_canonical(connection)
         _migrate_canonical_registry_uniqueness(connection)
         for statement in _INDEX_STATEMENTS:
@@ -804,6 +903,10 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
             (MEMORY_SLEEP_SCHEDULER_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (KNOWLEDGE_BASE_DOCUMENTS_MIGRATION_ID, _now()),
         )
         connection.commit()
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -836,6 +939,8 @@ def _install_ownership_triggers(connection: sqlite3.Connection) -> None:
         "trg_step_journal_observation_workspace",
         "trg_graph_edge_workspace",
         "trg_reflection_evidence_workspace",
+        "trg_document_knowledge_base_workspace",
+        "trg_document_chunk_workspace",
     ]
     for trigger_name in trigger_names:
         connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")  # noqa: S608  # nosec B608
@@ -882,6 +987,15 @@ def _migrate_memory_sleep_scheduler(connection: sqlite3.Connection) -> None:
             connection.execute(
                 f"ALTER TABLE memory_sleep_runs ADD COLUMN {column} {definition}"  # noqa: S608
             )
+
+
+def _migrate_knowledge_base_documents(connection: sqlite3.Connection) -> None:
+    """Keep the knowledge-base schema migration boundary explicit.
+
+    The three tables are created by the idempotent canonical DDL above, so no
+    column backfill is required for this first document-storage migration.
+    """
+    del connection
 
 
 def _migrate_canonical_registry_uniqueness(connection: sqlite3.Connection) -> None:

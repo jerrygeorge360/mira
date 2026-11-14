@@ -178,6 +178,22 @@ PROCEDURAL_MARKERS = (
     "what did we just",
     "what are we doing",
 )
+DOCUMENT_QUERY_MARKERS = (
+    "knowledge base",
+    "knowledge-base",
+    "uploaded document",
+    "uploaded file",
+    "my document",
+    "my file",
+    "this document",
+    "this file",
+    "in the document",
+    "in the file",
+    "from the document",
+    "from the file",
+    "according to the document",
+    "according to the file",
+)
 
 TRANSITION_PATTERN = re.compile(r"\bfrom\s+\w[\w.+-]*\s+to\s+\w[\w.+-]*")
 
@@ -263,6 +279,14 @@ def _deterministic_route_retrieval(query: str) -> Decision:
             "quick",
             "current-session procedural question; use recent/session context first",
             0.74,
+            intent=PROCEDURAL_INTENT,
+        )
+
+    if _looks_document_grounded(normalized):
+        return _decision(
+            "quick",
+            "document-grounded question; search workspace Knowledge Bases",
+            0.86,
             intent=PROCEDURAL_INTENT,
         )
 
@@ -376,6 +400,10 @@ def _looks_general_question(normalized: str) -> bool:
 
 def _looks_procedural(normalized: str) -> bool:
     return any(marker in normalized for marker in PROCEDURAL_MARKERS)
+
+
+def _looks_document_grounded(normalized: str) -> bool:
+    return any(marker in normalized for marker in DOCUMENT_QUERY_MARKERS)
 
 
 def _decision(

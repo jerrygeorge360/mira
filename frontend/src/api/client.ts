@@ -51,6 +51,39 @@ export interface MemoryHealthResponse {
   health: Record<string, unknown>;
 }
 
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  description?: string | null;
+  document_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeBaseDocument {
+  id: string;
+  knowledge_base_id?: string;
+  filename: string;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  status: string;
+  page_count?: number | null;
+  character_count?: number | null;
+  error?: string | null;
+  created_at?: string | null;
+  processed_at?: string | null;
+}
+
+export interface KnowledgeBaseListResponse {
+  knowledge_bases?: KnowledgeBase[];
+  items?: KnowledgeBase[];
+}
+
+export interface KnowledgeBaseDocumentsResponse {
+  documents?: KnowledgeBaseDocument[];
+  items?: KnowledgeBaseDocument[];
+}
+
 /**
  * Sleep responses are intentionally open-ended. The sleep lifecycle is still
  * gaining fields, so the admin surface normalizes additive fields at the edge.
@@ -62,7 +95,7 @@ export type MemorySleepRunsResponse = Record<string, unknown>;
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const headers = new Headers(init?.headers);
-  if (init?.body) headers.set('Content-Type', 'application/json');
+  if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const csrf = readCookie('mira_csrf');
     if (csrf) headers.set('X-CSRF-Token', csrf);
@@ -257,6 +290,34 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
     ),
+
+  knowledgeBases: () => req<KnowledgeBaseListResponse>('/knowledge-bases'),
+
+  createKnowledgeBase: (body: { name: string; description?: string }) =>
+    req<KnowledgeBase>('/knowledge-bases', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  knowledgeBaseDocuments: (knowledgeBaseId: string) =>
+    req<KnowledgeBaseDocumentsResponse>(
+      `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`,
+    ),
+
+  uploadKnowledgeBaseDocument: (knowledgeBaseId: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return req<KnowledgeBaseDocument>(
+      `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`,
+      { method: 'POST', body },
+    );
+  },
+
+  deleteKnowledgeBase: (knowledgeBaseId: string) =>
+    req<void>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'DELETE' }),
+
+  deleteKnowledgeBaseDocument: (documentId: string) =>
+    req<void>(`/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' }),
 };
 
 async function streamReq(
