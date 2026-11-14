@@ -10,6 +10,8 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
@@ -55,6 +57,20 @@ HISTORICAL_QUERY_MARKERS = frozenset(
 DEFAULT_STABILITY_DAYS = 30.0
 MIN_RETENTION_SCORE = 0.0
 MAX_RETENTION_SCORE = 1.0
+
+_CURRENT_SLEEP_RUN_ID: ContextVar[str | None] = ContextVar(
+    "mira_current_sleep_run_id", default=None
+)
+
+
+@contextmanager
+def sleep_run_context(run_id: str):
+    """Bind an already-coordinated scheduler run to the lifecycle writer."""
+    token = _CURRENT_SLEEP_RUN_ID.set(run_id)
+    try:
+        yield
+    finally:
+        _CURRENT_SLEEP_RUN_ID.reset(token)
 
 SOURCE_ALIASES = {
     "session": "sessions",
@@ -604,26 +620,36 @@ def run_memory_sleep(
     require_active_workspace(workspace_id)
     as_of = _as_of_datetime(now)
     started_at = as_of.isoformat()
-    run_id = uuid.uuid4().hex
+    run_id = _CURRENT_SLEEP_RUN_ID.get()
+    owns_run = run_id is None
+    run_id = run_id or uuid.uuid4().hex
     with repository_connection() as connection:
-        previous = connection.execute(
-            """
-            SELECT * FROM memory_sleep_runs
-            WHERE workspace_id = ? AND started_at = ? AND status = 'completed'
-            ORDER BY completed_at DESC, id DESC
-            LIMIT 1
-            """,
-            (workspace_id, started_at),
-        ).fetchone()
-        if previous is not None:
-            return dict(previous)
-        connection.execute(
-            """
-            INSERT INTO memory_sleep_runs (id, workspace_id, status, started_at)
-            VALUES (?, ?, 'running', ?)
-            """,
-            (run_id, workspace_id, started_at),
-        )
+        if owns_run:
+            previous = connection.execute(
+                """
+                SELECT * FROM memory_sleep_runs
+                WHERE workspace_id = ? AND started_at = ? AND status = 'completed'
+                ORDER BY completed_at DESC, id DESC
+                LIMIT 1
+                """,
+                (workspace_id, started_at),
+            ).fetchone()
+            if previous is not None:
+                return dict(previous)
+            connection.execute(
+                """
+                INSERT INTO memory_sleep_runs (id, workspace_id, status, started_at)
+                VALUES (?, ?, 'running', ?)
+                """,
+                (run_id, workspace_id, started_at),
+            )
+        else:
+            run = connection.execute(
+                "SELECT id FROM memory_sleep_runs WHERE id = ? AND workspace_id = ?",
+                (run_id, workspace_id),
+            ).fetchone()
+            if run is None:
+                raise ValueError("coordinated sleep run not found")
         rows = connection.execute(
             """
             SELECT * FROM memory_state
@@ -790,7 +816,10 @@ def _sleep_score(state: dict[str, object], as_of: datetime) -> float:
     verification = _as_int(state.get("verification_count"))
     evidence = (success + 0.5 * verification) / max(1.0, success + failure + verification)
     old = _as_float(state.get("retention_score"))
-    return max(0.0, min(1.0, round(0.45 * old + 0.30 * fresh + 0.25 * evidence, 6)))
+    # Sleep inspection must not become implicit positive feedback.  Any increase
+    # requires genuine usage/verification through the normal feedback path.
+    proposed = round(0.45 * old + 0.30 * fresh + 0.25 * evidence, 6)
+    return max(0.0, min(old, proposed))
 
 
 def _consolidate_duplicate_states(workspace_id: str, *, max_items: int) -> int:

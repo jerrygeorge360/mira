@@ -3678,6 +3678,499 @@ select:focus-visible {
   font-size: 0.78rem;
   line-height: 1.45;
 }
+
+/* ── Memory sleep operations ────────────────────────────────────── */
+.memory-sleep-shell {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+.memory-sleep-panel {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  padding: 16px;
+}
+.memory-sleep-controls-panel {
+  border-top: 2px solid var(--accent);
+}
+.memory-sleep-heading,
+.memory-sleep-panel-title,
+.memory-sleep-actions,
+.memory-sleep-snapshot-head,
+.memory-sleep-snapshot-row,
+.memory-sleep-change-meta {
+  display: flex;
+  align-items: center;
+}
+.memory-sleep-heading {
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.memory-sleep-heading .health-section-head {
+  margin-bottom: 0;
+}
+.memory-sleep-heading .health-section-head > div {
+  display: grid;
+  gap: 2px;
+}
+.memory-sleep-heading .health-section-head p,
+.memory-sleep-panel-title p {
+  color: var(--muted);
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+.memory-sleep-control-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) minmax(220px, 0.9fr);
+  gap: 10px;
+}
+.memory-sleep-setting-card,
+.memory-sleep-schedule-card {
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-soft) 55%, transparent);
+  padding: 13px 14px;
+}
+.memory-sleep-setting-card {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+}
+.memory-sleep-setting-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+}
+.memory-sleep-setting-label svg {
+  color: var(--accent);
+}
+.memory-sleep-setting-card p {
+  color: var(--faint);
+  font-size: 0.7rem;
+  line-height: 1.45;
+}
+.memory-sleep-switch-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: max-content;
+  cursor: pointer;
+}
+.memory-sleep-switch-row input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.memory-sleep-switch {
+  position: relative;
+  width: 36px;
+  height: 21px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  transition: background var(--transition), border-color var(--transition);
+}
+.memory-sleep-switch::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--muted);
+  transition: transform var(--transition), background var(--transition);
+}
+.memory-sleep-switch-row input:checked + .memory-sleep-switch {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.memory-sleep-switch-row input:checked + .memory-sleep-switch::after {
+  transform: translateX(15px);
+  background: var(--accent);
+}
+.memory-sleep-switch-row strong {
+  color: var(--text);
+  font-size: 0.84rem;
+}
+.memory-sleep-number-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.memory-sleep-number-input input {
+  width: 74px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--surface);
+  color: var(--text);
+  padding: 7px 9px;
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+.memory-sleep-number-input span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.memory-sleep-schedule-card {
+  display: grid;
+  gap: 0;
+}
+.memory-sleep-schedule-value {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.memory-sleep-schedule-value:last-child { border-bottom: 0; }
+.memory-sleep-schedule-value span {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.memory-sleep-schedule-value strong {
+  color: var(--text);
+  font-size: 0.76rem;
+  text-align: right;
+}
+.memory-sleep-actions {
+  gap: 9px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.memory-sleep-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 34px;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  padding: 7px 11px;
+  font-size: 0.75rem;
+  font-weight: 800;
+  transition: background var(--transition), border-color var(--transition), opacity var(--transition);
+}
+.memory-sleep-button.primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+.memory-sleep-button.secondary {
+  background: var(--surface-soft);
+  color: var(--text);
+}
+.memory-sleep-button:hover:not(:disabled) {
+  border-color: var(--text);
+}
+.memory-sleep-button:disabled {
+  cursor: wait;
+  opacity: .55;
+}
+.memory-sleep-updated {
+  margin-left: auto;
+  color: var(--faint);
+  font-size: 0.7rem;
+}
+.memory-sleep-message,
+.memory-sleep-run-error {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  margin-top: 12px;
+  padding: 9px 11px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+}
+.memory-sleep-message.error,
+.memory-sleep-run-error {
+  border-left: 3px solid var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  color: var(--danger);
+}
+.memory-sleep-message.success {
+  border-left: 3px solid var(--success);
+  background: color-mix(in srgb, var(--success) 8%, transparent);
+  color: var(--success);
+}
+.memory-sleep-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(300px, .85fr);
+  gap: 14px;
+}
+.memory-sleep-panel-title {
+  gap: 8px;
+  margin-bottom: 13px;
+}
+.memory-sleep-panel-title > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+.memory-sleep-panel-title > div {
+  min-width: 0;
+}
+.memory-sleep-panel-title h3 {
+  color: var(--text);
+  font-size: 0.94rem;
+  font-weight: 850;
+}
+.memory-sleep-detail-loader {
+  margin-left: auto;
+  color: var(--muted);
+}
+.memory-sleep-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.memory-sleep-status-pill.running,
+.memory-sleep-status-pill.pending { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); background: var(--accent-soft); }
+.memory-sleep-status-pill.completed { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.memory-sleep-status-pill.failed { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.memory-sleep-status-dot,
+.memory-sleep-run-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.memory-sleep-snapshot {
+  display: grid;
+  gap: 0;
+  border-top: 1px solid var(--border);
+}
+.memory-sleep-snapshot-head,
+.memory-sleep-snapshot-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px 72px 58px;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
+}
+.memory-sleep-snapshot-head {
+  color: var(--faint);
+  font-size: 0.64rem;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.memory-sleep-snapshot-head b,
+.memory-sleep-snapshot-row strong { text-align: right; }
+.memory-sleep-snapshot-row {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.memory-sleep-snapshot-row strong {
+  color: var(--text);
+  font-weight: 800;
+}
+.memory-sleep-delta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-align: right;
+}
+.memory-sleep-delta.increase { color: var(--success); }
+.memory-sleep-delta.decrease { color: var(--accent); }
+.memory-sleep-delta.neutral { color: var(--faint); }
+.memory-sleep-action-summary {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.memory-sleep-action-summary > span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--faint);
+  font-size: 0.66rem;
+  font-weight: 850;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+}
+.memory-sleep-action-summary > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.memory-sleep-action-summary b {
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 4px 7px;
+  font-size: 0.68rem;
+  font-weight: 750;
+}
+.memory-sleep-empty {
+  padding: 18px 0 4px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+.memory-sleep-run-list {
+  display: grid;
+  gap: 4px;
+}
+.memory-sleep-run-row {
+  display: grid;
+  grid-template-columns: 8px minmax(90px, .8fr) minmax(0, 1.3fr) auto 15px;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text);
+  padding: 8px 5px;
+  text-align: left;
+}
+.memory-sleep-run-row:hover,
+.memory-sleep-run-row.selected {
+  border-color: var(--border);
+  background: var(--surface-soft);
+}
+.memory-sleep-run-dot.completed { background: var(--success); }
+.memory-sleep-run-dot.failed { background: var(--danger); }
+.memory-sleep-run-dot.running,
+.memory-sleep-run-dot.pending { background: var(--accent); }
+.memory-sleep-run-time,
+.memory-sleep-run-summary {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+.memory-sleep-run-time strong {
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+.memory-sleep-run-time small,
+.memory-sleep-run-summary {
+  color: var(--faint);
+  font-size: 0.66rem;
+}
+.memory-sleep-run-summary {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.memory-sleep-status-text {
+  font-size: 0.66rem;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.memory-sleep-status-text.completed { color: var(--success); }
+.memory-sleep-status-text.failed { color: var(--danger); }
+.memory-sleep-status-text.running,
+.memory-sleep-status-text.pending { color: var(--accent); }
+.memory-sleep-run-row > svg { color: var(--faint); }
+.memory-sleep-changes-panel { min-height: 180px; }
+.memory-sleep-changes-heading {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+.memory-sleep-filter-row {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.memory-sleep-filter-row button {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 7px;
+  font-size: 0.66rem;
+  font-weight: 750;
+}
+.memory-sleep-filter-row button:hover,
+.memory-sleep-filter-row button.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.memory-sleep-change-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.memory-sleep-change-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  min-width: 0;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+  padding: 10px;
+}
+.memory-sleep-change-icon {
+  display: grid;
+  place-items: center;
+  width: 25px;
+  height: 25px;
+  flex: 0 0 auto;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  color: var(--muted);
+}
+.memory-sleep-change-card.reinforced .memory-sleep-change-icon { color: var(--success); }
+.memory-sleep-change-card.weakened .memory-sleep-change-icon { color: var(--accent); }
+.memory-sleep-change-card.archived .memory-sleep-change-icon,
+.memory-sleep-change-card.forgotten .memory-sleep-change-icon { color: var(--danger); }
+.memory-sleep-change-copy { min-width: 0; }
+.memory-sleep-change-meta {
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.memory-sleep-change-meta span {
+  color: var(--accent);
+  font-size: 0.62rem;
+  font-weight: 850;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.memory-sleep-change-meta small {
+  color: var(--faint);
+  font-size: 0.64rem;
+}
+.memory-sleep-change-copy > strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.76rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.memory-sleep-change-copy p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.68rem;
+}
+.spin { animation: memory-sleep-spin 900ms linear infinite; }
+@keyframes memory-sleep-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+}
 .view-empty.compact {
   padding: 24px 18px;
 }

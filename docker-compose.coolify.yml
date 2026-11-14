@@ -21,6 +21,7 @@ x-provider-env: &provider-env
   EMBEDDING_FALLBACK: error
   MIRA_DB_PATH: /data/sqlite/mira.db
   CHROMA_DB_PATH: /data/chroma
+  MEMORY_SLEEP_INTERVAL_HOURS: ${MEMORY_SLEEP_INTERVAL_HOURS:-6}
 
 services:
   api:

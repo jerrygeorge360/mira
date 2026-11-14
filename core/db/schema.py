@@ -17,6 +17,7 @@ LEGACY_WORKSPACE_ID = "workspace_legacy_default"
 LEGACY_WORKSPACE_SLUG = "legacy-default"
 WORKSPACE_MIGRATION_ID = "0002_workspace_ownership"
 MEMORY_LIFECYCLE_MIGRATION_ID = "0003_memory_lifecycle"
+MEMORY_SLEEP_SCHEDULER_MIGRATION_ID = "0004_memory_sleep_scheduler"
 
 # SQLite is the source of truth for ISSUE-005. Enum-like fields intentionally remain
 # TEXT columns here; repository helpers validate allowed values before writes.
@@ -526,15 +527,33 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
         status TEXT NOT NULL,
+        trigger TEXT NOT NULL DEFAULT 'manual',
         started_at TEXT NOT NULL,
         completed_at TEXT,
+        finished_at TEXT,
         reviewed_count INTEGER NOT NULL DEFAULT 0,
         reinforced_count INTEGER NOT NULL DEFAULT 0,
         weakened_count INTEGER NOT NULL DEFAULT 0,
         consolidated_count INTEGER NOT NULL DEFAULT 0,
         archived_count INTEGER NOT NULL DEFAULT 0,
         forgotten_count INTEGER NOT NULL DEFAULT 0,
+        configuration_json TEXT,
+        before_snapshot_json TEXT,
+        after_snapshot_json TEXT,
+        changes_json TEXT,
+        error TEXT,
         details TEXT,
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS memory_sleep_schedule (
+        workspace_id TEXT PRIMARY KEY,
+        automatic_sleep_enabled INTEGER NOT NULL DEFAULT 1,
+        sleep_interval_hours REAL NOT NULL DEFAULT 6.0,
+        last_sleep_at TEXT,
+        next_sleep_at TEXT,
+        updated_at TEXT NOT NULL,
         FOREIGN KEY (workspace_id) REFERENCES workspaces (id)
     )
     """,
@@ -600,6 +619,10 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "ON memory_reviews (memory_state_id, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_memory_sleep_workspace_started "
     "ON memory_sleep_runs (workspace_id, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_sleep_workspace_status "
+    "ON memory_sleep_runs (workspace_id, status, started_at)",
+    "CREATE INDEX IF NOT EXISTS idx_memory_sleep_schedule_due "
+    "ON memory_sleep_schedule (automatic_sleep_enabled, next_sleep_at)",
     """
     CREATE INDEX IF NOT EXISTS idx_atomic_facts_canonical
     ON atomic_facts (canonical_subject_id, canonical_predicate_id)
@@ -627,6 +650,7 @@ _WORKSPACE_TABLES = (
     "memory_state",
     "memory_reviews",
     "memory_sleep_runs",
+    "memory_sleep_schedule",
 )
 
 _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
@@ -762,6 +786,7 @@ def initialize_database(database_path: str | Path) -> None:
         _ensure_legacy_workspace(connection)
         _migrate_workspace_ownership(connection)
         _migrate_slow_path_runtime(connection)
+        _migrate_memory_sleep_scheduler(connection)
         _migrate_atomic_facts_canonical(connection)
         _migrate_canonical_registry_uniqueness(connection)
         for statement in _INDEX_STATEMENTS:
@@ -775,6 +800,10 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
             (MEMORY_LIFECYCLE_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (MEMORY_SLEEP_SCHEDULER_MIGRATION_ID, _now()),
         )
         connection.commit()
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -834,6 +863,25 @@ def _migrate_slow_path_runtime(connection: sqlite3.Connection) -> None:
     queue_columns = _table_columns(connection, "slow_path_queue")
     if "quarantine_reason" not in queue_columns:
         connection.execute("ALTER TABLE slow_path_queue ADD COLUMN quarantine_reason TEXT")
+
+
+def _migrate_memory_sleep_scheduler(connection: sqlite3.Connection) -> None:
+    """Upgrade lifecycle databases with scheduler/run observability fields."""
+    columns = _table_columns(connection, "memory_sleep_runs")
+    additions = {
+        "trigger": "TEXT NOT NULL DEFAULT 'manual'",
+        "finished_at": "TEXT",
+        "configuration_json": "TEXT",
+        "before_snapshot_json": "TEXT",
+        "after_snapshot_json": "TEXT",
+        "changes_json": "TEXT",
+        "error": "TEXT",
+    }
+    for column, definition in additions.items():
+        if column not in columns:
+            connection.execute(
+                f"ALTER TABLE memory_sleep_runs ADD COLUMN {column} {definition}"  # noqa: S608
+            )
 
 
 def _migrate_canonical_registry_uniqueness(connection: sqlite3.Connection) -> None:

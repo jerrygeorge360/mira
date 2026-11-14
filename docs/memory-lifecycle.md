@@ -25,7 +25,8 @@ history remain available for audit.
 `run_memory_sleep(workspace_id, max_items=100)` is deterministic and bounded. It:
 
 1. reviews at most `max_items` lifecycle rows;
-2. reinforces or weakens state from observed answer outcomes;
+2. weakens state from freshness and observed negative outcomes; genuine reinforcement
+   still comes from the feedback path;
 3. archives low-value duplicate state without deleting source evidence;
 4. marks negatively evidenced, very-low-retention state forgotten;
 5. refreshes reflection validity using existing provenance checks; and
@@ -33,6 +34,13 @@ history remain available for audit.
 
 Memories without feedback are not forgotten merely because they were not
 recently accessed. Pinned memories are never archived by this pass.
+
+The production worker also checks for due sleep while the slow-path queue is
+idle. Each workspace gets a durable six-hour schedule by default; set
+`MEMORY_SLEEP_INTERVAL_HOURS=0` to disable the automatic schedule, or change it
+from the Memory Health sleep panel. Manual, automatic, and MCP runs share one
+workspace lock, and every run records its trigger, status, before/after
+snapshot, and bounded change list in `memory_sleep_runs`.
 
 ## Interfaces
 

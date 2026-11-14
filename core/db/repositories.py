@@ -134,6 +134,10 @@ JSON_COLUMNS: frozenset[str] = frozenset(
         "community_summary_ids_json",
         "prompt_sections_json",
         "hydration_ids_json",
+        "configuration_json",
+        "before_snapshot_json",
+        "after_snapshot_json",
+        "changes_json",
     }
 )
 
@@ -388,6 +392,23 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "archived_count",
             "forgotten_count",
             "details",
+            "trigger",
+            "finished_at",
+            "configuration_json",
+            "before_snapshot_json",
+            "after_snapshot_json",
+            "changes_json",
+            "error",
+        }
+    ),
+    "memory_sleep_schedule": frozenset(
+        {
+            "workspace_id",
+            "automatic_sleep_enabled",
+            "sleep_interval_hours",
+            "last_sleep_at",
+            "next_sleep_at",
+            "updated_at",
         }
     ),
 }
@@ -413,6 +434,7 @@ _WORKSPACE_OWNED_TABLES = frozenset(
         "memory_state",
         "memory_reviews",
         "memory_sleep_runs",
+        "memory_sleep_schedule",
     }
 )
 for _workspace_table in _WORKSPACE_OWNED_TABLES:

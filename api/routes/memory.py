@@ -12,8 +12,12 @@ from api.schemas.memory import (
     MemoryGraphResponse,
     MemoryHealthResponse,
     MemoryLifecycleResponse,
+    MemorySleepConfigRequest,
+    MemorySleepConfigResponse,
     MemorySleepRequest,
     MemorySleepResponse,
+    MemorySleepRunResponse,
+    MemorySleepRunsResponse,
 )
 from core.memory.lifecycle import forget_memory_by_id, list_memory_states
 from core.memory.read_models import (
@@ -23,6 +27,12 @@ from core.memory.read_models import (
     list_foresight_read_model,
     list_memory_lifecycle_read_model,
     list_reflections_read_model,
+)
+from core.memory.sleep_scheduler import (
+    get_sleep_config,
+    get_sleep_run,
+    list_sleep_runs,
+    update_sleep_config,
 )
 from core.memory.slow_path import run_memory_sleep_once
 
@@ -91,12 +101,63 @@ def sleep_memory(
     """Run one bounded retention/consolidation cycle for this workspace."""
     require_csrf(request, auth)
     try:
-        result = run_memory_sleep_once(auth.context.workspace_id, max_items=payload.max_items)
+        result = run_memory_sleep_once(
+            auth.context.workspace_id,
+            max_items=payload.max_items,
+            trigger="manual",
+        )
     except ValueError as error:
-        from fastapi import HTTPException
-
         raise HTTPException(status_code=400, detail=str(error)) from error
     return MemorySleepResponse(sleep=result)
+
+
+@router.get("/memory/sleep/config", response_model=MemorySleepConfigResponse)
+def get_memory_sleep_config(auth: WorkspaceAuth) -> MemorySleepConfigResponse:
+    """Return durable automatic-sleep settings for the authenticated workspace."""
+    return MemorySleepConfigResponse(config=get_sleep_config(auth.context.workspace_id))
+
+
+@router.patch("/memory/sleep/config", response_model=MemorySleepConfigResponse)
+def patch_memory_sleep_config(
+    request: Request,
+    payload: MemorySleepConfigRequest,
+    auth: WorkspaceAuth,
+) -> MemorySleepConfigResponse:
+    """Update automatic-sleep settings without requiring an application restart."""
+    require_csrf(request, auth)
+    try:
+        config = update_sleep_config(
+            auth.context.workspace_id,
+            enabled=payload.enabled,
+            interval_hours=payload.interval_hours,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return MemorySleepConfigResponse(config=config)
+
+
+@router.get("/memory/sleep/runs", response_model=MemorySleepRunsResponse)
+def get_memory_sleep_runs(
+    auth: WorkspaceAuth,
+    limit: int = Query(default=20, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+) -> MemorySleepRunsResponse:
+    """Return paginated sleep history for the authenticated workspace."""
+    return MemorySleepRunsResponse(
+        **list_sleep_runs(auth.context.workspace_id, limit=limit, offset=offset)
+    )
+
+
+@router.get("/memory/sleep/runs/{sleep_run_id}", response_model=MemorySleepRunResponse)
+def get_memory_sleep_run(
+    sleep_run_id: str,
+    auth: WorkspaceAuth,
+) -> MemorySleepRunResponse:
+    """Return one sleep run, including before/after snapshots and changes."""
+    run = get_sleep_run(sleep_run_id, auth.context.workspace_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="sleep run not found")
+    return MemorySleepRunResponse(run=run)
 
 
 @router.post("/memory/{memory_id}/forget", response_model=MemoryForgetResponse)

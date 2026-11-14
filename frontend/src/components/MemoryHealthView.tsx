@@ -2,6 +2,7 @@ import { Activity, Archive, Clock3, Flame, Info, Layers3, MoveRight, ShieldCheck
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
+import MemorySleepPanel from './MemorySleepPanel';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -115,6 +116,8 @@ export default function MemoryHealthView() {
           <KeyValueList values={asRecord(retention.forgetting_signals)} />
         </section>
       </div>
+
+      <MemorySleepPanel />
 
       <section className="health-section">
         <div className="health-section-head">

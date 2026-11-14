@@ -415,56 +415,18 @@ def run_memory_sleep_once(
     *,
     max_items: int = 50,
     now: str | None = None,
+    trigger: str = "manual",
 ) -> dict[str, object]:
-    """Run one bounded, deterministic memory-maintenance cycle.
+    """Run one bounded sleep cycle through the durable scheduler coordinator."""
+    from core.memory.sleep_scheduler import run_scheduled_sleep
 
-    This is an explicit maintenance entry point; the normal worker does not call it.
-    It intentionally avoids reflection synthesis, community summarization, foresight
-    detection, embeddings, and other LLM/API work. The existing lifecycle retention API
-    is called once, then exact workspace-scoped fact and reflection maintenance runs
-    under a fixed per-pass cap. Historical rows are retained; state changes are recorded
-    through the existing supersession/reflection status mechanisms.
-    """
-    if max_items < 1:
-        raise ValueError("max_items must be a positive integer")
-    require_active_workspace(workspace_id)
-
-    effective_now = now or _now()
-    errors: list[str] = []
-    lifecycle: dict[str, object] = {}
-    try:
-        # One lifecycle call per bounded sleep run; never call it inside a record loop.
-        lifecycle = run_memory_sleep(
-            workspace_id,
-            max_items,
-            now=effective_now,
-        )
-    except Exception as error:  # noqa: BLE001 - maintenance reports and continues
-        errors.append(f"memory_sleep: {str(error) or error.__class__.__name__}")
-
-    facts = _sleep_active_facts(workspace_id, max_items)
-    changes_found, changes_applied, duplicates_consolidated, change_errors = _refresh_sleep_changes(
-        workspace_id, facts
+    return run_scheduled_sleep(
+        workspace_id,
+        max_items=max_items,
+        trigger=trigger,
+        now=now,
+        lifecycle_runner=run_memory_sleep,
     )
-    errors.extend(change_errors)
-
-    reflections = _sleep_active_reflections(workspace_id, max_items)
-    reflections_updated, reflection_errors = _refresh_sleep_reflections(reflections)
-    errors.extend(reflection_errors)
-
-    return {
-        "workspace_id": workspace_id,
-        "max_items": max_items,
-        "reviewed": len(facts) + len(reflections),
-        "facts_reviewed": len(facts),
-        "reflections_reviewed": len(reflections),
-        "changes_found": changes_found,
-        "changes_applied": changes_applied,
-        "duplicates_consolidated": duplicates_consolidated,
-        "reflections_updated": reflections_updated,
-        "lifecycle": lifecycle,
-        "errors": errors,
-    }
 
 
 def _sleep_active_facts(workspace_id: str, limit: int) -> list[dict[str, object]]:
@@ -715,6 +677,32 @@ def run_worker(
                 log_event(
                     "batch_empty", "no pending observations", worker_id=worker_id, batch_id=batch_id
                 )
+                try:
+                    from core.memory.sleep_scheduler import (
+                        list_active_sleep_workspaces,
+                        maybe_run_scheduled_sleep,
+                    )
+
+                    for workspace_id in list_active_sleep_workspaces():
+                        sleep_result = maybe_run_scheduled_sleep(workspace_id)
+                        if sleep_result.get("status") not in {"not_due", "disabled"}:
+                            log_event(
+                                "memory_sleep_checked",
+                                "scheduled memory sleep checked",
+                                worker_id=worker_id,
+                                workspace_id=workspace_id,
+                                sleep_status=sleep_result.get("status"),
+                                sleep_run_id=sleep_result.get("sleep_run_id"),
+                            )
+                except Exception as error:  # noqa: BLE001 - sleep must not stop the worker
+                    LOGGER.exception("Scheduled memory sleep check failed")
+                    log_event(
+                        "memory_sleep_check_failed",
+                        "scheduled memory sleep check failed",
+                        level=logging.WARNING,
+                        worker_id=worker_id,
+                        error_message=str(error) or error.__class__.__name__,
+                    )
                 if once or _reached(max_iterations, iterations):
                     break
                 log_event(

@@ -21,6 +21,7 @@ Configure these Compose variables in Coolify before deployment:
 | `GITHUB_CLIENT_ID` | Existing MIRA GitHub OAuth application's client ID. |
 | `GITHUB_CLIENT_SECRET` | Its client secret. |
 | `MIRA_MCP_API_KEY` | A newly generated long random bearer token for legacy MCP clients. |
+| `MEMORY_SLEEP_INTERVAL_HOURS` | Automatic memory-maintenance interval; defaults to `6`, set to `0` to disable. |
 
 The GitHub OAuth application's callback URL must be
 `https://mira.ninja/api/auth/github/callback`. The Compose file fixes the public

@@ -20,6 +20,7 @@ _DELETE_STATEMENTS: tuple[tuple[str, str], ...] = (
     ),
     ("answer_traces", "DELETE FROM answer_traces WHERE workspace_id = ?"),
     ("memory_reviews", "DELETE FROM memory_reviews WHERE workspace_id = ?"),
+    ("memory_sleep_schedule", "DELETE FROM memory_sleep_schedule WHERE workspace_id = ?"),
     ("memory_sleep_runs", "DELETE FROM memory_sleep_runs WHERE workspace_id = ?"),
     ("memory_state", "DELETE FROM memory_state WHERE workspace_id = ?"),
     ("prompt_logs", "DELETE FROM prompt_logs WHERE workspace_id = ?"),

@@ -33,7 +33,35 @@ class MemoryHealthResponse(BaseModel):
 class MemorySleepRequest(BaseModel):
     """Bounded sleep-cycle controls."""
 
-    max_items: int = 100
+    max_items: int = Field(default=100, ge=1, le=1000)
+
+
+class MemorySleepConfigRequest(BaseModel):
+    """Partial workspace-scoped scheduler settings update."""
+
+    enabled: bool | None = None
+    interval_hours: float | None = Field(default=None, ge=1, le=168)
+
+
+class MemorySleepConfigResponse(BaseModel):
+    """Durable workspace sleep scheduler settings."""
+
+    config: dict[str, object]
+
+
+class MemorySleepRunsResponse(BaseModel):
+    """Paginated workspace sleep history."""
+
+    items: list[dict[str, object]]
+    total: int
+    limit: int
+    offset: int
+
+
+class MemorySleepRunResponse(BaseModel):
+    """One workspace sleep run with snapshots and compact changes."""
+
+    run: dict[str, object]
 
 
 class MemorySleepResponse(BaseModel):

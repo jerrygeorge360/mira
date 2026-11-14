@@ -51,6 +51,14 @@ export interface MemoryHealthResponse {
   health: Record<string, unknown>;
 }
 
+/**
+ * Sleep responses are intentionally open-ended. The sleep lifecycle is still
+ * gaining fields, so the admin surface normalizes additive fields at the edge.
+ */
+export type MemorySleepConfigResponse = Record<string, unknown>;
+export type MemorySleepResponse = Record<string, unknown>;
+export type MemorySleepRunsResponse = Record<string, unknown>;
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const headers = new Headers(init?.headers);
@@ -181,6 +189,30 @@ export const api = {
   },
 
   memoryHealth: () => req<MemoryHealthResponse>('/memory/health'),
+
+  memorySleepConfig: () => req<MemorySleepConfigResponse>('/memory/sleep/config'),
+
+  updateMemorySleepConfig: (body: { enabled: boolean; interval_hours: number }) =>
+    req<MemorySleepConfigResponse>('/memory/sleep/config', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  runMemorySleep: () =>
+    req<MemorySleepResponse>('/memory/sleep', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  memorySleepRuns: (params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    if (params?.offset != null) qs.set('offset', String(params.offset));
+    return req<MemorySleepRunsResponse>(`/memory/sleep/runs?${qs}`);
+  },
+
+  memorySleepRun: (runId: string) =>
+    req<MemorySleepResponse>(`/memory/sleep/runs/${encodeURIComponent(runId)}`),
 
   foresight: (params?: { status?: string; limit?: number }) => {
     const qs = new URLSearchParams();

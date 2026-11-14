@@ -393,7 +393,13 @@ def _memory_sleep(context: WorkspaceContext, params: ToolParams) -> ToolResult:
     max_items = _int(params.get("max_items"), 100)
     if max_items < 1 or max_items > 1000:
         raise ValueError("max_items must be between 1 and 1000")
-    return {"sleep": run_memory_sleep_once(context.workspace_id, max_items=max_items)}
+    return {
+        "sleep": run_memory_sleep_once(
+            context.workspace_id,
+            max_items=max_items,
+            trigger="mcp",
+        )
+    }
 
 
 def _forget_memory(context: WorkspaceContext, params: ToolParams) -> ToolResult:
