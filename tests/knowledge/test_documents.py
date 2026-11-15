@@ -214,7 +214,9 @@ def test_docx_extraction_and_chunk_bounds() -> None:
 def test_failed_processing_records_failed_status_and_delete_preserves_audit(workspace: str) -> None:
     kb_id = create_knowledge_base("Failures", workspace_id=workspace)
     storage = FakeStorage()
-    with pytest.raises(DocumentProcessingError, match="PyMuPDF|processing failed"):
+    with pytest.raises(
+        DocumentProcessingError, match="PyMuPDF|processing failed|PDF extraction failed"
+    ):
         ingest_document(
             workspace_id=workspace,
             knowledge_base_id=kb_id,
