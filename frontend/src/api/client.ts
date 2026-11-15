@@ -133,6 +133,75 @@ export interface AuthResponse {
   ready: boolean;
 }
 
+export interface PlatformProject {
+  id: string;
+  organization_id: string;
+  name: string;
+  slug?: string;
+  environment: 'development' | 'production';
+  created_at?: string;
+}
+
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  subscription_status: string;
+  billing_currency: string;
+  current_period_end?: string | null;
+}
+
+export interface PlatformKey {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  project_name: string;
+  name: string;
+  prefix: string;
+  environment: 'development' | 'production';
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface PlatformOverview {
+  organizations: PlatformOrganization[];
+  organization: PlatformOrganization;
+  projects: PlatformProject[];
+  api_keys: PlatformKey[];
+  namespaces: number;
+  documents: number;
+  usage: {
+    memory_writes: { used: number; limit: number };
+    retrievals: { used: number; limit: number };
+    documents_uploaded: number;
+    api_requests: number;
+    by_operation: Record<string, { requests: number; succeeded: number; bytes_ingested?: number }>;
+  };
+  plans: Record<string, {
+    name: string;
+    monthly_price_minor: number | null;
+    currency: string;
+    memory_writes_monthly: number;
+    retrievals_monthly: number;
+    projects: number;
+    api_keys: number;
+    rate_limit_per_minute: number;
+  }>;
+}
+
+export interface PlatformNamespace {
+  namespace: string;
+  project_id: string;
+  project_name: string;
+  memories: number;
+  documents: number;
+  created_at: string;
+}
+
 export interface AdminOverviewResponse {
   generated_at: string;
   users: {
@@ -175,6 +244,50 @@ export const api = {
   },
 
   authMe: () => req<AuthResponse>('/auth/me'),
+
+  platformOverview: (organizationId?: string) => {
+    const qs = new URLSearchParams();
+    if (organizationId) qs.set('organization_id', organizationId);
+    const query = qs.toString();
+    return req<PlatformOverview>(`/platform${query ? `?${query}` : ''}`);
+  },
+
+  createOrganization: (name: string) =>
+    req<{ id: string; name: string; plan: string }>('/platform/organizations', {
+      method: 'POST', body: JSON.stringify({ name }),
+    }),
+
+  updateOrganization: (organizationId: string, name: string) =>
+    req<{ id: string; name: string }>(`/platform/organizations/${encodeURIComponent(organizationId)}`, {
+      method: 'PATCH', body: JSON.stringify({ name }),
+    }),
+
+  createProject: (body: { organization_id: string; name: string; environment: string }) =>
+    req<PlatformProject>('/platform/projects', { method: 'POST', body: JSON.stringify(body) }),
+
+  createPlatformKey: (body: { project_id: string; name: string; scopes: string[]; expires_at?: string }) =>
+    req<{ api_key: PlatformKey; secret: string; warning: string }>('/platform/keys', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  revokePlatformKey: (keyId: string) =>
+    req<void>(`/platform/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
+
+  platformNamespaces: (organizationId: string) =>
+    req<{ namespaces: PlatformNamespace[] }>(`/platform/namespaces?organization_id=${encodeURIComponent(organizationId)}`),
+
+  platformBilling: (organizationId: string) =>
+    req<{ organization_id: string; plan: string; subscription_status: string; billing_currency: string; current_period_end: string | null; monthly_price_minor: number | null }>(`/billing/subscription?organization_id=${encodeURIComponent(organizationId)}`),
+
+  subscribePlatform: (body: { organization_id: string; plan: 'developer' | 'pro' | 'scale'; email: string }) =>
+    req<{ authorization_url: string; reference: string }>('/billing/subscribe', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  cancelPlatformSubscription: (organization_id: string) =>
+    req<{ status: string; manage_url: string }>('/billing/cancel', {
+      method: 'POST', body: JSON.stringify({ organization_id }),
+    }),
 
   adminOverview: () => req<AdminOverviewResponse>('/admin/overview'),
 

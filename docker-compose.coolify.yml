@@ -48,6 +48,14 @@ services:
       MIRA_ADMIN_GITHUB_LOGINS: ${MIRA_ADMIN_GITHUB_LOGINS:-jerrygeorge360}
       MIRA_OAUTH_ISSUER_URL: https://mira.ninja
       MIRA_MCP_PUBLIC_URL: https://mira.ninja/mcp
+      PAYSTACK_SECRET_KEY: ${PAYSTACK_SECRET_KEY:-}
+      PAYSTACK_PUBLIC_KEY: ${PAYSTACK_PUBLIC_KEY:-}
+      PAYSTACK_WEBHOOK_SECRET: ${PAYSTACK_WEBHOOK_SECRET:-}
+      PAYSTACK_DEVELOPER_PLAN_CODE: ${PAYSTACK_DEVELOPER_PLAN_CODE:-}
+      PAYSTACK_PRO_PLAN_CODE: ${PAYSTACK_PRO_PLAN_CODE:-}
+      PAYSTACK_SCALE_PLAN_CODE: ${PAYSTACK_SCALE_PLAN_CODE:-}
+      PAYSTACK_CALLBACK_URL: ${PAYSTACK_CALLBACK_URL:-https://mira.ninja/}
+      MIRA_PLAN_LIMITS_JSON: ${MIRA_PLAN_LIMITS_JSON:-}
     volumes: *data-volumes
     expose:
       - "8000"
@@ -78,6 +86,7 @@ services:
       MIRA_MCP_WORKSPACE_ID: workspace_legacy_default
       MIRA_MCP_PUBLIC_URL: https://mira.ninja/mcp
       MIRA_OAUTH_ISSUER_URL: https://mira.ninja
+      MIRA_PLAN_LIMITS_JSON: ${MIRA_PLAN_LIMITS_JSON:-}
     volumes: *data-volumes
     expose:
       - "8090"

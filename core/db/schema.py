@@ -19,6 +19,7 @@ WORKSPACE_MIGRATION_ID = "0002_workspace_ownership"
 MEMORY_LIFECYCLE_MIGRATION_ID = "0003_memory_lifecycle"
 MEMORY_SLEEP_SCHEDULER_MIGRATION_ID = "0004_memory_sleep_scheduler"
 KNOWLEDGE_BASE_DOCUMENTS_MIGRATION_ID = "0005_knowledge_base_documents"
+DEVELOPER_PLATFORM_MIGRATION_ID = "0006_developer_platform"
 
 # SQLite is the source of truth for ISSUE-005. Enum-like fields intentionally remain
 # TEXT columns here; repository helpers validate allowed values before writes.
@@ -72,6 +73,115 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         PRIMARY KEY (workspace_id, user_id),
         FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
         FOREIGN KEY (user_id) REFERENCES users (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS organizations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL UNIQUE,
+        owner_user_id TEXT NOT NULL,
+        plan TEXT NOT NULL DEFAULT 'free',
+        subscription_status TEXT NOT NULL DEFAULT 'active',
+        paystack_customer_code TEXT,
+        paystack_subscription_code TEXT,
+        paystack_plan_code TEXT,
+        billing_currency TEXT NOT NULL DEFAULT 'NGN',
+        current_period_end TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (owner_user_id) REFERENCES users (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        slug TEXT NOT NULL,
+        environment TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (id, organization_id),
+        UNIQUE (organization_id, slug),
+        FOREIGN KEY (organization_id) REFERENCES organizations (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS api_keys (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        prefix TEXT NOT NULL UNIQUE,
+        key_hash TEXT NOT NULL UNIQUE,
+        environment TEXT NOT NULL,
+        scopes_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        last_used_at TEXT,
+        expires_at TEXT,
+        revoked_at TEXT,
+        FOREIGN KEY (project_id, organization_id)
+          REFERENCES projects (id, organization_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS project_namespaces (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        namespace TEXT NOT NULL,
+        workspace_id TEXT NOT NULL UNIQUE,
+        session_id TEXT NOT NULL UNIQUE,
+        knowledge_base_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (project_id, namespace),
+        FOREIGN KEY (project_id, organization_id)
+          REFERENCES projects (id, organization_id),
+        FOREIGN KEY (workspace_id) REFERENCES workspaces (id),
+        FOREIGN KEY (session_id) REFERENCES sessions (id),
+        FOREIGN KEY (knowledge_base_id) REFERENCES knowledge_bases (id) ON DELETE SET NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS usage_events (
+        id TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        api_key_id TEXT NOT NULL,
+        namespace TEXT,
+        operation TEXT NOT NULL,
+        status_code INTEGER NOT NULL,
+        latency_ms INTEGER NOT NULL,
+        bytes_ingested INTEGER NOT NULL DEFAULT 0,
+        characters_processed INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY (project_id, organization_id)
+          REFERENCES projects (id, organization_id),
+        FOREIGN KEY (api_key_id) REFERENCES api_keys (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS billing_checkouts (
+        reference TEXT PRIMARY KEY,
+        organization_id TEXT NOT NULL,
+        target_plan TEXT NOT NULL,
+        paystack_plan_code TEXT NOT NULL,
+        authorization_url TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY (organization_id) REFERENCES organizations (id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS billing_webhook_events (
+        event_id TEXT PRIMARY KEY,
+        event_type TEXT NOT NULL,
+        payload_sha256 TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        processed_at TEXT
     )
     """,
     """
@@ -685,6 +795,23 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "ON documents (workspace_id, status, updated_at)",
     "CREATE INDEX IF NOT EXISTS idx_documents_knowledge_base "
     "ON documents (knowledge_base_id, status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_projects_organization "
+    "ON projects (organization_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_organizations_owner_created "
+    "ON organizations (owner_user_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_organizations_paystack_subscription "
+    "ON organizations (paystack_subscription_code)",
+    "CREATE INDEX IF NOT EXISTS idx_organizations_paystack_customer "
+    "ON organizations (paystack_customer_code)",
+    "CREATE INDEX IF NOT EXISTS idx_api_keys_project "
+    "ON api_keys (project_id, revoked_at, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_billing_checkouts_org_status_created "
+    "ON billing_checkouts (organization_id, status, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_usage_org_created "
+    "ON usage_events (organization_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_usage_key_created ON usage_events (api_key_id, created_at)",
+    "CREATE INDEX IF NOT EXISTS idx_usage_project_operation "
+    "ON usage_events (project_id, operation, created_at)",
     "CREATE INDEX IF NOT EXISTS idx_document_chunks_workspace "
     "ON document_chunks (workspace_id, knowledge_base_id, document_id, chunk_index)",
     """
@@ -886,6 +1013,7 @@ def initialize_database(database_path: str | Path) -> None:
         _migrate_slow_path_runtime(connection)
         _migrate_memory_sleep_scheduler(connection)
         _migrate_knowledge_base_documents(connection)
+        _migrate_developer_platform(connection)
         _migrate_atomic_facts_canonical(connection)
         _migrate_canonical_registry_uniqueness(connection)
         for statement in _INDEX_STATEMENTS:
@@ -907,6 +1035,10 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
             (KNOWLEDGE_BASE_DOCUMENTS_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (DEVELOPER_PLATFORM_MIGRATION_ID, _now()),
         )
         connection.commit()
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -996,6 +1128,39 @@ def _migrate_knowledge_base_documents(connection: sqlite3.Connection) -> None:
     column backfill is required for this first document-storage migration.
     """
     del connection
+
+
+def _migrate_developer_platform(connection: sqlite3.Connection) -> None:
+    """Create a free organization and production project for every existing user."""
+    now = _now()
+    users = connection.execute(
+        "SELECT id, github_login FROM users ORDER BY created_at, id"
+    ).fetchall()
+    for user in users:
+        # The migration connection uses sqlite3's default tuple row factory.
+        # Keep this migration independent of the repository connection setup.
+        user_id = str(user[0])
+        login = str(user[1] or "MIRA user")
+        suffix = uuid.uuid5(uuid.NAMESPACE_URL, f"mira-user:{user_id}").hex[:20]
+        organization_id = f"org_{suffix}"
+        project_id = f"prj_{suffix}"
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO organizations (
+                id, name, slug, owner_user_id, plan, subscription_status,
+                billing_currency, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, 'free', 'active', 'NGN', ?, ?)
+            """,
+            (organization_id, f"{login}'s organization", f"org-{suffix}", user_id, now, now),
+        )
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO projects (
+                id, organization_id, name, slug, environment, created_at, updated_at
+            ) VALUES (?, ?, 'Default project', 'default-production', 'production', ?, ?)
+            """,
+            (project_id, organization_id, now, now),
+        )
 
 
 def _migrate_canonical_registry_uniqueness(connection: sqlite3.Connection) -> None:

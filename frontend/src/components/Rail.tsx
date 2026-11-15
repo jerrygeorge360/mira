@@ -18,6 +18,7 @@ import {
   Trash2,
   Gauge,
   LibraryBig,
+  Code2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
@@ -27,6 +28,7 @@ import BrandMark from './BrandMark';
 const PRIMARY_VIEWS = [
   { label: 'Chat', icon: <MessageSquare size={16} /> },
   { label: 'Knowledge Bases', icon: <LibraryBig size={16} /> },
+  { label: 'Developer Platform', icon: <Code2 size={16} /> },
 ] as const;
 
 const MEMORY_VIEWS = [

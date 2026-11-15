@@ -817,11 +817,11 @@ class WorkspaceRepository:
         return save_observation(session_id, role, content, source, metadata)
 
     def list_observations(
-        self, session_id: str, limit: int | None = None
+        self, session_id: str, limit: int | None = None, *, newest_first: bool = False
     ) -> list[RepositoryRecord]:
         if self.get_session(session_id) is None:
             raise ValueError(f"Session not found in workspace: {session_id}")
-        return list_observations(session_id, limit)
+        return list_observations(session_id, limit, newest_first=newest_first)
 
     def get_atomic_fact(self, fact_id: str) -> RepositoryRecord | None:
         rows = _fetch_all(
@@ -1174,11 +1174,14 @@ def message_counts_by_session(*, workspace_id: str | None = None) -> dict[str, i
     return {str(row["session_id"]): int(row["n"]) for row in rows}
 
 
-def list_observations(session_id: str, limit: int | None = None) -> list[RepositoryRecord]:
-    """List observations for a session in creation order."""
+def list_observations(
+    session_id: str, limit: int | None = None, *, newest_first: bool = False
+) -> list[RepositoryRecord]:
+    """List observations for a session in creation order, optionally newest first."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be a positive integer")
-    query = "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at ASC"
+    ordering = "DESC" if newest_first else "ASC"
+    query = f"SELECT * FROM observations WHERE session_id = ? ORDER BY created_at {ordering}"
     parameters: tuple[object, ...] = (session_id,)
     if limit is not None:
         query = f"{query} LIMIT ?"

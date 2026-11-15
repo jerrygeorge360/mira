@@ -14,6 +14,7 @@ from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.oauth import MCP_SCOPE, mcp_resource_url, oauth_issuer_url
 from integrations.mcp.auth import StaticTokenVerifier, authenticated_workspace_context
+from integrations.mcp.developer import create_developer_mcp_server
 from integrations.mcp.server import MCP_SERVER_INSTRUCTIONS, MCP_TOOL_DESCRIPTIONS, build_mcp_server
 
 
@@ -32,6 +33,9 @@ def create_mcp_server() -> FastMCP:
             issuer_url=AnyHttpUrl(issuer_url),
             resource_server_url=AnyHttpUrl(public_url),
             required_scopes=[MCP_SCOPE],
+            # OAuth resources are checked in resolve_oauth_access_token; deployment static
+            # tokens are validated against the configured token-to-workspace mapping.
+            validate_token_resource=False,
         ),
         host="0.0.0.0",  # nosec B104
         port=int(os.environ.get("MCP_PORT", "8090")),
@@ -147,3 +151,5 @@ def create_mcp_server() -> FastMCP:
 
 mcp = create_mcp_server()
 app = mcp.streamable_http_app()
+developer_mcp = create_developer_mcp_server()
+app.mount("/mcp", developer_mcp.streamable_http_app())

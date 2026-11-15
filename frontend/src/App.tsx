@@ -16,6 +16,7 @@ import ResultsView from './components/ResultsView';
 import DemoWalkthrough from './components/DemoWalkthrough';
 import AdminView from './components/AdminView';
 import KnowledgeBasesView from './components/KnowledgeBasesView';
+import DeveloperPlatformView from './components/DeveloperPlatformView';
 
 function ViewRouter() {
   const { view } = useApp();
@@ -31,6 +32,7 @@ function ViewRouter() {
     case 'Foresight': return <div className="view-area"><TimelineView /></div>;
     case 'Evaluation': return <div className="view-area"><ResultsView /></div>;
     case 'Knowledge Bases': return <div className="view-area"><KnowledgeBasesView /></div>;
+    case 'Developer Platform': return <div className="view-area"><DeveloperPlatformView /></div>;
     case 'Administration': return <div className="view-area"><AdminView /></div>;
     default: return <ChatView />;
   }
