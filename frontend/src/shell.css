@@ -1,0 +1,153 @@
+/* ══ App shell, chat and sign-in: "Instrument" ════════════════════
+ * Loaded after index.css and restyles what it defines there for the
+ * rail, topbar, chat and auth page. Same rules as the landing page:
+ * hairlines instead of filled panels, the ink colour for primary
+ * actions, the accent only for state (active, live, focused), mono
+ * for labels and readouts.
+ * ═════════════════════════════════════════════════════════════════ */
+
+/* ── Interaction baseline ── */
+::selection { background: var(--accent); color: var(--accent-ink); }
+/* layered, so shadcn components keep their own focus ring */
+@layer base {
+  :where(button, a, input, textarea, select, [tabindex]):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+}
+/* pressable controls answer the press; rows are too wide to scale */
+.rail-new-chat, .rail-icon-btn, .auth-button {
+  transition: background-color var(--transition), border-color var(--transition), color var(--transition),
+    opacity var(--transition), transform 140ms var(--ease-out);
+}
+.rail-new-chat:active, .rail-icon-btn:active, .auth-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+/* ── Rail ── */
+.rail { background: var(--bg); }
+.rail-top { height: var(--topbar-h); padding: 0 10px; }
+.rail-brand {
+  gap: 8px;
+  font-family: var(--mono);
+  font-size: 13.5px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+.rail-new-chat {
+  height: 34px;
+  margin: 12px 10px 6px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--text);
+  font-size: 13.5px;
+  font-weight: 500;
+}
+.rail-section-label {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+}
+.rail-nav-btn { padding: 7px 10px; font-size: 13.5px; font-weight: 400; }
+/* active is the ink colour on a quiet fill, with a 2px signal bar */
+.rail-nav-btn.active {
+  background: var(--surface-soft);
+  color: var(--text);
+  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.rail-nav-btn.active svg { color: var(--accent); }
+.rail-history-btn h4 { font-size: 13px; font-weight: 400; }
+.rail-history-btn small { font-family: var(--mono); font-size: 11px; }
+.rail-history-row.active .rail-history-btn { background: var(--surface-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.rail-avatar {
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+.rail-user-meta strong { font-size: 13px; font-weight: 500; }
+.rail-user-meta small { font-family: var(--mono); font-size: 11px; color: var(--faint); }
+/* destructive, but not shouting until you reach for it */
+.rail-reset-memory {
+  min-height: 0;
+  padding: 7px 8px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+.rail-reset-memory svg { color: var(--danger); }
+.rail-reset-memory strong { font-size: 12.5px; font-weight: 500; }
+.rail-reset-memory small { font-size: 11.5px; color: var(--faint); }
+
+/* ── Topbar ── */
+.topbar { background: var(--bg); }
+.topbar-title { font-size: 14px; font-weight: 500; letter-spacing: 0; }
+.plan-pill {
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+/* ── Chat: layout around the shadcn Message / Bubble / MessageScroller / InputGroup parts ── */
+.chat-view { display: flex; flex-direction: column; }
+.chat-scroller { flex: 1; min-height: 0; }
+.chat-transcript { padding: 32px max(20px, calc((100% - 820px) / 2)) 24px; }
+.chat-markdown h1, .chat-markdown h2, .chat-markdown h3 { font-weight: 600; letter-spacing: -0.01em; }
+/* the empty state sits where the first turn will, left-aligned like the rest of the product */
+.chat-empty { flex: 1; align-items: flex-start; justify-content: center; padding: 24px max(20px, calc((100% - 820px) / 2)); text-align: left; }
+
+.chat-dock { width: min(820px, calc(100% - 32px)); margin: 0 auto; padding: 4px 0 14px; }
+.chat-dock-strip { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 2px 8px; }
+.chat-dock-toggle { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); cursor: pointer; }
+.chat-dock-status {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--faint);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* the composer is the roundest control on the page, like a message bubble */
+.chat-input { border-radius: 14px; }
+.chat-input-text { min-height: 40px; max-height: 170px; font-size: 15px; line-height: 1.5; }
+.chat-dock-note { padding-top: 8px; font-size: 11.5px; color: var(--faint); text-align: center; }
+
+/* ── Sign-in ── */
+.auth-page { background: var(--bg); }
+.auth-orbit { display: none; }
+.auth-panel { border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--surface); box-shadow: none; backdrop-filter: none; }
+/* logo and a visible way back share the top row of the panel */
+.auth-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 42px; }
+.auth-top .auth-brand { margin-bottom: 0; cursor: pointer; }
+.auth-brand { font-family: var(--mono); font-size: 13.5px; font-weight: 500; letter-spacing: 0.08em; }
+.auth-kicker { font-family: var(--mono); font-size: 11.5px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
+.auth-kicker svg { display: none; }
+.auth-copy h1 { font-weight: 500; letter-spacing: -0.025em; line-height: 1.1; }
+.auth-button { border-radius: var(--radius-md); font-weight: 500; box-shadow: none; }
+.auth-button.primary { border-color: var(--text); background: var(--text); color: var(--bg); }
+.auth-button.secondary { border-color: var(--border-strong); background: transparent; color: var(--text); }
+
+@media (hover: hover) and (pointer: fine) {
+  .rail-new-chat:hover { filter: none; background: var(--surface-soft); border-color: var(--muted); }
+  .rail-reset-memory:hover { border-color: transparent; background: color-mix(in srgb, var(--danger) 10%, transparent); color: var(--danger); }
+  .rail-reset-memory:hover small { color: color-mix(in srgb, var(--danger) 70%, var(--muted)); }
+  .auth-button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--text) 86%, var(--bg)); }
+  .auth-button.secondary:hover:not(:disabled) { background: var(--surface-soft); border-color: var(--muted); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-new-chat:active, .rail-icon-btn:active, .auth-button:active:not(:disabled) { transform: none; }
+}
+
+/* ── Guide launcher: a shadcn Button, fixed bottom-right ── */
+/* only the chat view has a composer in that corner */
+.app-shell:has(.chat-view) .demo-guide-launcher { bottom: 156px; }

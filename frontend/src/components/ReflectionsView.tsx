@@ -2,6 +2,9 @@ import { api } from '../api/client';
 import { useLiveData, formatTime } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
+import { Eyebrow, ViewHeader, ViewPage } from './view';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardContent, CardFooter } from '@/components/ui/card';
 
 export default function ReflectionsView() {
   const { memoryRefreshKey } = useApp();
@@ -9,11 +12,11 @@ export default function ReflectionsView() {
   const items = data?.items ?? [];
 
   return (
-    <div>
-      <div className="view-header">
-        <h2>Reflections</h2>
-        <p>Higher-order patterns synthesized from evidence. Facts, deadlines, and preferences belong in their own memory surfaces.</p>
-      </div>
+    <ViewPage className="max-w-3xl">
+      <ViewHeader
+        title="Reflections"
+        description="Higher-order patterns synthesized from evidence. A reflection is a cross-turn pattern, not a single extracted fact or standing instruction; those belong in their own memory surfaces."
+      />
       {items.length === 0 ? (
         <ViewStatus
           status={status}
@@ -21,32 +24,27 @@ export default function ReflectionsView() {
           hint="Reflections form once enough related, important observations accumulate."
         />
       ) : (
-        <div className="reflection-list">
+        <ul className="flex flex-col gap-3">
           {items.map((r, i) => {
-            const tags = [
-              String(r.reflection_type ?? '').replace(/_/g, ' '),
-              String(r.status ?? ''),
-            ].filter((t) => t && t !== 'active');
+            const kind = String(r.reflection_type ?? '').replace(/_/g, ' ');
+            const state = String(r.status ?? '');
             return (
-              <div key={i} className="reflection-card">
-                <div className="reflection-kind">Pattern · {String(r.reflection_type ?? '').replace(/_/g, ' ')}</div>
-                <div className="reflection-insight">{String(r.content ?? '')}</div>
-                <div className="reflection-boundary">
-                  Reflection means a cross-turn pattern, not a single extracted fact or standing instruction.
-                </div>
-                <div className="reflection-tags">
-                  <span className="chip">{formatTime(r.created_at)}</span>
-                  {tags.map((tag, j) => (
-                    <span key={j} className="chip chip-accent">
-                      {tag}
-                    </span>
-                  ))}
-                </div>
-              </div>
+              <li key={i}>
+                <Card>
+                  <CardContent className="flex flex-col gap-2">
+                    <Eyebrow>Pattern{kind ? ` · ${kind}` : ''}</Eyebrow>
+                    <p className="text-sm leading-relaxed text-pretty">{String(r.content ?? '')}</p>
+                  </CardContent>
+                  <CardFooter className="gap-2">
+                    <span className="font-mono text-xs text-muted-foreground">{formatTime(r.created_at)}</span>
+                    {state && state !== 'active' && <Badge variant="secondary">{state}</Badge>}
+                  </CardFooter>
+                </Card>
+              </li>
             );
           })}
-        </div>
+        </ul>
       )}
-    </div>
+    </ViewPage>
   );
 }

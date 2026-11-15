@@ -5,6 +5,10 @@ import { useApp } from '../context/AppContext';
 import MemorySleepPanel from './MemorySleepPanel';
 import LoadingState from './LoadingState';
 import HealthInsights from './HealthInsights';
+import { Eyebrow, KeyValue, KeyValueList, Num, Panel, ViewHeader, ViewPage } from './view';
+import { Badge } from '@/components/ui/badge';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
+import { Progress } from '@/components/ui/progress';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -39,30 +43,37 @@ export default function MemoryHealthView() {
   const movements = asArray(health.recent_movements).map(toMovement);
 
   if (status === 'loading') {
-    return <div className="view-empty"><LoadingState label="Loading memory health" /></div>;
+    return (
+      <Empty className="border">
+        <LoadingState label="Loading memory health" />
+      </Empty>
+    );
   }
   if (status === 'offline') {
     return (
-      <div className="view-empty">
-        <div className="view-empty-msg">Backend offline</div>
-        <div className="view-empty-hint">Start the API to inspect memory health.</div>
-      </div>
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyTitle>Backend offline</EmptyTitle>
+          <EmptyDescription>Start the API to inspect memory health.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
 
   const tierCards = [
-    { key: 'hot', icon: <Flame size={18} />, tone: 'hot', tier: toTier(tiers.hot) },
-    { key: 'warm', icon: <Activity size={18} />, tone: 'warm', tier: toTier(tiers.warm) },
-    { key: 'cold', icon: <Archive size={18} />, tone: 'cold', tier: toTier(tiers.cold) },
-    { key: 'time_bound', icon: <Clock3 size={18} />, tone: 'time', tier: toTier(tiers.time_bound) },
+    { key: 'hot', icon: <Flame />, tier: toTier(tiers.hot) },
+    { key: 'warm', icon: <Activity />, tier: toTier(tiers.warm) },
+    { key: 'cold', icon: <Archive />, tier: toTier(tiers.cold) },
+    { key: 'time_bound', icon: <Clock3 />, tier: toTier(tiers.time_bound) },
   ];
+  const pressureNote = String(workingSet.pressure_note || '');
 
   return (
-    <div>
-      <div className="view-header">
-        <h2>Memory Health</h2>
-        <p>What is hot, what is durable, and which records have left active use.</p>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Memory Health"
+        description="What is hot, what is durable, and which records have left active use."
+      />
 
       <HealthInsights
         tiers={tierCards.map(({ key, tier }) => ({
@@ -75,132 +86,123 @@ export default function MemoryHealthView() {
         }))}
       />
 
-      <div className="health-tier-grid">
-        {tierCards.map(({ key, icon, tone, tier }) => (
-          <section key={key} className={`health-tier-card ${tone}`}>
-            <div className="health-tier-top">
-              <div className="health-tier-icon">{icon}</div>
-              <div>
-                <h3>{tier.label}</h3>
-                <p>{tier.description || 'Persisted memory state.'}</p>
-              </div>
-              <strong>{tier.count}</strong>
-            </div>
-            {typeof tier.capacity === 'number' && (
-              <div className="health-pressure">
-                <div className="health-pressure-row">
-                  <span>Capacity</span>
-                  <strong>{Math.round((tier.pressure ?? 0) * 100)}% · {tier.count}/{tier.capacity}</strong>
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        {tierCards.map(({ key, icon, tier }) => {
+          const percent = Math.round((tier.pressure ?? 0) * 100);
+          return (
+            <Panel
+              key={key}
+              title={tier.label}
+              icon={icon}
+              description={tier.description || 'Persisted memory state.'}
+              action={<span className="font-mono text-2xl font-medium"><Num value={tier.count} /></span>}
+              contentClassName="flex flex-col gap-4"
+            >
+              {typeof tier.capacity === 'number' && (
+                <div className="flex flex-col gap-1.5">
+                  <div className="flex items-baseline justify-between gap-3">
+                    <Eyebrow>Capacity</Eyebrow>
+                    <span className="font-mono text-xs tabular-nums">
+                      <Num value={percent} suffix="%" /> · <Num value={tier.count} />/{tier.capacity}
+                    </span>
+                  </div>
+                  <Progress value={Math.min(100, percent)} aria-label={`${tier.label} capacity used`} />
                 </div>
-                <div className="health-pressure-track">
-                  <div style={{ width: `${Math.min(100, Math.round((tier.pressure ?? 0) * 100))}%` }} />
-                </div>
-              </div>
-            )}
-            <KeyValueList title="Components" values={tier.components} />
-            <KeyValueList title="Statuses" values={tier.statuses} />
-          </section>
-        ))}
+              )}
+              <RecordList title="Components" values={tier.components} />
+              <RecordList title="Statuses" values={tier.statuses} />
+            </Panel>
+          );
+        })}
       </div>
 
-      <div className="health-panels">
-        <section className="health-panel">
-          <div className="health-panel-title">
-            <Layers3 size={17} />
-            <h3>Session Working Set</h3>
-          </div>
-          <div className="health-status-line">
-            <span>Active</span>
-            <strong>{numberFrom(workingSet.active_count)}</strong>
-          </div>
-          <div className="health-status-line">
-            <span>Terminal</span>
-            <strong>{numberFrom(workingSet.terminal_count)}</strong>
-          </div>
-          <KeyValueList title="Statuses" values={asRecord(workingSet.statuses)} />
-          <p className="health-note">{String(workingSet.pressure_note || '')}</p>
-        </section>
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <Panel title="Session Working Set" icon={<Layers3 />} contentClassName="flex flex-col gap-4">
+          <KeyValueList>
+            <KeyValue label="Active">{numberFrom(workingSet.active_count)}</KeyValue>
+            <KeyValue label="Terminal">{numberFrom(workingSet.terminal_count)}</KeyValue>
+          </KeyValueList>
+          <RecordList title="Statuses" values={asRecord(workingSet.statuses)} />
+          {pressureNote && <p className="text-xs text-pretty text-muted-foreground">{pressureNote}</p>}
+        </Panel>
 
-        <section className="health-panel">
-          <div className="health-panel-title">
-            <ShieldCheck size={17} />
-            <h3>Retention Signals</h3>
-          </div>
-          <KeyValueList values={asRecord(retention.forgetting_signals)} />
-        </section>
+        <Panel title="Retention Signals" icon={<ShieldCheck />}>
+          <RecordList values={asRecord(retention.forgetting_signals)} empty="No retention signals recorded." />
+        </Panel>
       </div>
 
       <MemorySleepPanel />
 
-      <section className="health-section">
-        <div className="health-section-head">
-          <MoveRight size={17} />
-          <h3>Recent status changes</h3>
-        </div>
+      <Panel title="Recent status changes" icon={<MoveRight />}>
         {movements.length === 0 ? (
-          <div className="view-empty compact">
-            <div className="view-empty-msg">No inactive memory records yet</div>
-            <div className="view-empty-hint">Demotions, expirations, supersessions, and resolved records appear here.</div>
-          </div>
+          <Empty>
+            <EmptyHeader>
+              <EmptyTitle>No inactive memory records yet</EmptyTitle>
+              <EmptyDescription>Demotions, expirations, supersessions, and resolved records appear here.</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         ) : (
-          <div className="health-movement-list">
+          <ul className="flex flex-col *:border-b *:last:border-b-0">
             {movements.map((movement) => (
-              <article key={`${movement.source}-${movement.id}`} className="health-movement-card">
-                <div className="health-movement-main">
-                  <div>
-                    <span>{movement.source.replaceAll('_', ' ')}</span>
-                    <h4>{movement.title}</h4>
-                  </div>
-                  <strong>{formatTime(movement.updated_at)}</strong>
+              <li key={`${movement.source}-${movement.id}`} className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
+                <div className="flex items-baseline justify-between gap-4">
+                  <Eyebrow>{movement.source.replaceAll('_', ' ')}</Eyebrow>
+                  <span className="font-mono text-xs text-muted-foreground">{formatTime(movement.updated_at)}</span>
                 </div>
-                <div className="health-movement-route">
-                  <b>{movement.from}</b>
-                  <MoveRight size={14} />
-                  <b>{movement.to}</b>
+                <h4 className="text-sm font-medium text-pretty">{movement.title}</h4>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="font-mono">{movement.from}</Badge>
+                  <MoveRight className="size-3.5 text-muted-foreground" aria-hidden="true" />
+                  <Badge variant="secondary" className="font-mono">{movement.to}</Badge>
                 </div>
-                <p>{movement.reason}</p>
-              </article>
+                <p className="text-xs text-pretty text-muted-foreground">{movement.reason}</p>
+              </li>
             ))}
-          </div>
+          </ul>
         )}
-      </section>
+      </Panel>
 
-      <section className="health-section">
-        <div className="health-section-head">
-          <Info size={17} />
-          <h3>Instrumentation boundary</h3>
-        </div>
-        <div className="health-boundary-grid">
+      <Panel title="Instrumentation boundary" icon={<Info />}>
+        <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
           <BoundaryList title="Persisted today" items={asStringArray(instrumentation.persisted)} />
           <BoundaryList title="Not persisted yet" items={asStringArray(instrumentation.not_persisted_yet)} muted />
         </div>
-      </section>
-    </div>
+      </Panel>
+    </ViewPage>
   );
 }
 
-function KeyValueList({ title, values }: { title?: string; values?: JsonRecord }) {
+/** A record of unknown keys, rendered as label → value rows. */
+function RecordList({ title, values, empty }: { title?: string; values?: JsonRecord; empty?: string }) {
   const entries = Object.entries(values ?? {}).filter(([, value]) => value !== null && value !== undefined);
-  if (entries.length === 0) return null;
+  if (entries.length === 0) return empty ? <p className="text-xs text-muted-foreground">{empty}</p> : null;
   return (
-    <div className="health-kv">
-      {title && <h4>{title}</h4>}
-      {entries.map(([key, value]) => (
-        <div key={key}>
-          <span>{key.replaceAll('_', ' ')}</span>
-          <strong>{typeof value === 'object' ? JSON.stringify(value) : String(value)}</strong>
-        </div>
-      ))}
+    <div className="flex flex-col gap-1">
+      {title && <Eyebrow>{title}</Eyebrow>}
+      <KeyValueList>
+        {entries.map(([key, value]) => (
+          <KeyValue key={key} label={key.replaceAll('_', ' ')}>
+            {typeof value === 'number' ? value : typeof value === 'object' ? JSON.stringify(value) : String(value)}
+          </KeyValue>
+        ))}
+      </KeyValueList>
     </div>
   );
 }
 
 function BoundaryList({ title, items, muted = false }: { title: string; items: string[]; muted?: boolean }) {
   return (
-    <div className={`health-boundary-card${muted ? ' muted' : ''}`}>
-      <h4>{title}</h4>
-      <ul>
-        {items.map((item) => <li key={item}>{item}</li>)}
+    <div className="flex flex-col gap-2">
+      <Eyebrow>{title}</Eyebrow>
+      <ul className={`flex flex-col gap-1.5 text-xs ${muted ? 'text-muted-foreground' : ''}`}>
+        {items.map((item) => (
+          <li key={item} className="flex gap-2 text-pretty">
+            <span className={muted ? 'text-faint' : 'text-signal'} aria-hidden="true">
+              {muted ? '○' : '●'}
+            </span>
+            {item}
+          </li>
+        ))}
       </ul>
     </div>
   );

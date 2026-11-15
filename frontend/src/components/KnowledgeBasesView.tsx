@@ -7,7 +7,6 @@ import {
   FileText,
   FolderPlus,
   Info,
-  LoaderCircle,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -19,6 +18,30 @@ import {
   type KnowledgeBaseListResponse,
 } from '../api/client';
 import LoadingState from './LoadingState';
+import { Num } from './view';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { Field, FieldDescription, FieldError, FieldGroup, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+import { Separator } from '@/components/ui/separator';
+import { Spinner } from '@/components/ui/spinner';
+import { Textarea } from '@/components/ui/textarea';
+
+/** A delete that is waiting for the user to confirm it in the dialog. */
+type PendingDelete = { kind: 'base'; base: KnowledgeBase } | { kind: 'document'; document: KnowledgeBaseDocument };
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_LABEL = '10 MB';
@@ -27,6 +50,7 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.docx', '.pdf'];
 type LoadState = 'loading' | 'ready' | 'error';
 
 export default function KnowledgeBasesView() {
+  const [confirming, setConfirming] = useState<PendingDelete | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [documents, setDocuments] = useState<KnowledgeBaseDocument[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -120,10 +144,6 @@ export default function KnowledgeBasesView() {
   }
 
   async function deleteKnowledgeBase(knowledgeBase: KnowledgeBase) {
-    const confirmed = window.confirm(
-      `Delete “${knowledgeBase.name}” and its documents? This removes it from retrieval.`,
-    );
-    if (!confirmed) return;
     setDeletingBaseId(knowledgeBase.id);
     setError(null);
     setNotice(null);
@@ -176,8 +196,6 @@ export default function KnowledgeBasesView() {
   }
 
   async function deleteDocument(document: KnowledgeBaseDocument) {
-    const confirmed = window.confirm(`Delete “${document.filename}” from this knowledge base?`);
-    if (!confirmed) return;
     setError(null);
     setNotice(null);
     try {
@@ -190,186 +208,263 @@ export default function KnowledgeBasesView() {
   }
 
   return (
-    <div className="knowledge-bases-view">
-      <header className="knowledge-bases-header">
-        <div>
-          <div className="knowledge-bases-kicker"><BookOpen size={14} /> Source shelf</div>
-          <h2>Knowledge Bases</h2>
-          <p>Keep source documents close to the answers they support. Documents stay separate from MIRA’s personal memory.</p>
+    <div className="tw mx-auto flex w-full max-w-6xl flex-col gap-6">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-2xl font-medium tracking-tight">Knowledge Bases</h2>
+          <p className="max-w-xl text-sm text-muted-foreground">
+            Keep source documents close to the answers they support. Documents stay separate from MIRA’s personal memory.
+          </p>
         </div>
-        <div className="knowledge-bases-limit-note">TXT · MD · DOCX · text-based PDF<br />Up to {MAX_FILE_LABEL} per file · PDF up to 100 pages</div>
+        <p className="font-mono text-xs leading-relaxed text-faint sm:text-right">
+          TXT · MD · DOCX · text-based PDF
+          <br />
+          Up to {MAX_FILE_LABEL} per file · PDF up to 100 pages
+        </p>
       </header>
 
       {(error || notice) && (
-        <div className={`knowledge-bases-notice${notice && !error ? ' success' : ''}`} role="status" aria-live="polite">
-          {error ? <AlertCircle size={15} /> : <Info size={15} />}
-          <span>{error ?? notice}</span>
-        </div>
+        <Alert variant={error ? 'destructive' : 'default'} role="status" aria-live="polite">
+          {error ? <AlertCircle /> : <Info />}
+          <AlertDescription>{error ?? notice}</AlertDescription>
+        </Alert>
       )}
 
-      <div className="knowledge-bases-layout">
-        <aside className="knowledge-bases-panel" aria-label="Knowledge base list">
-          <div className="knowledge-bases-panel-head">
-            <h3>Your libraries</h3>
-            <span>{knowledgeBases.length}</span>
-          </div>
-          {basesState === 'loading' ? (
-            <div className="knowledge-bases-loading"><LoadingState label="Loading libraries" /></div>
-          ) : knowledgeBases.length === 0 ? (
-            <div className="knowledge-bases-empty">
-              <FolderPlus size={22} />
-              <strong>No knowledge bases yet</strong>
-              <p>Create one below, then add a source document.</p>
-            </div>
-          ) : (
-            <div className="knowledge-bases-list">
-              {knowledgeBases.map((knowledgeBase) => (
-                <button
-                  key={knowledgeBase.id}
-                  type="button"
-                  className={`knowledge-base-card${selectedId === knowledgeBase.id ? ' active' : ''}`}
-                  onClick={() => {
-                    setSelectedId(knowledgeBase.id);
-                    setError(null);
-                    setNotice(null);
-                  }}
-                  disabled={deletingBaseId === knowledgeBase.id}
-                >
-                  <span className="knowledge-base-icon"><BookOpen size={15} /></span>
-                  <span className="knowledge-base-card-copy">
-                    <strong>{knowledgeBase.name}</strong>
-                    <small>{documentCount(knowledgeBase)} document{documentCount(knowledgeBase) === 1 ? '' : 's'}</small>
-                  </span>
-                  <ChevronRight className="knowledge-base-chevron" size={15} />
-                </button>
-              ))}
-            </div>
-          )}
-          <form className="knowledge-base-create" onSubmit={createKnowledgeBase}>
-            <label htmlFor="knowledge-base-name">New knowledge base</label>
-            <input
-              id="knowledge-base-name"
-              value={newName}
-              onChange={(event) => setNewName(event.target.value)}
-              placeholder="e.g. Product notes"
-              maxLength={120}
-              required
-            />
-            <textarea
-              value={newDescription}
-              onChange={(event) => setNewDescription(event.target.value)}
-              placeholder="Optional description"
-              maxLength={300}
-              rows={2}
-            />
-            <button className="knowledge-base-action primary" type="submit" disabled={creating || !newName.trim()}>
-              {creating ? <LoaderCircle size={14} className="spin" /> : <FolderPlus size={14} />}
-              {creating ? 'Creating…' : 'Create knowledge base'}
-            </button>
-          </form>
-        </aside>
+      <div className="grid items-start gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <Card aria-label="Knowledge base list">
+          <CardHeader>
+            <CardTitle>Your libraries</CardTitle>
+            <CardAction>
+              <Badge variant="outline" className="font-mono"><Num value={knowledgeBases.length} /></Badge>
+            </CardAction>
+          </CardHeader>
+          <CardContent>
+            {basesState === 'loading' ? (
+              <LoadingState label="Loading libraries" />
+            ) : knowledgeBases.length === 0 ? (
+              <Empty className="border">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <FolderPlus />
+                  </EmptyMedia>
+                  <EmptyTitle>No knowledge bases yet</EmptyTitle>
+                  <EmptyDescription>Create one below, then add a source document.</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {knowledgeBases.map((knowledgeBase) => (
+                  <Button
+                    key={knowledgeBase.id}
+                    variant={selectedId === knowledgeBase.id ? 'secondary' : 'ghost'}
+                    className="h-auto justify-start gap-2.5 py-2 text-left"
+                    aria-pressed={selectedId === knowledgeBase.id}
+                    onClick={() => {
+                      setSelectedId(knowledgeBase.id);
+                      setError(null);
+                      setNotice(null);
+                    }}
+                    disabled={deletingBaseId === knowledgeBase.id}
+                  >
+                    <BookOpen data-icon="inline-start" />
+                    <span className="flex min-w-0 flex-1 flex-col">
+                      <span className="truncate">{knowledgeBase.name}</span>
+                      <span className="font-mono font-normal text-muted-foreground">
+                        {documentCount(knowledgeBase)} document{documentCount(knowledgeBase) === 1 ? '' : 's'}
+                      </span>
+                    </span>
+                    <ChevronRight data-icon="inline-end" />
+                  </Button>
+                ))}
+              </div>
+            )}
+          </CardContent>
+          <CardFooter>
+            <form className="w-full" onSubmit={createKnowledgeBase}>
+              <FieldGroup>
+                <Field>
+                  <FieldLabel htmlFor="knowledge-base-name">New knowledge base</FieldLabel>
+                  <Input
+                    id="knowledge-base-name"
+                    value={newName}
+                    onChange={(event) => setNewName(event.target.value)}
+                    placeholder="e.g. Product notes"
+                    maxLength={120}
+                    required
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="knowledge-base-description" className="sr-only">
+                    Description
+                  </FieldLabel>
+                  <Textarea
+                    id="knowledge-base-description"
+                    value={newDescription}
+                    onChange={(event) => setNewDescription(event.target.value)}
+                    placeholder="Optional description"
+                    maxLength={300}
+                    rows={2}
+                  />
+                </Field>
+                <Button type="submit" disabled={creating || !newName.trim()}>
+                  {creating ? <Spinner data-icon="inline-start" /> : <FolderPlus data-icon="inline-start" />}
+                  {creating ? 'Creating…' : 'Create knowledge base'}
+                </Button>
+              </FieldGroup>
+            </form>
+          </CardFooter>
+        </Card>
 
-        <section className="knowledge-bases-panel knowledge-bases-main" aria-labelledby="knowledge-base-detail-title">
+        <Card aria-labelledby={selectedBase ? 'knowledge-base-detail-title' : undefined}>
           {!selectedBase ? (
-            <div className="knowledge-bases-empty">
-              <BookOpen size={26} />
-              <strong>Select a knowledge base</strong>
-              <p>Create a library or choose one from the list to manage its source documents.</p>
-            </div>
+            <CardContent>
+              <Empty>
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <BookOpen />
+                  </EmptyMedia>
+                  <EmptyTitle>Select a knowledge base</EmptyTitle>
+                  <EmptyDescription>
+                    Create a library or choose one from the list to manage its source documents.
+                  </EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            </CardContent>
           ) : (
             <>
-              <div className="knowledge-bases-main-head">
-                <div>
-                  <h3 id="knowledge-base-detail-title">{selectedBase.name}</h3>
-                  <p>{selectedBase.description || 'Source documents for grounded answers.'}</p>
-                </div>
-                <div className="knowledge-bases-main-actions">
-                  <button
-                    className="knowledge-base-action danger"
-                    type="button"
-                    onClick={() => void deleteKnowledgeBase(selectedBase)}
+              <CardHeader>
+                <CardTitle id="knowledge-base-detail-title">{selectedBase.name}</CardTitle>
+                <CardDescription>{selectedBase.description || 'Source documents for grounded answers.'}</CardDescription>
+                <CardAction>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={() => setConfirming({ kind: 'base', base: selectedBase })}
                     disabled={deletingBaseId === selectedBase.id}
                   >
-                    {deletingBaseId === selectedBase.id ? <LoaderCircle size={14} className="spin" /> : <Trash2 size={14} />}
+                    {deletingBaseId === selectedBase.id ? <Spinner data-icon="inline-start" /> : <Trash2 data-icon="inline-start" />}
                     Delete
-                  </button>
-                </div>
-              </div>
+                  </Button>
+                </CardAction>
+              </CardHeader>
 
-              <div className="knowledge-bases-upload">
-                <div className="knowledge-bases-upload-copy">
-                  <strong>Add a source document</strong>
-                  <p>Only text can be indexed. Scanned or image-only PDFs are rejected.</p>
-                  <label className="knowledge-upload-label" htmlFor="knowledge-document-file">Choose a file</label>
-                  <input
-                    ref={fileInputRef}
-                    id="knowledge-document-file"
-                    className="knowledge-upload-file"
-                    type="file"
-                    accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                    onChange={selectFile}
-                    disabled={uploading}
-                  />
-                </div>
-                <button className="knowledge-base-action primary" type="button" onClick={() => void uploadDocument()} disabled={!selectedFile || uploading}>
-                  {uploading ? <LoaderCircle size={14} className="spin" /> : <Upload size={14} />}
-                  {uploading ? 'Uploading…' : 'Upload document'}
-                </button>
-              </div>
+              <CardContent className="flex flex-col gap-4">
+                <FieldGroup>
+                  <Field data-invalid={fileError ? true : undefined}>
+                    <FieldLabel htmlFor="knowledge-document-file">Add a source document</FieldLabel>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Input
+                        ref={fileInputRef}
+                        id="knowledge-document-file"
+                        className="min-w-0 flex-1"
+                        type="file"
+                        accept=".txt,.md,.docx,.pdf,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                        onChange={selectFile}
+                        disabled={uploading}
+                        aria-invalid={fileError ? true : undefined}
+                      />
+                      <Button onClick={() => void uploadDocument()} disabled={!selectedFile || uploading}>
+                        {uploading ? <Spinner data-icon="inline-start" /> : <Upload data-icon="inline-start" />}
+                        {uploading ? 'Uploading…' : 'Upload document'}
+                      </Button>
+                    </div>
+                    {fileError ? (
+                      <FieldError>{fileError}</FieldError>
+                    ) : (
+                      <FieldDescription>Only text can be indexed. Scanned or image-only PDFs are rejected.</FieldDescription>
+                    )}
+                  </Field>
+                </FieldGroup>
 
-              {fileError && (
-                <div className="knowledge-bases-notice" role="alert">
-                  <AlertCircle size={15} />
-                  <span>{fileError}</span>
-                </div>
-              )}
+                <Separator />
 
-              <div className="knowledge-documents">
-                <div className="knowledge-documents-head">
-                  <h4>Documents</h4>
-                  <span>{documents.length} total</span>
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="text-sm font-medium">Documents</h4>
+                  <span className="font-mono text-xs text-muted-foreground"><Num value={documents.length} /> total</span>
                 </div>
+
                 {documentsState === 'loading' ? (
-                  <div className="knowledge-bases-loading"><LoadingState label="Loading documents" /></div>
+                  <LoadingState label="Loading documents" />
                 ) : documentsState === 'error' ? null : documents.length === 0 ? (
-                  <div className="knowledge-bases-empty">
-                    <FileText size={22} />
-                    <strong>This library is empty</strong>
-                    <p>Upload a text document to make it available as evidence.</p>
-                  </div>
+                  <Empty className="border">
+                    <EmptyHeader>
+                      <EmptyMedia variant="icon">
+                        <FileText />
+                      </EmptyMedia>
+                      <EmptyTitle>This library is empty</EmptyTitle>
+                      <EmptyDescription>Upload a text document to make it available as evidence.</EmptyDescription>
+                    </EmptyHeader>
+                  </Empty>
                 ) : (
-                  <div className="knowledge-document-list">
+                  <ul className="flex flex-col">
                     {documents.map((document) => (
-                      <article className="knowledge-document-row" key={document.id}>
-                        <span className="knowledge-document-icon"><FileText size={15} /></span>
-                        <div className="knowledge-document-copy">
-                          <strong title={document.filename}>{document.filename}</strong>
-                          <small>{documentMeta(document)}</small>
-                          {document.error && <small className="knowledge-document-error">{document.error}</small>}
+                      <li key={document.id} className="flex items-center gap-3 border-t py-2.5 first:border-t-0">
+                        <FileText className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+                        <div className="flex min-w-0 flex-1 flex-col">
+                          <span className="truncate text-sm font-medium" title={document.filename}>
+                            {document.filename}
+                          </span>
+                          <span className="font-mono text-xs text-muted-foreground">{documentMeta(document)}</span>
+                          {document.error && <span className="text-xs text-destructive">{document.error}</span>}
                         </div>
-                        <div className="knowledge-document-actions">
-                          <span className={`knowledge-document-status ${statusClass(document.status)}`}>{formatStatus(document.status)}</span>
-                          <button
-                            className="knowledge-document-delete"
-                            type="button"
-                            onClick={() => void deleteDocument(document)}
-                            title={`Delete ${document.filename}`}
-                            aria-label={`Delete ${document.filename}`}
-                          >
-                            <Trash2 size={14} />
-                          </button>
-                        </div>
-                      </article>
+                        <Badge variant={statusVariant(document.status)} className="font-mono">
+                          {formatStatus(document.status)}
+                        </Badge>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          onClick={() => setConfirming({ kind: 'document', document })}
+                          title={`Delete ${document.filename}`}
+                          aria-label={`Delete ${document.filename}`}
+                        >
+                          <Trash2 />
+                        </Button>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 )}
-              </div>
+              </CardContent>
             </>
           )}
-        </section>
+        </Card>
       </div>
+
+      <AlertDialog open={confirming !== null} onOpenChange={(open) => !open && setConfirming(null)}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Delete “{confirming?.kind === 'base' ? confirming.base.name : confirming?.document.filename}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirming?.kind === 'base'
+                ? 'Its documents are deleted with it, and it is removed from retrieval.'
+                : 'The document is removed from this knowledge base.'}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const target = confirming;
+                setConfirming(null);
+                if (target?.kind === 'base') void deleteKnowledgeBase(target.base);
+                if (target?.kind === 'document') void deleteDocument(target.document);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
+}
+
+function statusVariant(status: string): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'failed') return 'destructive';
+  if (status === 'ready') return 'outline';
+  return 'secondary';
 }
 
 function normalizeKnowledgeBases(response: KnowledgeBaseListResponse): KnowledgeBase[] {
@@ -450,6 +545,3 @@ function formatStatus(status: string): string {
   return status.replaceAll('_', ' ');
 }
 
-function statusClass(status: string): string {
-  return ['ready', 'processing', 'uploaded', 'failed'].includes(status) ? status : '';
-}

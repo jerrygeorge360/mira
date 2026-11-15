@@ -1,5 +1,7 @@
+import { Unplug } from 'lucide-react';
 import type { LiveStatus } from '../api/useLiveData';
 import LoadingState from './LoadingState';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 
 /**
  * Honest placeholder for a data view that has nothing real to show: a pixel-grid
@@ -16,19 +18,33 @@ export function ViewStatus({
 }) {
   if (status === 'loading') {
     return (
-      <div className="view-empty">
+      <Empty className="border">
         <LoadingState label="Loading" />
-      </div>
+      </Empty>
     );
   }
-  const message =
-    status === 'offline'
-        ? 'Can’t reach the backend — start the API (make api).'
-        : emptyLabel;
+  const offline = status === 'offline';
   return (
-    <div className="view-empty">
-      <div className="view-empty-msg">{message}</div>
-      {hint && <div className="view-empty-hint">{hint}</div>}
-    </div>
+    <Empty className="border">
+      <EmptyHeader>
+        {offline && (
+          <EmptyMedia variant="icon">
+            <Unplug />
+          </EmptyMedia>
+        )}
+        <EmptyTitle>{offline ? 'Can’t reach the backend' : emptyLabel}</EmptyTitle>
+        {(offline || hint) && (
+          <EmptyDescription>
+            {offline ? (
+              <>
+                Start the API with <code className="font-mono">make api</code>, then reload.
+              </>
+            ) : (
+              hint
+            )}
+          </EmptyDescription>
+        )}
+      </EmptyHeader>
+    </Empty>
   );
 }

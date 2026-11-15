@@ -1,19 +1,29 @@
-import { useEffect, useId, useState } from 'react';
-import { Check, ChevronRight } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, LoaderCircle } from 'lucide-react';
+import {
+  Trace,
+  TraceCollapsible,
+  TraceCollapsibleContent,
+  TraceCollapsibleTrigger,
+  TraceDescription,
+  TraceIcon,
+  TraceLine,
+  TraceTitle,
+} from '@/components/ui/trace';
 
 /* ─────────────────────────────────────────────────────────
  * THINKING TRACE — the agent's memory run, as a Reasoning line
  *
- * Follows the shadcn/ui Reasoning pattern (a Trace line with a
- * collapsible): the line reads "Thinking" and is open while the
+ * The shadcn/ui Reasoning pattern, built from its Trace
+ * component: the line reads "Thinking" and is open while the
  * agent works, then reads "Thought for 5s" and closes once the
  * answer starts. Opening or closing it by hand wins over the
  * auto behaviour.
  *
  * MIRA's model sends no reasoning text, so what sits inside is
  * the real `stage` events of the turn (routing, retrieval,
- * verification, …): finished steps get a check and their
- * duration, the current one a spinner.
+ * verification, …), one TraceLine each: finished steps get a
+ * check and their duration, the current one a spinner.
  * ───────────────────────────────────────────────────────── */
 
 export type TraceStep = { stage: string; message: string; at: number };
@@ -53,58 +63,39 @@ export default function ThinkingTrace({
   thoughtMs?: number;
 }) {
   const [manual, setManual] = useState<boolean>();
-  const open = manual ?? working;
   const now = useNow(working);
-  const contentId = useId();
 
   if (!steps.length) return null;
 
   const title = working ? 'Thinking' : thoughtMs !== undefined ? `Thought for ${formatSeconds(thoughtMs)}` : 'Thought';
 
   return (
-    <div className="reasoning">
-      <button
-        type="button"
-        className="reasoning-trigger"
-        aria-expanded={open}
-        aria-controls={contentId}
-        onClick={() => setManual(!open)}
-      >
-        <span className="reasoning-line" data-status={working ? 'running' : undefined}>
-          <span role="status" className="reasoning-title">
-            {title}
-          </span>
-          {working && startedAt !== undefined && (
-            <span className="reasoning-description">{formatSeconds(now - startedAt)}</span>
-          )}
-        </span>
-        <ChevronRight size={14} className="reasoning-chevron" aria-hidden="true" />
-      </button>
-
-      <div id={contentId} className={`reasoning-content${open ? ' open' : ''}`} inert={!open}>
-        <div className="reasoning-content-clip">
-          <ol className="reasoning-steps">
+    // the chat bubble is pre-wrap for user text; the trace lays itself out
+    <Trace className="mb-1.5 whitespace-normal">
+      <TraceCollapsible open={manual ?? working} onOpenChange={setManual}>
+        <TraceCollapsibleTrigger>
+          <TraceLine status={working ? 'running' : undefined}>
+            <TraceTitle role="status">{title}</TraceTitle>
+            {working && startedAt !== undefined && <TraceDescription>{formatSeconds(now - startedAt)}</TraceDescription>}
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+        <TraceCollapsibleContent>
+          <Trace className="gap-1.5">
             {steps.map((step, i) => {
               const inProgress = working && i === steps.length - 1;
               const next = steps[i + 1];
               const duration = next ? next.at - step.at : null;
               return (
-                <li key={`${step.stage}-${i}`} className="reasoning-step">
-                  {inProgress ? (
-                    <span className="reasoning-spinner" aria-label="In progress" />
-                  ) : (
-                    <Check size={13} strokeWidth={2.5} className="reasoning-check" aria-hidden="true" />
-                  )}
-                  <span className="reasoning-step-label">{stepLabel(step.message)}</span>
-                  {duration !== null && duration >= 50 && (
-                    <span className="reasoning-description">{formatSeconds(duration)}</span>
-                  )}
-                </li>
+                <TraceLine key={`${step.stage}-${i}`} status={inProgress ? 'running' : undefined}>
+                  <TraceIcon>{inProgress ? <LoaderCircle className="animate-spin" /> : <Check />}</TraceIcon>
+                  <TraceTitle>{stepLabel(step.message)}</TraceTitle>
+                  {duration !== null && duration >= 50 && <TraceDescription>{formatSeconds(duration)}</TraceDescription>}
+                </TraceLine>
               );
             })}
-          </ol>
-        </div>
-      </div>
-    </div>
+          </Trace>
+        </TraceCollapsibleContent>
+      </TraceCollapsible>
+    </Trace>
   );
 }

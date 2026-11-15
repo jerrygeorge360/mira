@@ -26,6 +26,20 @@ import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import BrandMark from './BrandMark';
 import { useGlideHighlight } from './useGlideHighlight';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Field, FieldLabel } from '@/components/ui/field';
+import { Input } from '@/components/ui/input';
+
+const WIPE_PHRASE = 'DELETE MEMORY';
 
 const PRIMARY_VIEWS = [
   { label: 'Chat', icon: <MessageSquare size={16} /> },
@@ -100,12 +114,12 @@ export default function Rail() {
     setSessionId(id);
   }
 
-  async function deleteThread(id: string, title: string | null) {
-    const label = title || 'this chat';
-    const confirmed = window.confirm(
-      `Delete ${label}? This removes the conversation and deactivates memory derived only from it.`,
-    );
-    if (!confirmed) return;
+  // destructive actions ask first, in a dialog rather than a browser prompt
+  const [pendingDelete, setPendingDelete] = useState<{ id: string; title: string | null } | null>(null);
+  const [wipeOpen, setWipeOpen] = useState(false);
+  const [wipeText, setWipeText] = useState('');
+
+  async function deleteThread(id: string) {
     await api.deleteSession(id);
     if (activeThread === id || sessionId === id) {
       startNewChat();
@@ -114,14 +128,9 @@ export default function Rail() {
     refreshMemory();
   }
 
-  async function handleDeleteWorkspaceData() {
-    const firstConfirmed = window.confirm(
-      'Delete all memory in this workspace? This removes chats, memory records, traces, graph data, and vector pointers. Your account stays active.',
-    );
-    if (!firstConfirmed) return;
-    const typed = window.prompt('Type DELETE MEMORY to confirm workspace memory deletion.');
-    if (typed !== 'DELETE MEMORY') return;
-    await deleteWorkspaceData();
+  function handleDeleteWorkspaceData() {
+    setWipeText('');
+    setWipeOpen(true);
   }
 
   return (
@@ -140,8 +149,7 @@ export default function Rail() {
         ) : (
           <>
             <button className="rail-brand" onClick={() => setPage('landing')} title="Back to landing">
-              <BrandMark className="brand-mark" size={21} />
-              <span>MIRA</span>
+              <BrandMark className="brand-mark" lockup size={20} title="MIRA" />
             </button>
             <button
               className="rail-icon-btn"
@@ -263,7 +271,7 @@ export default function Rail() {
                 </button>
                 <button
                   className="rail-history-delete"
-                  onClick={() => deleteThread(t.session_id, t.title)}
+                  onClick={() => setPendingDelete({ id: t.session_id, title: t.title })}
                   title="Delete chat"
                   aria-label={`Delete ${t.title || 'chat'}`}
                 >
@@ -323,6 +331,65 @@ export default function Rail() {
           </button>
         )}
       </div>
+
+      <AlertDialog open={pendingDelete !== null} onOpenChange={(open) => !open && setPendingDelete(null)}>
+        <AlertDialogContent size="sm">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {pendingDelete?.title || 'this chat'}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes the conversation and deactivates memory derived only from it.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={() => {
+                const target = pendingDelete;
+                setPendingDelete(null);
+                if (target) void deleteThread(target.id);
+              }}
+            >
+              Delete chat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={wipeOpen} onOpenChange={setWipeOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all memory in this workspace?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This removes chats, memory records, traces, graph data, and vector pointers. Your account stays
+              active. It cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Field>
+            <FieldLabel htmlFor="wipe-confirm">Type {WIPE_PHRASE} to confirm</FieldLabel>
+            <Input
+              id="wipe-confirm"
+              value={wipeText}
+              onChange={(e) => setWipeText(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </Field>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={wipeText !== WIPE_PHRASE}
+              onClick={() => {
+                setWipeOpen(false);
+                void deleteWorkspaceData();
+              }}
+            >
+              Delete all memory
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </nav>
   );
 }

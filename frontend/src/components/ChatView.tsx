@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { ChevronDown, FileUp, GitBranch, Network, Paperclip, Plus, Route, Send, Sparkles, Workflow } from 'lucide-react';
+import { ArrowUp, ChevronDown, FileUp, GitBranch, Network, Paperclip, Plus, Route, Workflow } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import LoadingState from './LoadingState';
@@ -7,6 +7,19 @@ import AssistantMessage, { type MessageMeta } from './AssistantMessage';
 import type { TraceStep } from './ThinkingTrace';
 import ComposerMenu, { type MenuRow } from './ComposerMenu';
 import { api } from '../api/client';
+import { Bubble, BubbleContent } from '@/components/ui/bubble';
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupTextarea } from '@/components/ui/input-group';
+import { Message, MessageAvatar, MessageContent } from '@/components/ui/message';
+import {
+  MessageScroller,
+  MessageScrollerButton,
+  MessageScrollerContent,
+  MessageScrollerItem,
+  MessageScrollerProvider,
+  MessageScrollerViewport,
+} from '@/components/ui/message-scroller';
+import { Switch } from '@/components/ui/switch';
 
 type Message = {
   role: 'user' | 'assistant';
@@ -60,9 +73,6 @@ export default function ChatView() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [status, setStatus] = useState('New chat');
-  const listRef = useRef<HTMLDivElement>(null);
-  // Follow new content only while the reader is at the bottom; scrolling up to read stops it.
-  const pinnedRef = useRef(true);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
   // The session whose messages are currently loaded, so we don't reload after sending.
@@ -82,7 +92,6 @@ export default function ChatView() {
       .sessionMessages(activeThread)
       .then((res) => {
         if (!active) return;
-        pinnedRef.current = true;
         setMessages(res.messages.map((m) => ({ role: m.role as Message['role'], content: m.content })));
         setStatus(`${res.messages.length} message${res.messages.length === 1 ? '' : 's'}`);
         loadedRef.current = activeThread;
@@ -99,49 +108,18 @@ export default function ChatView() {
   }, [activeThread]);
 
   useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    const onScroll = () => {
-      pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    };
-    // the streamed answer keeps growing after each delta, so follow DOM changes, not state
-    const follow = new MutationObserver(() => {
-      if (pinnedRef.current) el.scrollTop = el.scrollHeight;
-    });
-    el.addEventListener('scroll', onScroll, { passive: true });
-    follow.observe(el, { childList: true, subtree: true, characterData: true });
-    return () => {
-      el.removeEventListener('scroll', onScroll);
-      follow.disconnect();
-    };
-  }, []);
-
-  useEffect(() => {
-    adjustComposerHeight();
-  }, [input]);
-
-  useEffect(() => {
     return () => {
       streamAbortRef.current?.abort();
     };
   }, []);
-
-  function adjustComposerHeight() {
-    const composer = composerRef.current;
-    if (!composer) return;
-    composer.style.height = 'auto';
-    composer.style.height = `${Math.min(composer.scrollHeight, 170)}px`;
-  }
 
   async function send(retry?: { text: string; base: Message[] }) {
     const text = retry ? retry.text : input.trim();
     if (!text || loading) return;
     if (!retry) {
       setInput('');
-      if (composerRef.current) composerRef.current.style.height = 'auto';
     }
     const next: Message[] = [...(retry ? retry.base : messages), { role: 'user', content: text }];
-    pinnedRef.current = true;
     setMessages(next);
     setLoading(true);
     setStatus('Thinking');
@@ -350,75 +328,102 @@ export default function ChatView() {
     setView('Retrieval Trace');
   }
 
+  const waiting = loading && messages[messages.length - 1]?.role !== 'assistant';
+
   return (
     <div className="chat-view">
-      {/* messages */}
-      <div className="chat-messages" ref={listRef}>
-        {messages.map((m, i) => (
-          <div key={i} className={`chat-turn ${m.role}`}>
-            {m.role === 'assistant' && <div className="bot-avatar"><BrandMark size={17} /></div>}
-            <div className="chat-bubble">
-              {m.role === 'assistant' ? (
-                <AssistantMessage
-                  content={m.content}
-                  animate={Boolean(m.live)}
-                  streaming={loading && i === messages.length - 1}
-                  meta={m.meta}
-                  steps={m.steps}
-                  startedAt={m.startedAt}
-                  thoughtMs={m.thoughtMs}
-                  onRetry={i === messages.length - 1 && !loading ? () => retry(i) : undefined}
-                  onOpenTrace={openTrace}
-                />
-              ) : (
-                m.content
-              )}
-            </div>
-          </div>
-        ))}
-
-        {messages.length === 0 && !loading && (
-          <div className="chat-empty">
-            <div className="chat-empty-mark"><BrandMark size={30} /></div>
-            <div className="chat-empty-title">What should MIRA remember?</div>
-            <div className="chat-empty-sub">
+      {messages.length === 0 && !loading ? (
+        <Empty className="chat-empty">
+          <EmptyHeader className="items-start">
+            <EmptyMedia>
+              <BrandMark size={28} />
+            </EmptyMedia>
+            <EmptyTitle className="text-2xl tracking-tight">What should MIRA remember?</EmptyTitle>
+            <EmptyDescription className="text-sm">
               {useRealAgent
                 ? 'Ask naturally. MIRA keeps the conversation, memory, and retrieval trace connected.'
                 : 'Demo mode is on. Switch to the live agent when you want real memory writes.'}
-            </div>
-          </div>
-        )}
+            </EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        // the scroller follows the stream only while the reader is at the live edge
+        <MessageScrollerProvider autoScroll>
+          <MessageScroller className="chat-scroller">
+            <MessageScrollerViewport>
+              <MessageScrollerContent className="chat-transcript" aria-busy={loading}>
+                {messages.map((m, i) => (
+                  <MessageScrollerItem key={i} messageId={`turn-${i}`} scrollAnchor={m.role === 'user'}>
+                    {m.role === 'user' ? (
+                      <Message align="end">
+                        <MessageContent>
+                          <Bubble align="end" variant="muted">
+                            <BubbleContent className="whitespace-pre-wrap">{m.content}</BubbleContent>
+                          </Bubble>
+                        </MessageContent>
+                      </Message>
+                    ) : (
+                      <Message>
+                        <MessageAvatar className="self-start bg-transparent pt-1">
+                          <BrandMark size={12} />
+                        </MessageAvatar>
+                        <MessageContent>
+                          <Bubble variant="ghost">
+                            <BubbleContent>
+                              <AssistantMessage
+                                content={m.content}
+                                animate={Boolean(m.live)}
+                                streaming={loading && i === messages.length - 1}
+                                meta={m.meta}
+                                steps={m.steps}
+                                startedAt={m.startedAt}
+                                thoughtMs={m.thoughtMs}
+                                onRetry={i === messages.length - 1 && !loading ? () => retry(i) : undefined}
+                                onOpenTrace={openTrace}
+                              />
+                            </BubbleContent>
+                          </Bubble>
+                        </MessageContent>
+                      </Message>
+                    )}
+                  </MessageScrollerItem>
+                ))}
 
-        {loading && messages[messages.length - 1]?.role !== 'assistant' && (
-          <div className="chat-turn">
-            <div className="bot-avatar"><BrandMark size={17} /></div>
-            <div className="chat-bubble">
-              <LoadingState label={status} />
-            </div>
-          </div>
-        )}
-      </div>
+                {waiting && (
+                  <MessageScrollerItem messageId="pending">
+                    <Message>
+                      <MessageAvatar className="self-start bg-transparent pt-1">
+                        <BrandMark size={12} />
+                      </MessageAvatar>
+                      <MessageContent>
+                        <Bubble variant="ghost">
+                          <BubbleContent>
+                            <LoadingState label={status} />
+                          </BubbleContent>
+                        </Bubble>
+                      </MessageContent>
+                    </Message>
+                  </MessageScrollerItem>
+                )}
+              </MessageScrollerContent>
+            </MessageScrollerViewport>
+            <MessageScrollerButton />
+          </MessageScroller>
+        </MessageScrollerProvider>
+      )}
 
-      {/* composer */}
-      <div className="chat-composer-shell">
-        <div className="chat-runtime-strip">
-          <label className="agent-toggle">
-            <div className="toggle-switch">
-              <input
-                type="checkbox"
-                checked={useRealAgent}
-                onChange={e => setUseRealAgent(e.target.checked)}
-              />
-              <span className="toggle-slider" />
-            </div>
+      <div className="chat-dock">
+        <div className="chat-dock-strip">
+          <label className="chat-dock-toggle">
+            <Switch size="sm" checked={useRealAgent} onCheckedChange={setUseRealAgent} />
             {useRealAgent ? 'Live memory' : 'Demo mode'}
           </label>
-          <span className="chat-status">
-            <Sparkles size={13} />
+          <span className="chat-dock-status" role="status">
             {status}
           </span>
         </div>
-        <div className="chat-composer">
+
+        <InputGroup className="chat-input">
           {commandMenuOpen && (
             <ComposerMenu
               id="chat-commands"
@@ -432,18 +437,9 @@ export default function ChatView() {
               footer="↑↓ to move · Enter to run · Esc to close"
             />
           )}
-          <button
-            className="composer-attach"
-            type="button"
-            onClick={() => setView('Knowledge Bases')}
-            title="Add a document"
-            aria-label="Add a document"
-          >
-            <Paperclip size={17} />
-          </button>
-          <textarea
+          <InputGroupTextarea
             ref={composerRef}
-            className="composer-input"
+            className="chat-input-text"
             placeholder="Message MIRA"
             rows={1}
             value={input}
@@ -455,11 +451,11 @@ export default function ChatView() {
                 ? `chat-commands-${commandRows[menuActive].key}`
                 : undefined
             }
-            onChange={e => {
+            onChange={(e) => {
               setInput(e.target.value);
               setMenuDismissed(false);
             }}
-            onKeyDown={e => {
+            onKeyDown={(e) => {
               if (commandMenuOpen && commandRows.length) {
                 if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
                   e.preventDefault();
@@ -488,45 +484,61 @@ export default function ChatView() {
               }
             }}
           />
-          {useRealAgent && (
-            <div className="composer-routing">
-              {routingOpen && (
-                <ComposerMenu
-                  id="chat-routing"
-                  label="Memory routing"
-                  className="composer-menu-routing"
-                  clearOnLeave
-                  rows={routingRows}
-                  active={routingActive}
-                  onActiveChange={setRoutingActive}
-                  onPick={(row) => {
-                    chooseRouting(row.key as RoutingStrategy);
-                    composerRef.current?.focus();
+          <InputGroupAddon align="block-end">
+            <InputGroupButton
+              size="icon-sm"
+              onClick={() => setView('Knowledge Bases')}
+              title="Add a document"
+              aria-label="Add a document"
+            >
+              <Paperclip />
+            </InputGroupButton>
+            {useRealAgent && (
+              <div className="composer-routing ml-auto">
+                {routingOpen && (
+                  <ComposerMenu
+                    id="chat-routing"
+                    label="Memory routing"
+                    className="composer-menu-routing"
+                    clearOnLeave
+                    rows={routingRows}
+                    active={routingActive}
+                    onActiveChange={setRoutingActive}
+                    onPick={(row) => {
+                      chooseRouting(row.key as RoutingStrategy);
+                      composerRef.current?.focus();
+                    }}
+                  />
+                )}
+                <InputGroupButton
+                  size="sm"
+                  aria-haspopup="listbox"
+                  aria-expanded={routingOpen}
+                  aria-label={`Memory routing: ${ROUTING[routing].label}`}
+                  title="How MIRA decides which memory to search"
+                  onClick={() => {
+                    setRoutingOpen((o) => !o);
+                    setRoutingActive(null);
                   }}
-                />
-              )}
-              <button
-                type="button"
-                className="composer-routing-trigger"
-                aria-haspopup="listbox"
-                aria-expanded={routingOpen}
-                aria-label={`Memory routing: ${ROUTING[routing].label}`}
-                title="How MIRA decides which memory to search"
-                onClick={() => {
-                  setRoutingOpen((o) => !o);
-                  setRoutingActive(null);
-                }}
-              >
-                {ROUTING[routing].label}
-                <ChevronDown size={12} />
-              </button>
-            </div>
-          )}
-          <button className="composer-send" onClick={() => send()} disabled={loading || !input.trim()} aria-label="Send message">
-            <Send size={16} />
-          </button>
-        </div>
-        <div className="chat-disclaimer">MIRA can make mistakes. Verify important details.</div>
+                >
+                  {ROUTING[routing].label}
+                  <ChevronDown data-icon="inline-end" />
+                </InputGroupButton>
+              </div>
+            )}
+            <InputGroupButton
+              variant="default"
+              size="icon-sm"
+              className={useRealAgent ? undefined : 'ml-auto'}
+              onClick={() => send()}
+              disabled={loading || !input.trim()}
+              aria-label="Send message"
+            >
+              <ArrowUp />
+            </InputGroupButton>
+          </InputGroupAddon>
+        </InputGroup>
+        <p className="chat-dock-note">MIRA can make mistakes. Verify important details.</p>
       </div>
     </div>
   );

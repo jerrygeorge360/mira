@@ -3,6 +3,7 @@ import type { PointerEvent, ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
+import { Num } from './view';
 
 /* ─────────────────────────────────────────────────────────
  * HEALTH INSIGHTS — "Insights N ‹ ›" above Memory Health
@@ -74,8 +75,8 @@ function TierAllocationCard({ tiers }: { tiers: TierSummary[] }) {
         {active.label}
       </span>
       <span className="insight-hero">
-        {active.count.toLocaleString()}
-        <small>{pct(active.count, total)}% of {total.toLocaleString()} tracked</small>
+        <Num value={active.count} />
+        <small><Num value={pct(active.count, total)} suffix="%" /> of {total.toLocaleString()} tracked</small>
       </span>
       <div className="insight-segments" role="group" aria-label="Memory by tier">
         {tiers.map((tier) => (
@@ -112,7 +113,7 @@ function TierAllocationCard({ tiers }: { tiers: TierSummary[] }) {
         <span>{active.description || 'Persisted memory state.'}</span>
         {typeof active.capacity === 'number' && (
           <span className="insight-num">
-            {active.count.toLocaleString()} / {active.capacity.toLocaleString()} capacity
+            <Num value={active.count} /> / {active.capacity.toLocaleString()} capacity
             {typeof active.pressure === 'number' ? ` · ${Math.round(active.pressure * 100)}% pressure` : ''}
           </span>
         )}
