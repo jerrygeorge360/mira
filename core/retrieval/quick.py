@@ -20,8 +20,8 @@ from core.memory.lifecycle import (
     retrieval_lifecycle_eligible,
     retrieval_source_type,
 )
-from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
 from core.retrieval.documents import retrieve_document_chunks
+from core.retrieval.keyword import keyword_search_atomic_facts, keyword_search_observations
 from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]

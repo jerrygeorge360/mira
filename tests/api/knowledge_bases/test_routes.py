@@ -128,9 +128,7 @@ def test_upload_is_api_mediated_and_returns_processing_result(
         headers=Headers({"content-type": "text/markdown"}),
     )
 
-    response = asyncio.run(
-        knowledge_bases.upload_document(_request(), "kb-1", _auth(), upload)
-    )
+    response = asyncio.run(knowledge_bases.upload_document(_request(), "kb-1", _auth(), upload))
 
     assert response.status == "ready"
     assert received == {
@@ -177,4 +175,3 @@ def test_cross_workspace_service_error_is_returned_as_not_found(
 
     assert error.value.status_code == 404
     assert error.value.detail == "document not found"
-

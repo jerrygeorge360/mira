@@ -874,10 +874,10 @@ def get_knowledge_base(
     knowledge_base_id: str, *, workspace_id: str, include_deleted: bool = False
 ) -> RepositoryRecord | None:
     """Fetch a knowledge base only when it belongs to the requested workspace."""
-    status_clause = "" if include_deleted else " AND status = 'active'"
     rows = _fetch_all(
-        f"SELECT * FROM knowledge_bases WHERE id = ? AND workspace_id = ?{status_clause}",
-        (knowledge_base_id, workspace_id),
+        "SELECT * FROM knowledge_bases WHERE id = ? AND workspace_id = ? "
+        "AND (? = 1 OR status = 'active')",
+        (knowledge_base_id, workspace_id, int(include_deleted)),
     )
     return rows[0] if rows else None
 
@@ -886,20 +886,17 @@ def list_knowledge_bases(
     *, workspace_id: str, include_deleted: bool = False
 ) -> list[RepositoryRecord]:
     """List knowledge bases for one workspace, never across workspace boundaries."""
-    status_clause = "" if include_deleted else " AND status = 'active'"
     return _fetch_all(
-        f"""
+        """
         SELECT * FROM knowledge_bases
-        WHERE workspace_id = ?{status_clause}
+        WHERE workspace_id = ? AND (? = 1 OR status = 'active')
         ORDER BY updated_at DESC, id ASC
         """,
-        (workspace_id,),
+        (workspace_id, int(include_deleted)),
     )
 
 
-def create_document(
-    document: RepositoryRecord, *, workspace_id: str | None = None
-) -> str:
+def create_document(document: RepositoryRecord, *, workspace_id: str | None = None) -> str:
     """Insert a document row after validating its workspace and lifecycle status."""
     prepared = dict(document)
     effective_workspace = str(prepared.get("workspace_id") or workspace_id or "")
@@ -932,10 +929,10 @@ def get_document(
     document_id: str, *, workspace_id: str, include_deleted: bool = False
 ) -> RepositoryRecord | None:
     """Fetch one document with an explicit workspace boundary."""
-    status_clause = "" if include_deleted else " AND status != 'deleted'"
     rows = _fetch_all(
-        f"SELECT * FROM documents WHERE id = ? AND workspace_id = ?{status_clause}",
-        (document_id, workspace_id),
+        "SELECT * FROM documents WHERE id = ? AND workspace_id = ? "
+        "AND (? = 1 OR status != 'deleted')",
+        (document_id, workspace_id, int(include_deleted)),
     )
     return rows[0] if rows else None
 
@@ -947,19 +944,19 @@ def list_documents(
     include_deleted: bool = False,
 ) -> list[RepositoryRecord]:
     """List documents in one workspace-owned knowledge base."""
-    status_clause = "" if include_deleted else " AND documents.status != 'deleted'"
     return _fetch_all(
-        f"""
+        """
         SELECT documents.*
         FROM documents
         JOIN knowledge_bases
           ON knowledge_bases.id = documents.knowledge_base_id
          AND knowledge_bases.workspace_id = documents.workspace_id
         WHERE documents.knowledge_base_id = ?
-          AND documents.workspace_id = ?{status_clause}
+          AND documents.workspace_id = ?
+          AND (? = 1 OR documents.status != 'deleted')
         ORDER BY documents.created_at DESC, documents.id ASC
         """,
-        (knowledge_base_id, workspace_id),
+        (knowledge_base_id, workspace_id, int(include_deleted)),
     )
 
 
@@ -1016,9 +1013,7 @@ def create_document_chunk(chunk: RepositoryRecord, *, workspace_id: str | None =
     return _insert_with_generated_id("document_chunks", prepared)
 
 
-def get_document_chunk(
-    chunk_id: str, *, workspace_id: str
-) -> RepositoryRecord | None:
+def get_document_chunk(chunk_id: str, *, workspace_id: str) -> RepositoryRecord | None:
     """Fetch one chunk only within its owning workspace."""
     rows = _fetch_all(
         "SELECT * FROM document_chunks WHERE id = ? AND workspace_id = ?",
@@ -1027,9 +1022,7 @@ def get_document_chunk(
     return rows[0] if rows else None
 
 
-def list_document_chunks(
-    document_id: str, *, workspace_id: str
-) -> list[RepositoryRecord]:
+def list_document_chunks(document_id: str, *, workspace_id: str) -> list[RepositoryRecord]:
     """List chunks in stable source order for one workspace-owned document."""
     return _fetch_all(
         """
@@ -1180,8 +1173,11 @@ def list_observations(
     """List observations for a session in creation order, optionally newest first."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be a positive integer")
-    ordering = "DESC" if newest_first else "ASC"
-    query = f"SELECT * FROM observations WHERE session_id = ? ORDER BY created_at {ordering}"
+    query = (
+        "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at DESC"
+        if newest_first
+        else "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at ASC"
+    )
     parameters: tuple[object, ...] = (session_id,)
     if limit is not None:
         query = f"{query} LIMIT ?"

@@ -414,7 +414,10 @@ async def upload_document(
             mime_type=file.content_type,
         )
         request.state.platform_bytes_ingested = len(content)
-        request.state.platform_characters = int(result.get("character_count") or 0)
+        character_count = result.get("character_count")
+        request.state.platform_characters = (
+            character_count if isinstance(character_count, int) else 0
+        )
         return {"namespace": namespace, "document": _public_document(result)}
     except DocumentValidationError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

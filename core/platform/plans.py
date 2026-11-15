@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+from copy import deepcopy
 from typing import TypedDict
 
 
@@ -64,7 +65,7 @@ _DEFAULT_PLANS: dict[str, Plan] = {
 
 def plans() -> dict[str, Plan]:
     """Return defaults with optional numeric limit overrides from JSON environment config."""
-    configured = json.loads(json.dumps(_DEFAULT_PLANS))
+    configured = deepcopy(_DEFAULT_PLANS)
     raw = os.environ.get("MIRA_PLAN_LIMITS_JSON", "").strip()
     if not raw:
         return configured

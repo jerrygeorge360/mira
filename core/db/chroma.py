@@ -52,7 +52,7 @@ def add_embedding(
     _validate_embedding(embedding)
     _ensure_sqlite_record_exists(sqlite_table, sqlite_id, workspace_id)
 
-    pointer_metadata = {
+    pointer_metadata: dict[str, object] = {
         "sqlite_table": sqlite_table,
         "sqlite_id": sqlite_id,
         "workspace_id": workspace_id,
@@ -96,7 +96,7 @@ def query_embeddings(
         raise ValueError("top_k must be a positive integer")
 
     client = _load_chroma_client()
-    query_where = {"workspace_id": workspace_id}
+    query_where: dict[str, object] = {"workspace_id": workspace_id}
     if where:
         requested_workspace = where.get("workspace_id")
         if requested_workspace is not None and requested_workspace != workspace_id:

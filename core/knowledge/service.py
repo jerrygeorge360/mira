@@ -58,9 +58,7 @@ def list_knowledge_bases(*, workspace_id: str) -> list[dict[str, object]]:
     ]
 
 
-def get_knowledge_base(
-    *, workspace_id: str, knowledge_base_id: str
-) -> dict[str, object]:
+def get_knowledge_base(*, workspace_id: str, knowledge_base_id: str) -> dict[str, object]:
     record = repository_get_knowledge_base(knowledge_base_id, workspace_id=workspace_id)
     if record is None:
         raise LookupError("knowledge base not found in workspace")
@@ -68,15 +66,12 @@ def get_knowledge_base(
     return {
         **_knowledge_base_record(record, workspace_id=workspace_id),
         "documents": [
-            _document_record(document, workspace_id=workspace_id)
-            for document in documents
+            _document_record(document, workspace_id=workspace_id) for document in documents
         ],
     }
 
 
-def list_documents(
-    *, workspace_id: str, knowledge_base_id: str
-) -> list[dict[str, object]]:
+def list_documents(*, workspace_id: str, knowledge_base_id: str) -> list[dict[str, object]]:
     _require_knowledge_base(workspace_id, knowledge_base_id)
     return [
         _document_record(document, workspace_id=workspace_id)
@@ -267,4 +262,3 @@ def _document_record(
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-

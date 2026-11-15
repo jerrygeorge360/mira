@@ -185,9 +185,7 @@ def get_document(document_id: str, auth: WorkspaceAuth) -> DocumentResponse:
         workspace_id=auth.context.workspace_id,
         document_id=document_id,
     )
-    return DocumentResponse.model_validate(
-        _document_record(result, auth.context.workspace_id)
-    )
+    return DocumentResponse.model_validate(_document_record(result, auth.context.workspace_id))
 
 
 @router.delete("/documents/{document_id}")
@@ -352,4 +350,3 @@ def _deletion_response(value: object, resource_id: str, resource_type: str) -> d
     response.setdefault("status", "deleted")
     response.setdefault(f"{resource_type}_id", resource_id)
     return response
-

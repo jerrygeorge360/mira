@@ -12,12 +12,13 @@ import math
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, TypedDict
 from uuid import uuid4
 
 from core.db.repositories import repository_connection, require_active_workspace
 from core.db.schema import LEGACY_WORKSPACE_ID
 from core.memory.lifecycle import (
+    run_memory_sleep,
     runtime_trust,
     sleep_run_context,
 )
@@ -29,6 +30,13 @@ DEFAULT_STALE_RUN_HOURS = 24.0
 SLEEP_TRIGGERS = frozenset({"manual", "automatic", "mcp"})
 
 LifecycleRunner = Callable[..., dict[str, object]]
+
+
+class SleepRuns(TypedDict):
+    items: list[dict[str, object]]
+    total: int
+    limit: int
+    offset: int
 
 
 def get_sleep_config(
@@ -88,7 +96,9 @@ def update_sleep_config(
     if enabled is not None and not isinstance(enabled, bool):
         raise ValueError("enabled must be a boolean")
     interval = (
-        float(interval_hours) if interval_hours is not None else float(current["interval_hours"])
+        float(interval_hours)
+        if interval_hours is not None
+        else _float_value(current.get("interval_hours"))
     )
     _validate_interval(interval)
     next_enabled = bool(current["enabled"] if enabled is None else enabled)
@@ -169,7 +179,7 @@ def run_scheduled_sleep(
     try:
         from core.memory import slow_path
 
-        runner = lifecycle_runner or slow_path.run_memory_sleep
+        runner = lifecycle_runner or run_memory_sleep
         with sleep_run_context(str(run["sleep_run_id"])):
             try:
                 lifecycle = runner(workspace_id, max_items, now=effective_now.isoformat())
@@ -191,7 +201,11 @@ def run_scheduled_sleep(
                 changes_found = changes_applied = duplicates_consolidated = 0
                 reflections_updated = 0
                 errors.append(f"maintenance: {str(error) or error.__class__.__name__}")
-                lifecycle.setdefault("errors", []).append(errors[-1])
+                lifecycle_errors = lifecycle.get("errors")
+                if isinstance(lifecycle_errors, list):
+                    lifecycle_errors.append(errors[-1])
+                else:
+                    lifecycle["errors"] = [errors[-1]]
     except Exception as error:  # noqa: BLE001 - scheduler failures are recorded, not raised
         changes_found = changes_applied = duplicates_consolidated = 0
         reflections_updated = 0
@@ -256,7 +270,7 @@ def list_sleep_runs(
     *,
     limit: int = 20,
     offset: int = 0,
-) -> dict[str, object]:
+) -> SleepRuns:
     """List workspace sleep history with compact JSON fields decoded."""
     if limit < 1 or limit > 100:
         raise ValueError("limit must be between 1 and 100")
@@ -329,8 +343,10 @@ def capture_sleep_snapshot(
         cold = 0
         for table in ("observations", "atomic_facts", "graph_nodes", "graph_edges"):
             cold += _count(
-                connection, f"SELECT COUNT(*) FROM {table} WHERE workspace_id = ?", workspace_id
-            )  # noqa: S608
+                connection,
+                f"SELECT COUNT(*) FROM {table} WHERE workspace_id = ?",  # nosec B608
+                workspace_id,
+            )
 
     status_counts = {status: 0 for status in ("active", "weakened", "archived", "forgotten")}
     retention_values: list[float] = []
@@ -349,7 +365,7 @@ def capture_sleep_snapshot(
             "retention_score": float(state.get("retention_score") or 0.0),
             "pinned": bool(state.get("pinned")),
         }
-    snapshot = {
+    snapshot: dict[str, object] = {
         "active_memories": status_counts.get("active", 0),
         "weakening_memories": status_counts.get("weakened", 0),
         "archived_memories": status_counts.get("archived", 0),
@@ -380,8 +396,8 @@ def build_sleep_changes(
             continue
         old_status = str(previous["lifecycle_status"])
         new_status = str(current["lifecycle_status"])
-        old_score = float(previous["retention_score"])
-        new_score = float(current["retention_score"])
+        old_score = _float_value(previous.get("retention_score"))
+        new_score = _float_value(current.get("retention_score"))
         if (
             old_status == new_status
             and math.isclose(old_score, new_score)
@@ -465,7 +481,7 @@ def _begin_run(
                 json.dumps(
                     {
                         "enabled": bool(config["enabled"]),
-                        "interval_hours": float(config["interval_hours"]),
+                        "interval_hours": _float_value(config.get("interval_hours")),
                         "max_items": max_items,
                     },
                     sort_keys=True,
@@ -501,6 +517,8 @@ def _finish_run(
 ) -> None:
     lifecycle = result.get("lifecycle")
     lifecycle = lifecycle if isinstance(lifecycle, dict) else {}
+    summary = result.get("summary")
+    reinforced_count = _int_value(summary.get("reinforced")) if isinstance(summary, dict) else 0
     with repository_connection() as connection:
         connection.execute(
             """
@@ -518,9 +536,7 @@ def _finish_run(
                 finished_at,
                 finished_at,
                 _int_value(result.get("reviewed")),
-                _int_value(result.get("summary", {}).get("reinforced"))
-                if isinstance(result.get("summary"), dict)
-                else 0,
+                reinforced_count,
                 _int_value(lifecycle.get("weakened")),
                 _int_value(result.get("duplicates_consolidated")),
                 _int_value(lifecycle.get("archived")),
@@ -574,7 +590,7 @@ def _decode_run(record: dict[str, object]) -> dict[str, object]:
 
 
 def _config_record(row: dict[str, object]) -> dict[str, object]:
-    interval = float(row["sleep_interval_hours"])
+    interval = _float_value(row.get("sleep_interval_hours"))
     return {
         "workspace_id": row["workspace_id"],
         "enabled": bool(row["automatic_sleep_enabled"]),
@@ -675,7 +691,7 @@ def _source_label(source_type: str, source_id: str, workspace_id: str) -> str | 
     table, column = table_column
     with repository_connection() as connection:
         row = connection.execute(
-            f"SELECT {column} FROM {table} WHERE id = ? AND workspace_id = ?",  # noqa: S608
+            f"SELECT {column} FROM {table} WHERE id = ? AND workspace_id = ?",  # nosec B608
             (source_id, workspace_id),
         ).fetchone()
     return None if row is None else str(row[column])
@@ -691,10 +707,27 @@ def _average(values: list[float]) -> float:
 
 
 def _int_value(value: object) -> int:
-    try:
-        return int(value or 0)
-    except (TypeError, ValueError):
-        return 0
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
+    return 0
+
+
+def _float_value(value: object, default: float = 0.0) -> float:
+    if isinstance(value, int | float):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError:
+            pass
+    return default
 
 
 def _decode_json(value: object, *, default: object) -> object:

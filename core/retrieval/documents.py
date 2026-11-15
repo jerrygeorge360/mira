@@ -35,7 +35,9 @@ def retrieve_document_chunks(
     if not query.strip():
         return []
     query_embedding = embedder(query)
-    where = {"knowledge_base_id": knowledge_base_id} if knowledge_base_id else None
+    where: dict[str, object] | None = (
+        {"knowledge_base_id": knowledge_base_id} if knowledge_base_id else None
+    )
     pointers = chroma.query_embeddings(
         "document_chunks",
         query_embedding,
@@ -89,6 +91,7 @@ def _evidence(
     relevance = max(0.0, 1.0 - distance)
     page_start = chunk.get("page_start")
     page_end = chunk.get("page_end")
+    chunk_index = _int(chunk.get("chunk_index"))
     return {
         "source": "document_chunks",
         "source_type": "document_chunk",
@@ -97,7 +100,7 @@ def _evidence(
         "knowledge_base_id": str(document["knowledge_base_id"]),
         "filename": str(document["filename"]),
         "chunk_id": str(chunk["id"]),
-        "chunk_index": int(chunk["chunk_index"]),
+        "chunk_index": chunk_index,
         "page_start": page_start,
         "page_end": page_end,
         "distance": distance,
@@ -111,7 +114,7 @@ def _evidence(
             "page_start": page_start,
             "page_end": page_end,
             "chunk_id": str(chunk["id"]),
-            "chunk_index": int(chunk["chunk_index"]),
+            "chunk_index": chunk_index,
             "relevance_score": relevance,
         },
     }
@@ -120,4 +123,15 @@ def _evidence(
 def _float(value: object, default: float = 0.0) -> float:
     if isinstance(value, int | float):
         return float(value)
+    return default
+
+
+def _int(value: object, default: int = 0) -> int:
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            pass
     return default

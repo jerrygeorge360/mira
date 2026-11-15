@@ -51,9 +51,7 @@ class FakeStorage:
         metadata: dict[str, str],
     ) -> None:
         self.objects[key] = content
-        self.uploads.append(
-            {"key": key, "content_type": content_type, "metadata": dict(metadata)}
-        )
+        self.uploads.append({"key": key, "content_type": content_type, "metadata": dict(metadata)})
 
     def download(self, key: str) -> bytes:
         return self.objects[key]
@@ -154,11 +152,14 @@ def test_ingest_txt_uploads_metadata_chunks_and_retrieves_provenance(workspace: 
     assert result["chunk_id"] == ingested.chunks[0]["id"]
     assert "relevance_score" in result["provenance"]
 
-    assert retrieve_document_chunks(
-        "private document provenance",
-        workspace_id="not-the-owner",
-        embedder=lambda _text: [1.0, 0.0, 0.0],
-    ) == []
+    assert (
+        retrieve_document_chunks(
+            "private document provenance",
+            workspace_id="not-the-owner",
+            embedder=lambda _text: [1.0, 0.0, 0.0],
+        )
+        == []
+    )
 
 
 def test_document_limits_and_unsupported_types(workspace: str) -> None:
@@ -238,18 +239,20 @@ def test_failed_processing_records_failed_status_and_delete_preserves_audit(work
         storage=storage,
         embedder=lambda _text: [1.0, 0.0],
     )
-    deleted = delete_document(
-        str(ingested.document["id"]), workspace_id=workspace, storage=storage
-    )
+    deleted = delete_document(str(ingested.document["id"]), workspace_id=workspace, storage=storage)
     assert deleted["status"] == "deleted"
     assert str(ingested.document["s3_key"]) in storage.deleted
     assert list_document_chunks(str(ingested.document["id"]), workspace_id=workspace) == []
-    assert get_document(
-        str(ingested.document["id"]), workspace_id=workspace, include_deleted=True
-    ) is not None
-    assert retrieve_document_chunks(
-        "audit row", workspace_id=workspace, embedder=lambda _text: [1.0, 0.0]
-    ) == []
+    assert (
+        get_document(str(ingested.document["id"]), workspace_id=workspace, include_deleted=True)
+        is not None
+    )
+    assert (
+        retrieve_document_chunks(
+            "audit row", workspace_id=workspace, embedder=lambda _text: [1.0, 0.0]
+        )
+        == []
+    )
 
 
 def test_s3_storage_is_injectable_and_uses_private_upload_options() -> None:

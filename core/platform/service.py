@@ -498,7 +498,7 @@ def get_memory_source(workspace_id: str, source_id: str) -> dict[str, object] | 
         if source_table is None:
             return None
         record = connection.execute(
-            f"SELECT * FROM {source_table} WHERE id = ? AND workspace_id = ?",  # noqa: S608
+            f"SELECT * FROM {source_table} WHERE id = ? AND workspace_id = ?",  # nosec B608
             (source_id, workspace_id),
         ).fetchone()
     if record is None:
@@ -533,8 +533,7 @@ def check_monthly_quota(api_key: PlatformAPIKey, operation: str) -> None:
         return
     plan = plan_for(api_key.plan)
     is_write = operation == "memory.write"
-    quota_field = "memory_writes_monthly" if is_write else "retrievals_monthly"
-    limit = plan[quota_field]
+    limit = plan["memory_writes_monthly"] if is_write else plan["retrievals_monthly"]
     now = datetime.now(UTC)
     month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0).isoformat()
     with repository_connection() as connection:

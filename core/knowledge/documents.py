@@ -200,9 +200,7 @@ class S3DocumentStorage:
                 ServerSideEncryption="AES256",
             )
         except Exception as error:
-            raise DocumentStorageError(
-                f"S3 upload failed ({_aws_error_detail(error)})"
-            ) from error
+            raise DocumentStorageError(f"S3 upload failed ({_aws_error_detail(error)})") from error
 
     def download(self, key: str) -> bytes:
         try:
@@ -300,6 +298,7 @@ def extract_document(
     """Extract supported text and return pages/sections plus character count."""
     safe_name, _ = validate_document(filename, content, mime_type=mime_type, limits=limits)
     suffix = os.path.splitext(safe_name)[1].casefold()
+    pages: tuple[ExtractedPage, ...]
     if suffix in {".txt", ".md"}:
         text = _decode_text(content)
         pages = (ExtractedPage(text=_normalize_text(text)),)
@@ -400,10 +399,9 @@ def chunk_document(
                     if current_page_start is None
                     else min(current_page_start, page.page_start)
                 )
+                page_end = page.page_end if page.page_end is not None else page.page_start
                 current_page_end = (
-                    page.page_end
-                    if current_page_end is None
-                    else max(current_page_end or page.page_end, page.page_end or page.page_start)
+                    page_end if current_page_end is None else max(current_page_end, page_end)
                 )
             if heading and not current_heading:
                 current_heading = heading
@@ -596,9 +594,7 @@ def _extract_pdf(content: bytes, *, limits: DocumentLimits) -> tuple[ExtractedPa
     try:
         with fitz.open(stream=content, filetype="pdf") as document:
             if len(document) > limits.max_pdf_pages:
-                raise DocumentValidationError(
-                    f"PDF exceeds the {limits.max_pdf_pages} page limit"
-                )
+                raise DocumentValidationError(f"PDF exceeds the {limits.max_pdf_pages} page limit")
             pages = tuple(
                 ExtractedPage(
                     text=_normalize_text(page.get_text("text")),

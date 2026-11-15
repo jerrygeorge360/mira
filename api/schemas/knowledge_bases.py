@@ -70,4 +70,3 @@ class DocumentListResponse(BaseModel):
     """Documents belonging to one Knowledge Base."""
 
     items: list[DocumentResponse]
-

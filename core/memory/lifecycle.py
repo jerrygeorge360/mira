@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -64,13 +65,14 @@ _CURRENT_SLEEP_RUN_ID: ContextVar[str | None] = ContextVar(
 
 
 @contextmanager
-def sleep_run_context(run_id: str):
+def sleep_run_context(run_id: str) -> Iterator[None]:
     """Bind an already-coordinated scheduler run to the lifecycle writer."""
     token = _CURRENT_SLEEP_RUN_ID.set(run_id)
     try:
         yield
     finally:
         _CURRENT_SLEEP_RUN_ID.reset(token)
+
 
 SOURCE_ALIASES = {
     "session": "sessions",

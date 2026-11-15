@@ -284,7 +284,14 @@ def assess_freshness(
 
 def assess_stability(evidence: dict[str, object]) -> str:
     source = str(evidence.get("source", ""))
-    if source in {"atomic_facts", "graph_edge", "community_summary", "reflections", "reflection", "document_chunks"}:
+    if source in {
+        "atomic_facts",
+        "graph_edge",
+        "community_summary",
+        "reflections",
+        "reflection",
+        "document_chunks",
+    }:
         return "durable_derived"
     if source == "session_working_set":
         return "current_session"
