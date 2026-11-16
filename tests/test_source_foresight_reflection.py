@@ -104,15 +104,21 @@ def test_document_foresight_requires_confirmation_and_scoped_retrieval(
     record_id = foresight.activate_document_foresight_candidate(
         candidates[0], workspace_id="one", confirmed=True
     )
-    foresight.update_foresight_status(record_id, "2026-11-16T00:00:00+00:00")
+    with repository_connection() as db:
+        activation_time = str(
+            db.execute(
+                "SELECT valid_from FROM foresight_records WHERE id = ?", (record_id,)
+            ).fetchone()[0]
+        )
+    foresight.update_foresight_status(record_id, activation_time)
     assert (
-        foresight.list_relevant_foresight("release milestone", "2026-11-16", workspace_id="one")
+        foresight.list_relevant_foresight("release milestone", activation_time, workspace_id="one")
         == []
     )
     assert (
         foresight.list_relevant_foresight(
             "release milestone",
-            "2026-11-16",
+            activation_time,
             workspace_id="one",
             include_documents=True,
             allowed_knowledge_base_ids={"kb-two"},
@@ -121,7 +127,7 @@ def test_document_foresight_requires_confirmation_and_scoped_retrieval(
     )
     found = foresight.list_relevant_foresight(
         "release milestone",
-        "2026-11-16",
+        activation_time,
         workspace_id="one",
         include_documents=True,
         allowed_knowledge_base_ids={"kb-one"},
@@ -133,7 +139,7 @@ def test_document_foresight_requires_confirmation_and_scoped_retrieval(
     assert (
         foresight.list_relevant_foresight(
             "release milestone",
-            "2026-11-16",
+            activation_time,
             workspace_id="one",
             include_documents=True,
             allowed_knowledge_base_ids={"kb-one"},
@@ -262,7 +268,7 @@ def test_domain_reflection_uses_evidence_without_personal_synthesis(
             }
         },
     )
-    with pytest.raises(ValueError, match="scope"):
+    with pytest.raises(ValueError, match="workspace"):
         reflection.synthesize_domain_reflections([first, other], workspace_id="one")
     candidates = reflection.synthesize_domain_reflections([first, second], workspace_id="one")
     assert len(candidates) == 1
@@ -305,13 +311,13 @@ def test_domain_reflection_dedupe_does_not_cross_knowledge_bases(
         db.execute(
             "INSERT INTO knowledge_bases "
             "(id, workspace_id, name, status, created_at, updated_at) "
-            "VALUES ('kb-two', 'one', 'Other KB', 'active', ?, ?)",
+            "VALUES ('kb-one-other', 'one', 'Other KB', 'active', ?, ?)",
             (now, now),
         )
         db.execute(
             "INSERT INTO documents (id, workspace_id, knowledge_base_id, filename, mime_type, "
             "size_bytes, s3_bucket, s3_key, checksum_sha256, status, created_at, updated_at) "
-            "VALUES ('doc-one-two', 'one', 'kb-two', 'other.txt', 'text/plain', 10, "
+            "VALUES ('doc-one-two', 'one', 'kb-one-other', 'other.txt', 'text/plain', 10, "
             "'bucket', 'other-key', 'hash', 'ready', ?, ?)",
             (now, now),
         )
@@ -319,7 +325,7 @@ def test_domain_reflection_dedupe_does_not_cross_knowledge_bases(
             db.execute(
                 "INSERT INTO document_chunks (id, workspace_id, knowledge_base_id, "
                 "document_id, chunk_index, content, created_at) "
-                "VALUES (?, 'one', 'kb-two', 'doc-one-two', ?, ?, ?)",
+                "VALUES (?, 'one', 'kb-one-other', 'doc-one-two', ?, ?, ?)",
                 (f"chunk-one-two-{index}", index, f"Other project evidence {index}.", now),
             )
     other_sources = [
@@ -351,7 +357,7 @@ def test_domain_reflection_dedupe_does_not_cross_knowledge_bases(
             "workspace_id": "one",
             "project_id": None,
             "namespace": None,
-            "knowledge_base_id": "kb-two",
+            "knowledge_base_id": "kb-one-other",
             "evidence_ids": other_sources,
         },
         other_sources,

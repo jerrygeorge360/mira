@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+from core.db.repositories import (
+    configure_database,
+    create_session,
+    create_workspace,
+    save_observation,
+)
 from core.retrieval.trust import (
     AUTHORITY_DIRECT_USER,
     AUTHORITY_EXTERNAL_UNVERIFIED,
@@ -172,22 +178,28 @@ def test_invalid_reflection_and_workspace_mismatch_are_ineligible() -> None:
     )
 
 
-def test_graph_and_community_lineage_is_checked() -> None:
+def test_graph_and_community_lineage_is_checked(tmp_path) -> None:
+    configure_database(tmp_path / "trust.sqlite3")
+    workspace_id = create_workspace(
+        "Trust workspace", "trust-workspace", "development", workspace_id="workspace-1"
+    )
+    session_id = create_session("trust-user", workspace_id=workspace_id)
+    observation_id = save_observation(session_id, "user", "Jerry uses Vim")
     graph = {
         "source": "graph_edge",
         "source_id": "edge-1",
         "content": "Jerry uses Vim",
         "status": "active",
-        "workspace_id": "workspace-1",
+        "workspace_id": workspace_id,
         "origin_node_id": "node-1",
         "related_node_id": "node-2",
-        "source_observations": ["obs-1"],
+        "source_observations": [observation_id],
     }
     community = {
         "source": "community_summary",
         "source_id": "community-1",
         "content": "Editor preferences",
-        "workspace_id": "workspace-1",
+        "workspace_id": workspace_id,
         "member_node_ids": ["node-1", "node-2"],
     }
 

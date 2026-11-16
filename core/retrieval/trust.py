@@ -244,12 +244,12 @@ def assess_provenance_completeness(
         if not record.get("source_observation_id") and not _has_active_support(
             record, "atomic_fact"
         ):
-            missing.append("evidence_source")
+            missing.extend(("source_observation_id", "evidence_source"))
     elif source in {"graph_edge", "graph_path"}:
         if not _has_live_observation_support(record, "graph_edge") and not _has_active_support(
             record, "graph_edge"
         ):
-            missing.append("evidence_source")
+            missing.extend(("source_observations", "evidence_source"))
     elif source in {"reflections", "reflection"}:
         if not record.get("id") or not record.get("workspace_id"):
             missing.append("reflection_identity")

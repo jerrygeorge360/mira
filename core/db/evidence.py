@@ -689,7 +689,7 @@ def retract_document_sources(document_id: str, *, workspace_id: str) -> dict[str
                     restore_invalidated_graph_relation(db, edge, workspace_id)
                     counts["graph_edges"] += invalidated.rowcount
                 continue
-            if supported:
+            if supported and kind != "reflection":
                 continue
             if kind == "atomic_fact":
                 counts["atomic_facts"] += db.execute(

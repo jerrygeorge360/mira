@@ -428,10 +428,75 @@ def _reset_demo(session_id: str, workspace_id: str) -> None:
             if str(row["source_id"]) in demo_source_ids
             or str(row["source_id"]).startswith(DEMO_COMMUNITY_PREFIX)
         ]
-        for node_id in node_ids:
+        graph_edge_ids = []
+        if node_ids:
+            placeholders = _placeholders(node_ids)
+            graph_edge_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM graph_edges WHERE source_node_id IN ("
+                    f"{placeholders}) OR target_node_id IN ({placeholders})",  # nosec B608
+                    (*node_ids, *node_ids),
+                ).fetchall()
+            ]
+
+        fact_ids: list[str] = []
+        foresight_ids: list[str] = []
+        if observation_ids:
+            placeholders = _placeholders(observation_ids)
+            fact_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM atomic_facts WHERE workspace_id = ? "
+                    f"AND source_observation_id IN ({placeholders})",  # nosec B608
+                    (workspace_id, *observation_ids),
+                ).fetchall()
+            ]
+            foresight_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM foresight_records WHERE workspace_id = ? "
+                    f"AND source_observation_id IN ({placeholders})",  # nosec B608
+                    (workspace_id, *observation_ids),
+                ).fetchall()
+            ]
+            source_ids = [
+                str(row["id"])
+                for row in connection.execute(
+                    "SELECT id FROM evidence_sources WHERE workspace_id = ? "
+                    "AND source_type = 'conversation_observation' "
+                    f"AND source_id IN ({placeholders})",  # nosec B608
+                    (workspace_id, *observation_ids),
+                ).fetchall()
+            ]
+        else:
+            source_ids = []
+
+        # Remove normalized links before deleting their source or target rows.
+        for column, identifiers in (
+            ("source_id", source_ids),
+            ("graph_edge_id", graph_edge_ids),
+            ("atomic_fact_id", fact_ids),
+            ("reflection_id", reflection_ids),
+            ("foresight_id", foresight_ids),
+        ):
+            if identifiers:
+                placeholders = _placeholders(identifiers)
+                connection.execute(
+                    f"DELETE FROM evidence_links WHERE {column} IN ({placeholders})",  # noqa: S608  # nosec B608
+                    tuple(identifiers),
+                )
+        if source_ids:
+            placeholders = _placeholders(source_ids)
             connection.execute(
-                "DELETE FROM graph_edges WHERE source_node_id = ? OR target_node_id = ?",
-                (node_id, node_id),
+                f"DELETE FROM evidence_sources WHERE id IN ({placeholders})",  # noqa: S608  # nosec B608
+                tuple(source_ids),
+            )
+        if graph_edge_ids:
+            placeholders = _placeholders(graph_edge_ids)
+            connection.execute(
+                f"DELETE FROM graph_edges WHERE id IN ({placeholders})",  # noqa: S608  # nosec B608
+                tuple(graph_edge_ids),
             )
         if node_ids:
             connection.execute(
@@ -451,9 +516,17 @@ def _reset_demo(session_id: str, workspace_id: str) -> None:
             )
         if observation_ids:
             placeholders = _placeholders(observation_ids)
+            for table, identifiers in (
+                ("atomic_facts", fact_ids),
+                ("foresight_records", foresight_ids),
+            ):
+                if identifiers:
+                    target_placeholders = _placeholders(identifiers)
+                    connection.execute(
+                        f"DELETE FROM {table} WHERE id IN ({target_placeholders})",  # noqa: S608  # nosec B608
+                        tuple(identifiers),
+                    )
             for table, column in (
-                ("atomic_facts", "source_observation_id"),
-                ("foresight_records", "source_observation_id"),
                 ("slow_path_step_journal", "observation_id"),
                 ("slow_path_queue", "observation_id"),
             ):
