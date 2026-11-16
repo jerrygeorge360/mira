@@ -78,7 +78,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setAuthUser(toAuthUser(auth));
         setUseRealAgent(true);
         setPage('app');
-        if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
+        if (window.location.search) {
+          const portalReturnPath = window.sessionStorage.getItem('mira.developerPortalReturnPath');
+          const safePortalPath = portalReturnPath === '/developers/dashboard'
+            ? portalReturnPath
+            : window.location.pathname;
+          window.sessionStorage.removeItem('mira.developerPortalReturnPath');
+          window.history.replaceState({}, '', safePortalPath);
+        }
       })
       .catch(() => {
         if (!active) return;

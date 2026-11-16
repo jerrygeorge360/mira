@@ -269,6 +269,7 @@ export default function Landing() {
           <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
           <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>How it works</a>
           <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
+          <a href="/developers/docs">Developers</a>
         </div>
         <div className="landing-nav-actions">
           <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
@@ -667,6 +668,7 @@ export default function Landing() {
               <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
               <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>Memory lifecycle</a>
               <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
+              <a href="/developers/docs">Developer docs</a>
               <a href="/sitemap.xml">Sitemap</a>
             </div>
             <div>

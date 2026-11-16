@@ -16,7 +16,7 @@ import ResultsView from './components/ResultsView';
 import DemoWalkthrough from './components/DemoWalkthrough';
 import AdminView from './components/AdminView';
 import KnowledgeBasesView from './components/KnowledgeBasesView';
-import DeveloperPlatformView from './components/DeveloperPlatformView';
+import DeveloperPortal from './components/DeveloperPortal';
 
 function ViewRouter() {
   const { view } = useApp();
@@ -32,7 +32,6 @@ function ViewRouter() {
     case 'Foresight': return <div className="view-area"><TimelineView /></div>;
     case 'Evaluation': return <div className="view-area"><ResultsView /></div>;
     case 'Knowledge Bases': return <div className="view-area"><KnowledgeBasesView /></div>;
-    case 'Developer Platform': return <div className="view-area"><DeveloperPlatformView /></div>;
     case 'Administration': return <div className="view-area"><AdminView /></div>;
     default: return <ChatView />;
   }
@@ -41,6 +40,9 @@ function ViewRouter() {
 export default function App() {
   const { page, authUser, authReady } = useApp();
 
+  if (window.location.pathname === '/developers' || window.location.pathname.startsWith('/developers/')) {
+    return <DeveloperPortal />;
+  }
   if (page === 'landing') return <Landing />;
   if (!authReady) return <AuthPage />;
   if (page === 'auth' || !authUser) return <AuthPage />;

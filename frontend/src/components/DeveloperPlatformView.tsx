@@ -5,7 +5,7 @@ import {
 import { useEffect, useState } from 'react';
 import { api, type PlatformNamespace, type PlatformOverview } from '../api/client';
 
-type Tab = 'Overview' | 'Projects' | 'API Keys' | 'Usage' | 'Memories' | 'Knowledge Bases' | 'MCP' | 'Billing' | 'Settings';
+type Tab = 'Overview' | 'Projects' | 'API Keys' | 'Usage' | 'Memories' | 'Knowledge Bases' | 'Billing' | 'Settings';
 const TABS: { name: Tab; icon: React.ReactNode }[] = [
   { name: 'Overview', icon: <Activity size={15} /> },
   { name: 'Projects', icon: <Boxes size={15} /> },
@@ -13,7 +13,6 @@ const TABS: { name: Tab; icon: React.ReactNode }[] = [
   { name: 'Usage', icon: <Layers3 size={15} /> },
   { name: 'Memories', icon: <Users size={15} /> },
   { name: 'Knowledge Bases', icon: <BookOpen size={15} /> },
-  { name: 'MCP', icon: <Code2 size={15} /> },
   { name: 'Billing', icon: <CreditCard size={15} /> },
   { name: 'Settings', icon: <Settings2 size={15} /> },
 ];
@@ -222,7 +221,6 @@ export default function DeveloperPlatformView() {
       {tab === 'Usage' && <UsageTab overview={overview} />}
       {tab === 'Memories' && <NamespaceTab title="Memory namespaces" detail="An external namespace maps to one isolated MIRA workspace inside its project." namespaces={namespaces} type="memories" />}
       {tab === 'Knowledge Bases' && <NamespaceTab title="Knowledge bases" detail="Documents uploaded through the developer API are stored in each namespace's private Knowledge Base." namespaces={namespaces} type="documents" />}
-      {tab === 'MCP' && <McpTab />}
       {tab === 'Billing' && <BillingTab overview={overview} billingEmail={billingEmail} setBillingEmail={setBillingEmail} busy={busy} onSubscribe={planId => void startSubscription(planId)} onCancel={() => void runAction(async () => { const result = await api.cancelPlatformSubscription(organizationId); window.location.assign(result.manage_url); }, 'Use the Paystack page to cancel. MIRA will update the plan after Paystack confirms it.')} />}
       {tab === 'Settings' && <section className="developer-panel developer-settings"><div className="developer-panel-title"><div><h3>Organization settings</h3><p>Organization identity and current developer access.</p></div></div><form className="developer-form-row" onSubmit={event => { event.preventDefault(); void runAction(() => api.updateOrganization(organizationId, settingsName), 'Organization updated.'); }}><label>Organization name<input value={settingsName} onChange={event => setSettingsName(event.target.value)} maxLength={80} required /></label><button className="developer-button" disabled={busy}>Save changes</button></form><div className="developer-kv"><span>Slug</span><code>{overview.organization.slug}</code></div><div className="developer-kv"><span>Organization ID</span><code>{overview.organization.id}</code></div><div className="developer-kv"><span>Active projects / plan limit</span><strong>{overview.projects.length} / {plan.projects}</strong></div><div className="developer-kv"><span>Active API keys / plan limit</span><strong>{liveKeys.length} / {plan.api_keys}</strong></div></section>}
 
@@ -253,12 +251,6 @@ function UsageTab({ overview }: { overview: PlatformOverview }) {
 
 function NamespaceTab({ title, detail, namespaces, type }: { title: string; detail: string; namespaces: PlatformNamespace[]; type: 'memories' | 'documents' }) {
   return <section className="developer-panel"><div className="developer-panel-title"><div><h3>{title}</h3><p>{detail}</p></div></div><div className="developer-table-wrap"><table className="developer-table"><thead><tr><th>Namespace</th><th>Project</th><th>{type === 'memories' ? 'Memories' : 'Documents'}</th><th>Created</th></tr></thead><tbody>{namespaces.length ? namespaces.map(item => <tr key={`${item.project_id}:${item.namespace}`}><td><code>{item.namespace}</code></td><td>{item.project_name}</td><td>{type === 'memories' ? item.memories : item.documents}</td><td>{formatDate(item.created_at)}</td></tr>) : <tr><td colSpan={4} className="developer-empty-cell">Namespaces appear when an API key first writes, searches, or uploads.</td></tr>}</tbody></table></div><p className="developer-footnote"><Shield size={14} /> The same namespace text in a different project resolves to a separate memory space.</p></section>;
-}
-
-function McpTab() {
-  const endpoint = `${window.location.origin}/mcp/v1`;
-  const snippet = JSON.stringify({ mcpServers: { mira: { url: endpoint, headers: { Authorization: 'Bearer YOUR_MIRA_API_KEY' } } } }, null, 2);
-  return <section className="developer-panel"><div className="developer-panel-title"><div><h3>Connect an MCP client</h3><p>Use a project API key. Pass the same namespace to share memory across agents.</p></div></div><div className="developer-kv"><span>Streamable HTTP endpoint</span><code>{endpoint}</code></div><pre className="developer-code"><code>{snippet}</code></pre><div className="developer-tool-list">{['remember', 'recall', 'search', 'forget', 'history', 'get_context'].map(name => <code key={name}>{name}</code>)}</div><p className="developer-footnote">MCP calls use the same project, namespace, API-key scopes, quotas, and memory services as REST.</p></section>;
 }
 
 function BillingTab({ overview, billingEmail, setBillingEmail, busy, onSubscribe, onCancel }: { overview: PlatformOverview; billingEmail: string; setBillingEmail: (value: string) => void; busy: boolean; onSubscribe: (plan: 'developer' | 'pro' | 'scale') => void; onCancel: () => void }) {

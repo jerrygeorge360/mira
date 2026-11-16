@@ -18,7 +18,7 @@ import {
   Trash2,
   Gauge,
   LibraryBig,
-  Code2,
+  BookOpen,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { api } from '../api/client';
@@ -28,7 +28,6 @@ import BrandMark from './BrandMark';
 const PRIMARY_VIEWS = [
   { label: 'Chat', icon: <MessageSquare size={16} /> },
   { label: 'Knowledge Bases', icon: <LibraryBig size={16} /> },
-  { label: 'Developer Platform', icon: <Code2 size={16} /> },
 ] as const;
 
 const MEMORY_VIEWS = [
@@ -153,6 +152,16 @@ export default function Rail() {
             {!railCollapsed && label}
           </button>
         ))}
+
+        <a
+          className="rail-nav-btn"
+          href="/developers/docs"
+          title={railCollapsed ? 'Developer docs' : undefined}
+          aria-label={railCollapsed ? 'Developer docs' : undefined}
+        >
+          <BookOpen size={16} />
+          {!railCollapsed && 'Developer docs'}
+        </a>
 
         {/* memory section */}
         {!railCollapsed && <div className="rail-section-label">Memory</div>}
