@@ -12,6 +12,7 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 
 from api.oauth import resolve_oauth_access_token
 from core.db.repositories import WorkspaceContext, repository_connection
+from core.platform.service import PlatformAPIKey, api_key_from_token
 
 
 class StaticTokenVerifier(TokenVerifier):
@@ -31,6 +32,20 @@ class StaticTokenVerifier(TokenVerifier):
                 claims={
                     "workspace_id": str(oauth_token["workspace_id"]),
                     "membership_role": str(oauth_token["role"]),
+                },
+            )
+        api_key = api_key_from_token(token)
+        if api_key is not None:
+            return AccessToken(
+                token=token,
+                client_id=api_key.project_id,
+                subject=api_key.id,
+                scopes=["mira:memory", *sorted(api_key.scopes)],
+                claims={
+                    "api_key_id": api_key.id,
+                    "organization_id": api_key.organization_id,
+                    "project_id": api_key.project_id,
+                    "api_key": True,
                 },
             )
         try:
@@ -68,6 +83,18 @@ def workspace_context_for_access_token(access_token: AccessToken | None) -> Work
         membership_role=str(membership_role) if membership_role else None,
         auth_mode="mcp",
     )
+
+
+def authenticated_project_api_key() -> PlatformAPIKey:
+    """Resolve and revalidate a project key for one developer MCP tool call."""
+    access_token = get_access_token()
+    claims = access_token.claims or {} if access_token is not None else {}
+    if access_token is None or claims.get("api_key") is not True:
+        raise PermissionError("a MIRA project API key is required for this tool")
+    api_key = api_key_from_token(access_token.token)
+    if api_key is None or api_key.id != str(claims.get("api_key_id")):
+        raise PermissionError("MIRA project API key is invalid or revoked")
+    return api_key
 
 
 def _workspace_for_token(token: str) -> str:

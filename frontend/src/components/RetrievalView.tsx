@@ -14,6 +14,11 @@ import { api } from '../api/client';
 import { useApp } from '../context/AppContext';
 import { useLiveData } from '../api/useLiveData';
 import { ViewStatus } from './ViewStatus';
+import { Eyebrow, KeyValue, KeyValueList, Panel, Stat, StatStrip, ViewHeader, ViewPage } from './view';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
 
 type Row = Record<string, unknown>;
 
@@ -84,11 +89,11 @@ export default function RetrievalView() {
   const evidence = trace?.evidence ?? [];
 
   return (
-    <div>
-      <div className="view-header">
-        <h2>Retrieval Trace</h2>
-        <p>How MIRA selected memory, assembled context, and checked whether it had enough evidence.</p>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Retrieval Trace"
+        description="How MIRA selected memory, assembled context, and checked whether it had enough evidence."
+      />
       {!trace || !lastTraceId ? (
         <RetrievalEmpty
           status={lastTraceId ? status : 'live'}
@@ -102,7 +107,7 @@ export default function RetrievalView() {
           <EvidenceStory evidence={evidence} />
         </>
       )}
-    </div>
+    </ViewPage>
   );
 }
 
@@ -125,34 +130,21 @@ function RetrievalEmpty({
     );
   }
   return (
-    <section className="empty-inspector retrieval-empty">
-      <div className="empty-inspector-main">
-        <div className="trace-kicker">Answer trace</div>
-        <h3>{hasTrace ? 'The last answer did not use retrieved evidence' : 'No query trace yet'}</h3>
-        <p>
-          Retrieval traces show the route MIRA chose, the candidates it considered, prompt
-          sections it assembled, and whether the evidence was sufficient for the answer.
-        </p>
-        <button type="button" onClick={onOpenChat}>Ask a memory question</button>
-      </div>
-      <div className="empty-inspector-grid wide">
-        <EmptyMetric label="Quick" value="recent and direct memory" />
-        <EmptyMetric label="Deep" value="synthesis and communities" />
-        <EmptyMetric label="Relational" value="graph paths and edges" />
-        <EmptyMetric label="General" value="memory bypass" />
-        <EmptyMetric label="Sufficiency" value="evidence check" />
-        <EmptyMetric label="Prompt sections" value="budgeted context" />
-      </div>
-    </section>
-  );
-}
-
-function EmptyMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="empty-metric">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
+    <Empty className="border">
+      <EmptyHeader>
+        <EmptyTitle>{hasTrace ? 'The last answer did not use retrieved evidence' : 'No query trace yet'}</EmptyTitle>
+        <EmptyDescription>
+          A trace shows the route MIRA chose (quick, relational, deep, or a general answer that bypasses
+          memory), the candidates it considered, the prompt sections it assembled, and whether the
+          evidence was sufficient.
+        </EmptyDescription>
+      </EmptyHeader>
+      <EmptyContent>
+        <Button variant="outline" onClick={onOpenChat}>
+          Ask a memory question
+        </Button>
+      </EmptyContent>
+    </Empty>
   );
 }
 
@@ -170,23 +162,27 @@ function TraceSummary({ trace, evidence }: { trace: TraceData; evidence: Row[] }
   const sectionCount = (trace.prompt_sections ?? []).length;
 
   return (
-    <section className="trace-summary-panel">
-      <div className="trace-summary-main">
-        <div className="trace-kicker">Last answer trace</div>
-        <h3>{trace.query ? String(trace.query) : 'Query unavailable'}</h3>
-        <p>
-          MIRA used <strong>{modeLabel(trace.retrieval_mode)}</strong> retrieval and assembled
-          {' '}{sectionCount || 'no'} prompt section{sectionCount === 1 ? '' : 's'} from the available memory sources.
+    <section className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <Eyebrow>Last answer trace</Eyebrow>
+        <h3 className="text-lg font-medium text-pretty">{trace.query ? String(trace.query) : 'Query unavailable'}</h3>
+        <p className="text-sm text-muted-foreground">
+          MIRA used <span className="font-medium text-foreground">{modeLabel(trace.retrieval_mode)}</span> retrieval and
+          assembled {sectionCount || 'no'} prompt section{sectionCount === 1 ? '' : 's'} from the available memory sources.
         </p>
       </div>
-      <div className="trace-summary-grid">
-        <SummaryStat label="Route" value={modeLabel(trace.retrieval_mode)} />
-        <SummaryStat label="Sufficiency" value={sufficiencyLabel(sufficient)} tone={sufficient === false ? 'warn' : 'ok'} />
-        <SummaryStat label="Candidates" value={String(candidateCount || evidence.length)} />
-        <SummaryStat label="Selected" value={String(selectedCount)} />
-        <SummaryStat label="Prompt sections" value={String(sectionCount)} />
-        <SummaryStat label="Created" value={formatTime(trace.created_at)} />
-      </div>
+      <StatStrip>
+        <Stat label="Route" value={modeLabel(trace.retrieval_mode)} />
+        <Stat
+          label="Sufficiency"
+          value={sufficiencyLabel(sufficient)}
+          tone={sufficient === false ? 'destructive' : sufficient ? 'signal' : undefined}
+        />
+        <Stat label="Candidates" value={String(candidateCount || evidence.length)} />
+        <Stat label="Selected" value={String(selectedCount)} />
+        <Stat label="Prompt sections" value={String(sectionCount)} />
+        <Stat label="Created" value={<span className="text-base">{formatTime(trace.created_at)}</span>} />
+      </StatStrip>
     </section>
   );
 }
@@ -195,33 +191,34 @@ function TracePipeline({ trace, evidence }: { trace: TraceData; evidence: Row[] 
   const sufficiency = trace.sufficiency;
   const sufficient = sufficiency ? Boolean(sufficiency.is_sufficient ?? sufficiency.sufficient) : null;
   const promptSections = trace.prompt_sections ?? [];
+  const candidates = retrievalLogRecords(evidence).length || evidence.length;
   const stages = [
     {
-      icon: <MessageSquare size={16} />,
+      icon: <MessageSquare />,
       title: 'Query received',
       body: trace.query ? String(trace.query) : 'The user message was persisted as the trace anchor.',
       meta: trace.user_observation_id ? `Observation ${shortId(String(trace.user_observation_id))}` : undefined,
     },
     {
-      icon: <Route size={16} />,
+      icon: <Route />,
       title: 'Route selected',
       body: `${modeLabel(trace.retrieval_mode)} retrieval was used for this turn.`,
       meta: trace.retrieval_log_id ? `Retrieval log ${shortId(String(trace.retrieval_log_id))}` : undefined,
     },
     {
-      icon: <Search size={16} />,
+      icon: <Search />,
       title: 'Candidates retrieved',
-      body: `${retrievalLogRecords(evidence).length || evidence.length} candidate record${(retrievalLogRecords(evidence).length || evidence.length) === 1 ? '' : 's'} were available for ranking or inspection.`,
+      body: `${candidates} candidate record${candidates === 1 ? '' : 's'} were available for ranking or inspection.`,
       meta: evidenceBreakdown(evidence),
     },
     {
-      icon: <Layers size={16} />,
+      icon: <Layers />,
       title: 'Context assembled',
       body: `${promptSections.length} prompt section${promptSections.length === 1 ? '' : 's'} were built from session, durable, and retrieved memory.`,
       meta: promptSections.map((section) => String(section.section ?? 'section')).join(' · ') || undefined,
     },
     {
-      icon: <CheckCircle size={16} />,
+      icon: <CheckCircle />,
       title: 'Sufficiency checked',
       body: sufficiencyText(sufficiency),
       meta: sufficient === null ? 'No sufficiency verdict recorded' : sufficient ? 'Passed' : 'Needs more evidence',
@@ -229,84 +226,72 @@ function TracePipeline({ trace, evidence }: { trace: TraceData; evidence: Row[] 
   ];
 
   return (
-    <section className="trace-pipeline" aria-label="Retrieval stages">
+    // the five stages of one retrieval, in order, as one strip
+    <ol
+      className="grid overflow-hidden rounded-xl border bg-card sm:grid-cols-2 lg:grid-cols-5 *:border-b *:last:border-b-0 sm:*:border-r lg:*:border-b-0 lg:*:last:border-r-0"
+      aria-label="Retrieval stages"
+    >
       {stages.map((stage, index) => (
-        <div key={stage.title} className="trace-stage">
-          <div className="trace-stage-icon">{stage.icon}</div>
-          <div className="trace-stage-body">
-            <div className="trace-stage-count">{index + 1}</div>
-            <h4>{stage.title}</h4>
-            <p>{stage.body}</p>
-            {stage.meta && <small>{stage.meta}</small>}
+        <li key={stage.title} className="flex min-w-0 flex-col gap-1.5 p-3 text-xs">
+          <div className="flex items-center gap-2 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground">
+            <span className="font-mono text-faint tabular-nums">{index + 1}</span>
+            {stage.icon}
+            <h4 className="min-w-0 flex-1 truncate font-medium">{stage.title}</h4>
           </div>
-        </div>
+          <p className="line-clamp-4 text-pretty text-muted-foreground">{stage.body}</p>
+          {stage.meta && <p className="font-mono text-[11px] text-pretty text-faint">{stage.meta}</p>}
+        </li>
       ))}
-    </section>
+    </ol>
   );
 }
 
 function EvidenceStory({ evidence }: { evidence: Row[] }) {
   if (!evidence.length) return null;
   return (
-    <section className="retrieval-story">
-      <div className="results-section-title">Evidence timeline</div>
-      <div className="retrieval-evidence">
+    <Panel title="Evidence timeline" description="Every record the trace kept, in the order it was recorded.">
+      <ol className="flex flex-col *:border-b *:last:border-b-0">
         {evidence.map((row, index) => {
           const kind = evidenceKind(row);
           const record = objectRecord(row.record);
           const title = evidenceTitle(row, record);
+          const id = String(row.id ?? record?.source_id ?? record?.id ?? '');
+          const recordSource = String(record?.source ?? '');
           return (
-            <article key={`${kind}-${index}`} className={`evidence-card evidence-${kind}`}>
-              <div className="evidence-rank">{index + 1}</div>
-              <div className="evidence-icon">{iconForKind(kind)}</div>
-              <div className="evidence-meta">
-                <div className="evidence-kind">{KIND_LABELS[kind]}</div>
-                <div className="evidence-title">{title}</div>
-                <div className="evidence-source">{KIND_COPY[kind]}</div>
-                <details className="evidence-details">
-                  <summary>Advanced</summary>
-                  <div className="trace-detail-grid">
-                    <Detail label="Source" value={String(row.source ?? kind)} />
-                    <Detail label="ID" value={String(row.id ?? record?.source_id ?? record?.id ?? '')} />
-                    <Detail label="Score" value={score(row.score ?? record?.score)} />
-                    <Detail label="Record source" value={String(record?.source ?? '')} />
-                  </div>
-                  <pre>{JSON.stringify(row, null, 2)}</pre>
-                </details>
+            <li key={`${kind}-${index}`} className="grid grid-cols-[1.5rem_minmax(0,1fr)_auto] gap-x-3 py-3 first:pt-0 last:pb-0">
+              <span className="pt-0.5 font-mono text-faint tabular-nums">{index + 1}</span>
+              <div className="flex min-w-0 flex-col gap-1">
+                <div className="flex items-center gap-2 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground">
+                  {iconForKind(kind)}
+                  <Eyebrow>{KIND_LABELS[kind]}</Eyebrow>
+                </div>
+                <p className="text-sm font-medium text-pretty wrap-break-word">{title}</p>
+                <p className="text-muted-foreground">{KIND_COPY[kind]}</p>
+                <Collapsible>
+                  <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="-ml-2" />}>
+                    Advanced
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="flex flex-col gap-2 pt-2">
+                    <KeyValueList className="max-w-md">
+                      <KeyValue label="Source">{String(row.source ?? kind)}</KeyValue>
+                      {id && <KeyValue label="ID">{id}</KeyValue>}
+                      <KeyValue label="Score">{score(row.score ?? record?.score)}</KeyValue>
+                      {recordSource && <KeyValue label="Record source">{recordSource}</KeyValue>}
+                    </KeyValueList>
+                    <pre className="max-h-64 overflow-auto rounded-lg border bg-background p-3 font-mono text-xs text-muted-foreground">
+                      {JSON.stringify(row, null, 2)}
+                    </pre>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
-              <div className="evidence-score">{score(row.score ?? record?.score)}</div>
-            </article>
+              <Badge variant="outline" className="font-mono tabular-nums" title="Score">
+                {score(row.score ?? record?.score)}
+              </Badge>
+            </li>
           );
         })}
-      </div>
-    </section>
-  );
-}
-
-function SummaryStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: 'ok' | 'warn';
-}) {
-  return (
-    <div className={`trace-summary-stat${tone ? ` ${tone}` : ''}`}>
-      <span>{label}</span>
-      <strong>{value || '—'}</strong>
-    </div>
-  );
-}
-
-function Detail({ label, value }: { label: string; value?: string }) {
-  if (!value) return null;
-  return (
-    <>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </>
+      </ol>
+    </Panel>
   );
 }
 
@@ -317,14 +302,14 @@ function evidenceKind(row: Row): EvidenceKind {
 }
 
 function iconForKind(kind: EvidenceKind) {
-  if (kind === 'retrieval_log') return <Search size={16} />;
-  if (kind === 'observation') return <FileText size={16} />;
-  if (kind === 'atomic_fact') return <Boxes size={16} />;
-  if (kind === 'session_item') return <Layers size={16} />;
-  if (kind === 'working_memory') return <Flame size={16} />;
-  if (kind === 'graph_path') return <GitBranch size={16} />;
-  if (kind === 'community_summary') return <Brain size={16} />;
-  return <FileText size={16} />;
+  if (kind === 'retrieval_log') return <Search />;
+  if (kind === 'observation') return <FileText />;
+  if (kind === 'atomic_fact') return <Boxes />;
+  if (kind === 'session_item') return <Layers />;
+  if (kind === 'working_memory') return <Flame />;
+  if (kind === 'graph_path') return <GitBranch />;
+  if (kind === 'community_summary') return <Brain />;
+  return <FileText />;
 }
 
 function evidenceTitle(row: Row, record?: Row): string {

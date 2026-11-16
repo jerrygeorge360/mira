@@ -20,7 +20,9 @@ from typing import Any
 from core.db.repositories import repository_connection
 from core.llm.embeddings import embed_text
 
-SUPPORTED_COLLECTIONS = frozenset({"observations", "reflections", "community_summaries"})
+SUPPORTED_COLLECTIONS = frozenset(
+    {"observations", "reflections", "community_summaries", "document_chunks"}
+)
 INDEX_TEXT_VERSION = 1
 CHROMA_DB_PATH_ENV = "CHROMA_DB_PATH"
 
@@ -50,12 +52,17 @@ def add_embedding(
     _validate_embedding(embedding)
     _ensure_sqlite_record_exists(sqlite_table, sqlite_id, workspace_id)
 
-    pointer_metadata = {
+    pointer_metadata: dict[str, object] = {
         "sqlite_table": sqlite_table,
         "sqlite_id": sqlite_id,
         "workspace_id": workspace_id,
         "metadata_json": json.dumps(dict(metadata or {}), sort_keys=True),
     }
+    # Keep scalar filters addressable in Chroma while retaining the complete
+    # metadata payload in metadata_json for rebuilds and trace inspection.
+    for key, value in (metadata or {}).items():
+        if isinstance(value, str | int | float | bool):
+            pointer_metadata[str(key)] = value
     client = _load_chroma_client()
     if client is None:
         _fallback_collection(collection)[sqlite_id] = {
@@ -80,6 +87,7 @@ def query_embeddings(
     top_k: int,
     *,
     workspace_id: str,
+    where: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     """Query the vector index and return SQLite pointers plus retrieval metadata."""
     _validate_collection(collection)
@@ -88,11 +96,18 @@ def query_embeddings(
         raise ValueError("top_k must be a positive integer")
 
     client = _load_chroma_client()
+    query_where: dict[str, object] = {"workspace_id": workspace_id}
+    if where:
+        requested_workspace = where.get("workspace_id")
+        if requested_workspace is not None and requested_workspace != workspace_id:
+            raise ValueError("vector query cannot cross workspace boundaries")
+        query_where.update(where)
     if client is None:
         rows = [
             row
             for row in _fallback_collection(collection).values()
             if row.get("workspace_id") == workspace_id
+            and _fallback_metadata_matches(row.get("metadata"), query_where)
         ]
         ranked = sorted(
             rows,
@@ -111,7 +126,7 @@ def query_embeddings(
     result = client.get_or_create_collection(name=collection).query(
         query_embeddings=[list(embedding)],
         n_results=top_k,
-        where={"workspace_id": workspace_id},
+        where=query_where,
         include=["distances", "metadatas"],
     )
     ids = _query_result_rows(result, "ids")
@@ -355,6 +370,8 @@ def _canonical_index_text(collection: str, row: dict[str, object]) -> str:
         return str(row["content"])
     if collection == "community_summaries":
         return f"{row['title']}\n\n{row['summary']}"
+    if collection == "document_chunks":
+        return str(row["content"])
     raise ValueError(f"Unsupported collection: {collection!r}")
 
 
@@ -371,6 +388,20 @@ def _rebuild_metadata(collection: str, row: dict[str, object]) -> dict[str, obje
     if collection == "community_summaries":
         metadata["community_id"] = row["community_id"]
         metadata["title"] = row["title"]
+        return metadata
+    if collection == "document_chunks":
+        for field in (
+            "knowledge_base_id",
+            "document_id",
+            "chunk_index",
+            "page_start",
+            "page_end",
+            "heading",
+        ):
+            value = row.get(field)
+            if value is not None:
+                metadata[field] = value
+        metadata["source_type"] = "document_chunk"
         return metadata
     raise ValueError(f"Unsupported collection: {collection!r}")
 
@@ -409,6 +440,16 @@ def _as_metadata_dict(value: object) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ValueError("metadata must be a dictionary")
     return {str(key): item for key, item in value.items()}
+
+
+def _fallback_metadata_matches(value: object, where: dict[str, object]) -> bool:
+    metadata = _as_metadata_dict(value or {})
+    for key, expected in where.items():
+        if key == "workspace_id":
+            continue
+        if metadata.get(key) != expected:
+            return False
+    return True
 
 
 def _decode_pointer_metadata(pointer: dict[str, object]) -> dict[str, object]:

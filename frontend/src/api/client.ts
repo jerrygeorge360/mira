@@ -51,10 +51,61 @@ export interface MemoryHealthResponse {
   health: Record<string, unknown>;
 }
 
+export interface KnowledgeBase {
+  id: string;
+  name: string;
+  description?: string | null;
+  document_count?: number;
+  created_at?: string | null;
+  updated_at?: string | null;
+}
+
+export interface KnowledgeBaseDocument {
+  id: string;
+  knowledge_base_id?: string;
+  filename: string;
+  mime_type?: string | null;
+  size_bytes?: number | null;
+  status: string;
+  page_count?: number | null;
+  character_count?: number | null;
+  error?: string | null;
+  created_at?: string | null;
+  processed_at?: string | null;
+}
+
+export interface KnowledgeBaseListResponse {
+  knowledge_bases?: KnowledgeBase[];
+  items?: KnowledgeBase[];
+}
+
+export interface KnowledgeBaseDocumentsResponse {
+  documents?: KnowledgeBaseDocument[];
+  items?: KnowledgeBaseDocument[];
+}
+
+export interface SessionKnowledgeBase extends KnowledgeBase {
+  attached: boolean;
+}
+
+export interface SessionKnowledgeBasesResponse {
+  session_id: string;
+  knowledge_bases: SessionKnowledgeBase[];
+  retrieval_enabled: boolean;
+}
+
+/**
+ * Sleep responses are intentionally open-ended. The sleep lifecycle is still
+ * gaining fields, so the admin surface normalizes additive fields at the edge.
+ */
+export type MemorySleepConfigResponse = Record<string, unknown>;
+export type MemorySleepResponse = Record<string, unknown>;
+export type MemorySleepRunsResponse = Record<string, unknown>;
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const method = (init?.method ?? 'GET').toUpperCase();
   const headers = new Headers(init?.headers);
-  if (init?.body) headers.set('Content-Type', 'application/json');
+  if (init?.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     const csrf = readCookie('mira_csrf');
     if (csrf) headers.set('X-CSRF-Token', csrf);
@@ -90,6 +141,75 @@ export interface AuthResponse {
   expires_at: string | null;
   is_platform_admin: boolean;
   ready: boolean;
+}
+
+export interface PlatformProject {
+  id: string;
+  organization_id: string;
+  name: string;
+  slug?: string;
+  environment: 'development' | 'production';
+  created_at?: string;
+}
+
+export interface PlatformOrganization {
+  id: string;
+  name: string;
+  slug: string;
+  plan: string;
+  subscription_status: string;
+  billing_currency: string;
+  current_period_end?: string | null;
+}
+
+export interface PlatformKey {
+  id: string;
+  organization_id: string;
+  project_id: string;
+  project_name: string;
+  name: string;
+  prefix: string;
+  environment: 'development' | 'production';
+  scopes: string[];
+  created_at: string;
+  last_used_at?: string | null;
+  expires_at?: string | null;
+  revoked_at?: string | null;
+}
+
+export interface PlatformOverview {
+  organizations: PlatformOrganization[];
+  organization: PlatformOrganization;
+  projects: PlatformProject[];
+  api_keys: PlatformKey[];
+  namespaces: number;
+  documents: number;
+  usage: {
+    memory_writes: { used: number; limit: number };
+    retrievals: { used: number; limit: number };
+    documents_uploaded: number;
+    api_requests: number;
+    by_operation: Record<string, { requests: number; succeeded: number; bytes_ingested?: number }>;
+  };
+  plans: Record<string, {
+    name: string;
+    monthly_price_minor: number | null;
+    currency: string;
+    memory_writes_monthly: number;
+    retrievals_monthly: number;
+    projects: number;
+    api_keys: number;
+    rate_limit_per_minute: number;
+  }>;
+}
+
+export interface PlatformNamespace {
+  namespace: string;
+  project_id: string;
+  project_name: string;
+  memories: number;
+  documents: number;
+  created_at: string;
 }
 
 export interface AdminOverviewResponse {
@@ -134,6 +254,50 @@ export const api = {
   },
 
   authMe: () => req<AuthResponse>('/auth/me'),
+
+  platformOverview: (organizationId?: string) => {
+    const qs = new URLSearchParams();
+    if (organizationId) qs.set('organization_id', organizationId);
+    const query = qs.toString();
+    return req<PlatformOverview>(`/platform${query ? `?${query}` : ''}`);
+  },
+
+  createOrganization: (name: string) =>
+    req<{ id: string; name: string; plan: string }>('/platform/organizations', {
+      method: 'POST', body: JSON.stringify({ name }),
+    }),
+
+  updateOrganization: (organizationId: string, name: string) =>
+    req<{ id: string; name: string }>(`/platform/organizations/${encodeURIComponent(organizationId)}`, {
+      method: 'PATCH', body: JSON.stringify({ name }),
+    }),
+
+  createProject: (body: { organization_id: string; name: string; environment: string }) =>
+    req<PlatformProject>('/platform/projects', { method: 'POST', body: JSON.stringify(body) }),
+
+  createPlatformKey: (body: { project_id: string; name: string; scopes: string[]; expires_at?: string }) =>
+    req<{ api_key: PlatformKey; secret: string; warning: string }>('/platform/keys', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  revokePlatformKey: (keyId: string) =>
+    req<void>(`/platform/keys/${encodeURIComponent(keyId)}`, { method: 'DELETE' }),
+
+  platformNamespaces: (organizationId: string) =>
+    req<{ namespaces: PlatformNamespace[] }>(`/platform/namespaces?organization_id=${encodeURIComponent(organizationId)}`),
+
+  platformBilling: (organizationId: string) =>
+    req<{ organization_id: string; plan: string; subscription_status: string; billing_currency: string; current_period_end: string | null; monthly_price_minor: number | null }>(`/billing/subscription?organization_id=${encodeURIComponent(organizationId)}`),
+
+  subscribePlatform: (body: { organization_id: string; plan: 'developer' | 'pro' | 'scale'; email: string }) =>
+    req<{ authorization_url: string; reference: string }>('/billing/subscribe', {
+      method: 'POST', body: JSON.stringify(body),
+    }),
+
+  cancelPlatformSubscription: (organization_id: string) =>
+    req<{ status: string; manage_url: string }>('/billing/cancel', {
+      method: 'POST', body: JSON.stringify({ organization_id }),
+    }),
 
   adminOverview: () => req<AdminOverviewResponse>('/admin/overview'),
 
@@ -182,12 +346,42 @@ export const api = {
 
   memoryHealth: () => req<MemoryHealthResponse>('/memory/health'),
 
+  memorySleepConfig: () => req<MemorySleepConfigResponse>('/memory/sleep/config'),
+
+  updateMemorySleepConfig: (body: { enabled: boolean; interval_hours: number }) =>
+    req<MemorySleepConfigResponse>('/memory/sleep/config', {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+
+  runMemorySleep: () =>
+    req<MemorySleepResponse>('/memory/sleep', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  memorySleepRuns: (params?: { limit?: number; offset?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit != null) qs.set('limit', String(params.limit));
+    if (params?.offset != null) qs.set('offset', String(params.offset));
+    return req<MemorySleepRunsResponse>(`/memory/sleep/runs?${qs}`);
+  },
+
+  memorySleepRun: (runId: string) =>
+    req<MemorySleepResponse>(`/memory/sleep/runs/${encodeURIComponent(runId)}`),
+
   foresight: (params?: { status?: string; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.limit != null) qs.set('limit', String(params.limit));
     return req<ItemsResponse>(`/foresight?${qs}`);
   },
+
+  confirmForesightCandidate: (recordId: string) =>
+    req<{ id: string; status: string }>(
+      `/foresight/${encodeURIComponent(recordId)}/confirm`,
+      { method: 'POST', body: JSON.stringify({ confirmed: true }) },
+    ),
 
   reflections: (params?: { limit?: number }) => {
     const qs = new URLSearchParams();
@@ -205,6 +399,18 @@ export const api = {
 
   sessionWorkingSet: (sessionId: string) =>
     req<Record<string, unknown>>(`/sessions/${sessionId}/working-set`),
+
+  sessionKnowledgeBases: (sessionId: string) =>
+    req<SessionKnowledgeBasesResponse>(`/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`),
+
+  updateSessionKnowledgeBases: (sessionId: string, knowledgeBaseIds: string[]) =>
+    req<SessionKnowledgeBasesResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ knowledge_base_ids: knowledgeBaseIds }),
+      },
+    ),
 
   retrievalTrace: (traceId: string) =>
     req<Record<string, unknown>>(`/retrieval/traces/${traceId}`),
@@ -225,6 +431,34 @@ export const api = {
       `/sessions/${encodeURIComponent(sessionId)}`,
       { method: 'DELETE' },
     ),
+
+  knowledgeBases: () => req<KnowledgeBaseListResponse>('/knowledge-bases'),
+
+  createKnowledgeBase: (body: { name: string; description?: string }) =>
+    req<KnowledgeBase>('/knowledge-bases', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+
+  knowledgeBaseDocuments: (knowledgeBaseId: string) =>
+    req<KnowledgeBaseDocumentsResponse>(
+      `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`,
+    ),
+
+  uploadKnowledgeBaseDocument: (knowledgeBaseId: string, file: File) => {
+    const body = new FormData();
+    body.append('file', file);
+    return req<KnowledgeBaseDocument>(
+      `/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}/documents`,
+      { method: 'POST', body },
+    );
+  },
+
+  deleteKnowledgeBase: (knowledgeBaseId: string) =>
+    req<void>(`/knowledge-bases/${encodeURIComponent(knowledgeBaseId)}`, { method: 'DELETE' }),
+
+  deleteKnowledgeBaseDocument: (documentId: string) =>
+    req<void>(`/documents/${encodeURIComponent(documentId)}`, { method: 'DELETE' }),
 };
 
 async function streamReq(

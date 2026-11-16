@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, Response
 from api.access_logging import install_health_access_filter
 from api.dependencies import configure_runtime_database, load_runtime_environment
 from api.oauth import OAuthProtocolError, sync_first_party_oauth_clients
+from api.platform_metering import public_api_metering_middleware
 from api.rate_limit import rate_limit_middleware
 from api.routes import (
     admin,
@@ -24,8 +25,10 @@ from api.routes import (
     chat,
     evaluation,
     health,
+    knowledge_bases,
     memory,
     oauth,
+    platform,
     retrieval,
     sessions,
     worker,
@@ -74,14 +77,19 @@ def create_app() -> FastAPI:
     )
     app.middleware("http")(public_oauth_cors_middleware)
     app.middleware("http")(rate_limit_middleware)
+    app.middleware("http")(public_api_metering_middleware)
     app.include_router(health.router)
     app.include_router(auth.router)
     app.include_router(admin.router)
     app.include_router(oauth.router)
+    app.include_router(platform.router)
+    app.include_router(platform.billing_router)
+    app.include_router(platform.public_router)
     app.include_router(workspace.router)
     app.include_router(chat.router)
     app.include_router(sessions.router)
     app.include_router(memory.router)
+    app.include_router(knowledge_bases.router)
     app.include_router(retrieval.router)
     app.include_router(worker.router)
     app.include_router(evaluation.router)

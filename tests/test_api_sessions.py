@@ -13,12 +13,18 @@ from api.auth import AuthenticatedWorkspace
 from api.routes.sessions import (
     create_session_route,
     delete_session_route,
+    get_session_knowledge_bases_route,
     get_session_route,
     get_working_set_route,
     list_sessions_route,
+    update_session_knowledge_bases_route,
 )
-from api.schemas.sessions import CreateSessionRequest
+from api.schemas.sessions import (
+    CreateSessionRequest,
+    UpdateSessionKnowledgeBasesRequest,
+)
 from core.db import chroma
+from core.db.evidence import register_source
 from core.db.repositories import (
     WorkspaceContext,
     configure_database,
@@ -29,6 +35,7 @@ from core.db.repositories import (
     create_foresight_record,
     create_graph_edge,
     create_graph_node,
+    create_knowledge_base,
     create_reflection,
     create_session,
     create_session_item,
@@ -39,12 +46,15 @@ from core.db.repositories import (
     save_observation,
 )
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.memory.atomic_fact import store_atomic_facts
+from core.memory.change import apply_supersession
 from core.memory.read_models import (
     get_memory_graph_read_model,
     get_memory_health_read_model,
     list_community_summaries_read_model,
     list_reflections_read_model,
 )
+from core.memory.reflection import store_domain_reflection_with_evidence
 
 AUTH = AuthenticatedWorkspace(WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="development"))
 REQUEST = Request({"type": "http", "method": "POST", "path": "/sessions", "headers": []})
@@ -60,6 +70,43 @@ def test_session_endpoint_creates_and_returns_session(tmp_path: Any, monkeypatch
 
     fetched = get_session_route(created.session_id, AUTH)
     assert fetched.session_id == created.session_id
+
+
+def test_session_knowledge_base_routes_enforce_explicit_workspace_scoped_allowlist(
+    tmp_path: Any,
+) -> None:
+    configure_database(tmp_path / "api-session-kb.sqlite3")
+    session_id = create_session_route(REQUEST, CreateSessionRequest(), AUTH).session_id
+    knowledge_base_id = create_knowledge_base(
+        "Authorized library", workspace_id=LEGACY_WORKSPACE_ID
+    )
+    other_workspace_id = create_workspace("Other", "other-kb-workspace", "development")
+    other_knowledge_base_id = create_knowledge_base(
+        "Private library", workspace_id=other_workspace_id
+    )
+
+    initial = get_session_knowledge_bases_route(session_id, AUTH)
+    assert len(initial.knowledge_bases) == 1
+    assert initial.knowledge_bases[0].id == knowledge_base_id
+    assert initial.knowledge_bases[0].attached is False
+    updated = update_session_knowledge_bases_route(
+        REQUEST,
+        session_id,
+        UpdateSessionKnowledgeBasesRequest(knowledge_base_ids=[knowledge_base_id]),
+        AUTH,
+    )
+    assert [(base.id, base.attached) for base in updated.knowledge_bases] == [
+        (knowledge_base_id, True)
+    ]
+    with pytest.raises(HTTPException) as error:
+        update_session_knowledge_bases_route(
+            REQUEST,
+            session_id,
+            UpdateSessionKnowledgeBasesRequest(knowledge_base_ids=[other_knowledge_base_id]),
+            AUTH,
+        )
+    assert error.value.status_code == 404
+    assert get_session_knowledge_bases_route(session_id, AUTH).knowledge_bases[0].attached is True
 
 
 def test_session_list_message_counts_are_workspace_scoped(tmp_path: Any, monkeypatch: Any) -> None:
@@ -504,3 +551,232 @@ def test_deleting_last_session_resets_workspace_memory(tmp_path: Any, monkeypatc
     assert cold_components["observations"] == 0
     assert cold_components["atomic_facts"] == 0
     assert warm_components["community_summaries"] == 0
+
+
+def test_delete_session_preserves_live_document_reflection(tmp_path: Any, monkeypatch: Any) -> None:
+    configure_database(tmp_path / "api-delete-document-reflection.sqlite3")
+    deleted_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Empty session"), AUTH
+    ).session_id
+    create_session_route(REQUEST, CreateSessionRequest(title="Retained session"), AUTH)
+    knowledge_base_id = create_knowledge_base("Shared curriculum", workspace_id=LEGACY_WORKSPACE_ID)
+    now = "2026-11-16T00:00:00+00:00"
+    chunks = (
+        ("a", "Algebra is taught in SS2."),
+        ("b", "SS2 algebra includes equations."),
+    )
+    with repository_connection() as connection:
+        for suffix, content in chunks:
+            document_id = f"reflection-document-{suffix}"
+            chunk_id = f"reflection-chunk-{suffix}"
+            connection.execute(
+                "INSERT INTO documents "
+                "(id, workspace_id, knowledge_base_id, filename, mime_type, size_bytes, "
+                "s3_bucket, s3_key, checksum_sha256, status, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, 'text/plain', ?, 'bucket', ?, 'hash', 'ready', ?, ?)",
+                (
+                    document_id,
+                    LEGACY_WORKSPACE_ID,
+                    knowledge_base_id,
+                    f"{suffix}.txt",
+                    len(content),
+                    document_id,
+                    now,
+                    now,
+                ),
+            )
+            connection.execute(
+                "INSERT INTO document_chunks "
+                "(id, workspace_id, knowledge_base_id, document_id, chunk_index, "
+                "content, created_at) "
+                "VALUES (?, ?, ?, ?, 0, ?, ?)",
+                (chunk_id, LEGACY_WORKSPACE_ID, knowledge_base_id, document_id, content, now),
+            )
+    source_ids = [
+        register_source(
+            "document_chunk", f"reflection-chunk-{suffix}", workspace_id=LEGACY_WORKSPACE_ID
+        )
+        for suffix, _content in chunks
+    ]
+    monkeypatch.setattr("core.memory.reflection.embed_text", lambda _content: [0.0])
+    monkeypatch.setattr(chroma, "add_embedding", lambda *args, **kwargs: None)
+    monkeypatch.setattr(chroma, "remove_from_index", lambda *args, **kwargs: None)
+    reflection_id = store_domain_reflection_with_evidence(
+        {
+            "scope": "domain",
+            "reflection_type": "world_knowledge",
+            "content": "The curriculum teaches algebra in SS2.",
+            "confidence": 0.8,
+            "evidence_ids": source_ids,
+            "workspace_id": LEGACY_WORKSPACE_ID,
+            "knowledge_base_id": knowledge_base_id,
+            "project_id": None,
+            "namespace": None,
+        },
+        source_ids,
+        workspace_id=LEGACY_WORKSPACE_ID,
+    )
+
+    delete_session_route(REQUEST, deleted_session_id, AUTH)
+
+    with repository_connection() as connection:
+        reflection = connection.execute(
+            "SELECT status FROM reflections WHERE id = ?", (reflection_id,)
+        ).fetchone()
+    assert reflection["status"] == "active"
+
+
+def test_delete_session_reopens_fact_after_its_supersession_source_is_retracted(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    configure_database(tmp_path / "api-delete-supersession.sqlite3")
+    deleted_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="New claim"), AUTH
+    ).session_id
+    retained_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Prior claim"), AUTH
+    ).session_id
+    new_observation = save_observation(
+        deleted_session_id, "user", "MIRA migrated from MongoDB to PostgreSQL."
+    )
+    old_observation = save_observation(retained_session_id, "user", "MIRA used MongoDB.")
+    old_fact, new_fact = store_atomic_facts(
+        [
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "MongoDB",
+                "confidence": 0.9,
+                "source_observation_id": old_observation,
+            },
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "PostgreSQL",
+                "confidence": 0.9,
+                "source_observation_id": new_observation,
+            },
+        ]
+    )
+    edge_id = apply_supersession(old_fact, new_fact, [old_observation, new_observation])
+    monkeypatch.setattr(chroma, "remove_from_index", lambda *args, **kwargs: None)
+
+    delete_session_route(REQUEST, deleted_session_id, AUTH)
+
+    with repository_connection() as connection:
+        statuses = {
+            str(row["id"]): str(row["status"])
+            for row in connection.execute(
+                "SELECT id, status FROM atomic_facts WHERE id IN (?, ?)",
+                (old_fact, new_fact),
+            )
+        }
+        edge = connection.execute(
+            "SELECT invalidated_at FROM graph_edges WHERE id = ?", (edge_id,)
+        ).fetchone()
+    assert statuses == {old_fact: "active", new_fact: "rejected"}
+    assert edge["invalidated_at"] is not None
+
+
+def test_delete_session_does_not_restore_facts_from_the_deleted_observation(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    configure_database(tmp_path / "api-delete-shared-transition-source.sqlite3")
+    session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Single source transition"), AUTH
+    ).session_id
+    create_session_route(REQUEST, CreateSessionRequest(title="Retained session"), AUTH)
+    observation_id = save_observation(
+        session_id, "user", "MIRA migrated from MongoDB to PostgreSQL."
+    )
+    old_fact, new_fact = store_atomic_facts(
+        [
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "MongoDB",
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            },
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "PostgreSQL",
+                "confidence": 0.9,
+                "source_observation_id": observation_id,
+            },
+        ]
+    )
+    edge_id = apply_supersession(old_fact, new_fact, [observation_id])
+    monkeypatch.setattr(chroma, "remove_from_index", lambda *args, **kwargs: None)
+
+    delete_session_route(REQUEST, session_id, AUTH)
+
+    with repository_connection() as connection:
+        statuses = {
+            str(row["id"]): str(row["status"])
+            for row in connection.execute(
+                "SELECT id, status FROM atomic_facts WHERE id IN (?, ?)",
+                (old_fact, new_fact),
+            )
+        }
+        edge = connection.execute(
+            "SELECT invalidated_at FROM graph_edges WHERE id = ?", (edge_id,)
+        ).fetchone()
+    assert statuses == {old_fact: "rejected", new_fact: "rejected"}
+    assert edge["invalidated_at"] is not None
+
+
+def test_delete_unrelated_session_preserves_supported_supersession(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    configure_database(tmp_path / "api-delete-unrelated-session.sqlite3")
+    unrelated_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Unrelated"), AUTH
+    ).session_id
+    prior_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Prior claim"), AUTH
+    ).session_id
+    current_session_id = create_session_route(
+        REQUEST, CreateSessionRequest(title="Current claim"), AUTH
+    ).session_id
+    prior_observation = save_observation(prior_session_id, "user", "MIRA used MongoDB.")
+    current_observation = save_observation(
+        current_session_id, "user", "MIRA migrated from MongoDB to PostgreSQL."
+    )
+    old_fact, new_fact = store_atomic_facts(
+        [
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "MongoDB",
+                "confidence": 0.9,
+                "source_observation_id": prior_observation,
+            },
+            {
+                "subject": "MIRA",
+                "predicate": "uses",
+                "object": "PostgreSQL",
+                "confidence": 0.9,
+                "source_observation_id": current_observation,
+            },
+        ]
+    )
+    edge_id = apply_supersession(old_fact, new_fact, [prior_observation, current_observation])
+    monkeypatch.setattr(chroma, "remove_from_index", lambda *args, **kwargs: None)
+
+    delete_session_route(REQUEST, unrelated_session_id, AUTH)
+
+    with repository_connection() as connection:
+        statuses = {
+            str(row["id"]): str(row["status"])
+            for row in connection.execute(
+                "SELECT id, status FROM atomic_facts WHERE id IN (?, ?)",
+                (old_fact, new_fact),
+            )
+        }
+        edge = connection.execute(
+            "SELECT invalidated_at FROM graph_edges WHERE id = ?", (edge_id,)
+        ).fetchone()
+    assert statuses == {old_fact: "superseded", new_fact: "active"}
+    assert edge["invalidated_at"] is None

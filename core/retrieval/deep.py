@@ -18,10 +18,15 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Collection
 
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
-from core.retrieval.quick import retrieve_quick
+from core.memory.lifecycle import (
+    is_historical_query,
+    lifecycle_for_retrieval,
+)
+from core.retrieval.quick import graph_node_allowed, retrieve_quick, source_record_allowed
 from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]
@@ -69,6 +74,9 @@ def retrieve_deep(
     limit: int,
     *,
     workspace_id: str | None = None,
+    historical: bool = False,
+    include_documents: bool = True,
+    allowed_knowledge_base_ids: Collection[str] | None = None,
 ) -> list[Evidence]:
     """Retrieve synthesis-ready context from community summaries and reflections."""
     if limit < 1:
@@ -80,37 +88,115 @@ def retrieve_deep(
     if workspace_id is not None and session_workspace not in {None, workspace_id}:
         raise ValueError("session does not belong to the requested workspace")
     workspace_id = workspace_id or session_workspace or LEGACY_WORKSPACE_ID
-    summaries = _community_candidates(query, limit, workspace_id)
+    historical = is_historical_query(query, historical=historical)
+    summaries = _community_candidates(query, limit, workspace_id, historical=historical)
+    if not include_documents or allowed_knowledge_base_ids is not None:
+        summaries = [
+            item
+            for item in summaries
+            if _community_source_allowed(
+                item, workspace_id, include_documents, allowed_knowledge_base_ids
+            )
+        ]
     if not summaries:
         LOGGER.info("Deep Mode found no community summaries; falling back to Quick Mode")
-        return _quick_fallback(query, session_id, limit, workspace_id)
+        return _quick_fallback(
+            query,
+            session_id,
+            limit,
+            workspace_id,
+            historical=historical,
+            include_documents=include_documents,
+            allowed_knowledge_base_ids=allowed_knowledge_base_ids,
+        )
 
     candidates = [
         *summaries,
-        *_reflection_candidates(query, limit, workspace_id),
-        *_supporting_observation_candidates(query, session_id),
+        *_reflection_candidates(query, limit, workspace_id, historical=historical),
+        *_supporting_observation_candidates(query, session_id, workspace_id, historical=historical),
     ]
+    if not include_documents or allowed_knowledge_base_ids is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.get("source") != "reflection"
+            or source_record_allowed(
+                "reflection",
+                str(item["source_id"]),
+                workspace_id,
+                include_documents,
+                allowed_knowledge_base_ids,
+                record=item.get("record"),
+            )
+        ]
     candidates.sort(key=_ranking_key)
     return candidates[:limit]
 
 
-def deep_retrieve(query: str, limit: int = 8) -> list[Evidence]:
+def _community_source_allowed(
+    item: Evidence,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> bool:
+    members = item.get("member_node_ids")
+    return (
+        isinstance(members, list)
+        and bool(members)
+        and all(
+            isinstance(node_id, str)
+            and graph_node_allowed(
+                node_id, workspace_id, include_documents, allowed_knowledge_base_ids
+            )
+            for node_id in members
+        )
+    )
+
+
+def deep_retrieve(query: str, limit: int = 8, *, historical: bool = False) -> list[Evidence]:
     """Retrieve graph-community summaries for broad synthesis without session scope."""
-    return retrieve_deep(query, session_id=None, limit=limit)
+    return retrieve_deep(query, session_id=None, limit=limit, historical=historical)
 
 
 def _quick_fallback(
-    query: str, session_id: str | None, limit: int, workspace_id: str
+    query: str,
+    session_id: str | None,
+    limit: int,
+    workspace_id: str,
+    *,
+    historical: bool = False,
+    include_documents: bool = True,
+    allowed_knowledge_base_ids: Collection[str] | None = None,
 ) -> list[Evidence]:
-    results = retrieve_quick(query, session_id, limit, workspace_id=workspace_id)
+    results = retrieve_quick(
+        query,
+        session_id,
+        limit,
+        workspace_id=workspace_id,
+        historical=historical,
+        include_documents=include_documents,
+        allowed_knowledge_base_ids=allowed_knowledge_base_ids,
+    )
     for result in results:
         result["retrieval_mode"] = "deep"
         result["deep_mode_fallback"] = "no_communities"
     return results
 
 
-def _community_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
-    rows = _fetch_community_summaries(workspace_id)
+def _community_candidates(
+    query: str,
+    limit: int,
+    workspace_id: str,
+    *,
+    historical: bool = False,
+) -> list[Evidence]:
+    rows = [
+        row
+        for row in _fetch_community_summaries(workspace_id)
+        if _lifecycle_eligible(
+            "community_summaries", row, workspace_id, query=query, historical=historical
+        )
+    ]
     if not rows:
         return []
     query_tokens = _tokens(query)
@@ -135,11 +221,21 @@ def _community_candidates(query: str, limit: int, workspace_id: str) -> list[Evi
     return candidates
 
 
-def _reflection_candidates(query: str, limit: int, workspace_id: str) -> list[Evidence]:
+def _reflection_candidates(
+    query: str,
+    limit: int,
+    workspace_id: str,
+    *,
+    historical: bool = False,
+) -> list[Evidence]:
     # Match reflections by meaning (embedding similarity), not literal token overlap: a
     # synthesized reflection rarely shares words with the question it answers ("what kind of
     # engineer am I?" vs "follows test-driven development"), so lexical matching dropped them.
-    active_by_id = {str(row["id"]): row for row in _fetch_active_reflections(workspace_id)}
+    active_by_id = {
+        str(row["id"]): row
+        for row in _fetch_reflections(workspace_id, historical=historical)
+        if _lifecycle_eligible("reflections", row, workspace_id, query=query, historical=historical)
+    }
     if not active_by_id:
         return []
     candidates: list[Evidence] = []
@@ -190,14 +286,24 @@ def _reflection_candidates(query: str, limit: int, workspace_id: str) -> list[Ev
     return candidates[:limit]
 
 
-def _supporting_observation_candidates(query: str, session_id: str | None) -> list[Evidence]:
+def _supporting_observation_candidates(
+    query: str,
+    session_id: str | None,
+    workspace_id: str,
+    *,
+    historical: bool = False,
+) -> list[Evidence]:
     if session_id is None:
         return []
     query_tokens = _tokens(query)
     if not query_tokens:
         return []
     candidates: list[Evidence] = []
-    for row in _fetch_session_observations(session_id):
+    for row in _fetch_session_observations(session_id, workspace_id):
+        if not _lifecycle_eligible(
+            "observations", row, workspace_id, query=query, historical=historical
+        ):
+            continue
         content = str(row["content"])
         relevance = _token_overlap(query_tokens, content)
         if relevance <= 0.0:
@@ -247,25 +353,54 @@ def _fetch_community_summaries(workspace_id: str) -> list[dict[str, object]]:
     return [dict(row) for row in rows]
 
 
-def _fetch_active_reflections(workspace_id: str) -> list[dict[str, object]]:
+def _fetch_reflections(workspace_id: str, *, historical: bool = False) -> list[dict[str, object]]:
+    status_clause = "" if historical else "AND status = ?"
+    parameters: tuple[object, ...] = (workspace_id,) if historical else (workspace_id, "active")
+    with repository_connection() as connection:
+        rows = connection.execute(
+            f"""
+            SELECT * FROM reflections
+            WHERE workspace_id = ? {status_clause} ORDER BY created_at ASC
+            """,  # nosec B608
+            parameters,
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def _fetch_session_observations(session_id: str, workspace_id: str) -> list[dict[str, object]]:
     with repository_connection() as connection:
         rows = connection.execute(
             """
-            SELECT * FROM reflections
-            WHERE workspace_id = ? AND status = ? ORDER BY created_at ASC
+            SELECT * FROM observations
+            WHERE session_id = ? AND workspace_id = ?
+            ORDER BY created_at DESC LIMIT ?
             """,
-            (workspace_id, "active"),
+            (session_id, workspace_id, SUPPORTING_OBSERVATIONS * 5),
         ).fetchall()
     return [dict(row) for row in rows]
 
 
-def _fetch_session_observations(session_id: str) -> list[dict[str, object]]:
-    with repository_connection() as connection:
-        rows = connection.execute(
-            "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
-            (session_id, SUPPORTING_OBSERVATIONS * 5),
-        ).fetchall()
-    return [dict(row) for row in rows]
+def _lifecycle_eligible(
+    source_type: str,
+    record: dict[str, object],
+    workspace_id: str,
+    *,
+    query: str,
+    historical: bool,
+) -> bool:
+    """Apply the shared lifecycle policy while retaining trust-neutral evidence."""
+    try:
+        state = lifecycle_for_retrieval(
+            source_type,
+            str(record["id"]),
+            workspace_id,
+            record=record,
+            query=query,
+            historical=historical,
+        )
+    except ValueError:
+        return False
+    return bool(state.get("eligible", True))
 
 
 def _summary_text(row: dict[str, object]) -> str:

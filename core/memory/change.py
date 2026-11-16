@@ -10,6 +10,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 
+from core.db.evidence import link_evidence, list_active_evidence
 from core.db.repositories import repository_connection
 from core.memory.graph import create_graph_edge, create_graph_node
 
@@ -83,22 +84,51 @@ def detect_memory_change(
                 "target_id": new_fact_id,
                 "confidence": _relation_confidence(prior_fact, new_fact, relation),
                 "evidence": _source_observations(prior_fact, new_fact),
+                "evidence_source_ids": _source_ids(prior_fact, new_fact),
                 "reason": _change_reason(prior_fact, new_fact, relation),
             }
         )
     return changes
 
 
-def apply_supersession(old_fact_id: str, new_fact_id: str, evidence: list[str]) -> str:
+def apply_supersession(
+    old_fact_id: str,
+    new_fact_id: str,
+    evidence: list[str],
+    *,
+    evidence_source_ids: list[str] | None = None,
+) -> str:
     """Record acknowledged belief evolution as a SUPERSEDED_BY graph edge."""
     old_fact = _fetch_atomic_fact(old_fact_id)
     new_fact = _fetch_atomic_fact(new_fact_id)
-    edge_id = _create_fact_relation_edge(old_fact, new_fact, "SUPERSEDED_BY", evidence)
-    _close_old_fact(old_fact_id)
+    if _has_document_source(old_fact, new_fact) and (
+        not _facts_are_comparable(old_fact, new_fact)
+        or not _has_explicit_transition(old_fact, new_fact)
+    ):
+        raise ValueError("document supersession requires compatible claims and explicit transition")
+    edge_id = _existing_fact_relation_edge(old_fact, new_fact, "SUPERSEDED_BY")
+    if edge_id is None:
+        edge_id = _create_fact_relation_edge(
+            old_fact, new_fact, "SUPERSEDED_BY", evidence, evidence_source_ids
+        )
+    else:
+        _link_edge_evidence(edge_id, old_fact, new_fact, evidence_source_ids)
+    _close_old_fact(
+        old_fact_id,
+        valid_until=(str(new_fact["valid_from"]) if new_fact.get("valid_from") else None)
+        if _has_document_source(old_fact, new_fact)
+        else datetime.now(timezone.utc).isoformat(),  # noqa: UP017
+    )
     return edge_id
 
 
-def apply_contradiction(fact_a_id: str, fact_b_id: str, evidence: list[str]) -> str:
+def apply_contradiction(
+    fact_a_id: str,
+    fact_b_id: str,
+    evidence: list[str],
+    *,
+    evidence_source_ids: list[str] | None = None,
+) -> str:
     """Record unresolved incompatible claims as a CONTRADICTS graph edge.
 
     Both claims stay active -- no belief is retired -- but the unresolved conflict
@@ -107,9 +137,17 @@ def apply_contradiction(fact_a_id: str, fact_b_id: str, evidence: list[str]) -> 
     """
     fact_a = _fetch_atomic_fact(fact_a_id)
     fact_b = _fetch_atomic_fact(fact_b_id)
-    edge_id = _create_fact_relation_edge(fact_a, fact_b, "CONTRADICTS", evidence)
-    _reduce_fact_confidence(fact_a_id, CONTRADICTION_CONFIDENCE_FACTOR)
-    _reduce_fact_confidence(fact_b_id, CONTRADICTION_CONFIDENCE_FACTOR)
+    if _has_document_source(fact_a, fact_b) and not _facts_are_comparable(fact_a, fact_b):
+        raise ValueError("document contradiction requires compatible claims and scope")
+    edge_id = _existing_fact_relation_edge(fact_a, fact_b, "CONTRADICTS")
+    if edge_id is None:
+        edge_id = _create_fact_relation_edge(
+            fact_a, fact_b, "CONTRADICTS", evidence, evidence_source_ids
+        )
+        _reduce_fact_confidence(fact_a_id, CONTRADICTION_CONFIDENCE_FACTOR)
+        _reduce_fact_confidence(fact_b_id, CONTRADICTION_CONFIDENCE_FACTOR)
+    else:
+        _link_edge_evidence(edge_id, fact_a, fact_b, evidence_source_ids)
     return edge_id
 
 
@@ -220,12 +258,20 @@ def _contradiction_note(fact_a_id: str, fact_b_id: str) -> dict[str, object] | N
     except ValueError:
         return None
     older, newer = sorted((fact_a, fact_b), key=lambda fact: str(fact.get("created_at", "")))
+    document_conflict = _has_document_source(fact_a, fact_b)
+    resolution = (
+        "Do not choose by upload time; assess authority, effective dates and applicability."
+        if document_conflict
+        else (
+            "Surface the conflict; if forced to choose, prefer the later value "
+            "but say it is unresolved."
+        )
+    )
     content = (
         "Unresolved conflict in memory: "
         f"'{older['subject']} {older['predicate']} {older['object']}' (earlier) "
         f"vs '{newer['subject']} {newer['predicate']} {newer['object']}' (later). "
-        "Surface the conflict; if forced to choose, prefer the later value but say it is "
-        "unresolved."
+        f"{resolution}"
     )
     note_id = f"contradiction:{fact_a_id}:{fact_b_id}"
     return {"source": "contradiction", "id": note_id, "source_id": note_id, "content": content}
@@ -236,12 +282,40 @@ def _create_fact_relation_edge(
     target_fact: AtomicFactRecord,
     edge_type: str,
     evidence: list[str],
+    evidence_source_ids: list[str] | None = None,
 ) -> str:
-    if not evidence:
+    source_ids = (
+        evidence_source_ids
+        if evidence_source_ids is not None
+        else _source_ids(source_fact, target_fact)
+    )
+    if not evidence and not source_ids:
         raise ValueError("evidence must not be empty")
+    if _has_document_source(source_fact, target_fact):
+        source_support = set(_source_ids(source_fact))
+        target_support = set(_source_ids(target_fact))
+        supplied = set(source_ids)
+        if (
+            not supplied <= source_support | target_support
+            or not supplied & source_support
+            or not supplied & target_support
+        ):
+            raise ValueError("relation evidence must support both document claims")
     source_node_id = _graph_node_for_fact(source_fact)
     target_node_id = _graph_node_for_fact(target_fact)
     workspace_id = str(source_fact["workspace_id"])
+    metadata: dict[str, object] = {}
+    if edge_type == "SUPERSEDED_BY":
+        metadata["supersession_rollback"] = {
+            "fact_id": str(source_fact["id"]),
+            "status": str(source_fact.get("status") or "active"),
+            "valid_until": source_fact.get("valid_until"),
+        }
+    elif edge_type == "CONTRADICTS":
+        metadata["contradiction_rollback"] = {
+            "fact_ids": [str(source_fact["id"]), str(target_fact["id"])],
+            "confidence_factor": CONTRADICTION_CONFIDENCE_FACTOR,
+        }
     return create_graph_edge(
         source_node_id,
         target_node_id,
@@ -249,7 +323,50 @@ def _create_fact_relation_edge(
         confidence=_minimum_confidence(source_fact, target_fact),
         source_observations=evidence,
         workspace_id=workspace_id,
+        evidence_source_ids=source_ids,
+        metadata=metadata,
     )
+
+
+def _existing_fact_relation_edge(
+    left: AtomicFactRecord, right: AtomicFactRecord, edge_type: str
+) -> str | None:
+    left_node = _graph_node_for_fact(left)
+    right_node = _graph_node_for_fact(right)
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT id FROM graph_edges WHERE workspace_id = ? AND edge_type = ? "
+            "AND invalidated_at IS NULL AND ((source_node_id = ? AND target_node_id = ?) "
+            "OR (? = 'CONTRADICTS' AND source_node_id = ? AND target_node_id = ?)) "
+            "ORDER BY created_at LIMIT 1",
+            (
+                left["workspace_id"],
+                edge_type,
+                left_node,
+                right_node,
+                edge_type,
+                right_node,
+                left_node,
+            ),
+        ).fetchone()
+    return None if row is None else str(row[0])
+
+
+def _link_edge_evidence(
+    edge_id: str,
+    left: AtomicFactRecord,
+    right: AtomicFactRecord,
+    supplied_source_ids: list[str] | None,
+) -> None:
+    source_ids = supplied_source_ids or _source_ids(left, right)
+    for source_id in source_ids:
+        link_evidence(
+            source_id,
+            "graph_edge",
+            edge_id,
+            workspace_id=str(left["workspace_id"]),
+            confidence=_minimum_confidence(left, right),
+        )
 
 
 def _graph_node_for_fact(fact: AtomicFactRecord) -> str:
@@ -310,16 +427,15 @@ def _reduce_fact_confidence(fact_id: str, factor: float) -> None:
         )
 
 
-def _close_old_fact(fact_id: str) -> None:
-    now = datetime.now(timezone.utc).isoformat()  # noqa: UP017
+def _close_old_fact(fact_id: str, *, valid_until: str | None) -> None:
     with repository_connection() as connection:
         cursor = connection.execute(
             """
             UPDATE atomic_facts
-            SET status = ?, valid_until = ?
+            SET status = ?, valid_until = COALESCE(?, valid_until)
             WHERE id = ?
             """,
-            ("superseded", now, fact_id),
+            ("superseded", valid_until, fact_id),
         )
     if cursor.rowcount == 0:
         raise ValueError(f"Atomic fact not found: {fact_id}")
@@ -329,28 +445,125 @@ def _facts_are_comparable(
     prior_fact: AtomicFactRecord,
     new_fact: AtomicFactRecord,
 ) -> bool:
+    if prior_fact["workspace_id"] != new_fact["workspace_id"]:
+        return False
+    prior_scopes = _fact_scopes(prior_fact)
+    new_scopes = _fact_scopes(new_fact)
+    if len(prior_scopes) != 1 or prior_scopes != new_scopes:
+        return False
+    prior_document_kbs = _document_knowledge_base_ids(prior_fact)
+    new_document_kbs = _document_knowledge_base_ids(new_fact)
+    if prior_document_kbs and new_document_kbs and prior_document_kbs != new_document_kbs:
+        return False
+    if not _cross_source_scope_is_attached(prior_fact, new_fact):
+        return False
+    if _temporal_intervals_are_disjoint(prior_fact, new_fact) and not _has_explicit_transition(
+        prior_fact, new_fact
+    ):
+        return False
     if _predicate_allows_multiple_values(prior_fact) or _predicate_allows_multiple_values(new_fact):
         return _has_explicit_transition(prior_fact, new_fact)
     return _fact_comparison_key(prior_fact) == _fact_comparison_key(new_fact)
+
+
+def _cross_source_scope_is_attached(
+    prior_fact: AtomicFactRecord, new_fact: AtomicFactRecord
+) -> bool:
+    """Require the conversation session to explicitly attach each compared KB."""
+    prior_links = _fact_evidence(prior_fact)
+    new_links = _fact_evidence(new_fact)
+    prior_conversations = _evidence_sources_of_type(prior_links, "conversation_observation")
+    new_conversations = _evidence_sources_of_type(new_links, "conversation_observation")
+    prior_documents = _evidence_sources_of_type(prior_links, "document_chunk")
+    new_documents = _evidence_sources_of_type(new_links, "document_chunk")
+    if not prior_links and prior_fact.get("source_observation_id"):
+        legacy = _conversation_source_for_observation(
+            str(prior_fact["source_observation_id"]), str(prior_fact["workspace_id"])
+        )
+        if legacy is not None:
+            prior_conversations.append(legacy)
+    if not new_links and new_fact.get("source_observation_id"):
+        legacy = _conversation_source_for_observation(
+            str(new_fact["source_observation_id"]), str(new_fact["workspace_id"])
+        )
+        if legacy is not None:
+            new_conversations.append(legacy)
+    return all(
+        _session_attached_to_document(conversation, document, str(prior_fact["workspace_id"]))
+        for conversations, documents in (
+            (prior_conversations, new_documents),
+            (new_conversations, prior_documents),
+        )
+        for conversation in conversations
+        for document in documents
+    )
+
+
+def _conversation_source_for_observation(
+    observation_id: str, workspace_id: str
+) -> dict[str, object] | None:
+    with repository_connection() as connection:
+        row = connection.execute(
+            "SELECT session_id FROM observations WHERE id = ? AND workspace_id = ?",
+            (observation_id, workspace_id),
+        ).fetchone()
+    if row is None:
+        return None
+    return {"source_type": "conversation_observation", "provenance": {"session_id": row[0]}}
+
+
+def _session_attached_to_document(
+    conversation: dict[str, object], document: dict[str, object], workspace_id: str
+) -> bool:
+    provenance = conversation.get("provenance")
+    if not isinstance(provenance, dict):
+        return False
+    session_id = provenance.get("session_id")
+    knowledge_base_id = document.get("knowledge_base_id")
+    if not session_id or not knowledge_base_id:
+        return False
+    with repository_connection() as connection:
+        return (
+            connection.execute(
+                "SELECT 1 FROM session_knowledge_base_attachments AS a "
+                "JOIN sessions AS s ON s.id = a.session_id AND s.workspace_id = a.workspace_id "
+                "JOIN knowledge_bases AS k ON k.id = a.knowledge_base_id "
+                "AND k.workspace_id = a.workspace_id "
+                "WHERE a.workspace_id = ? AND a.session_id = ? AND a.knowledge_base_id = ? "
+                "AND s.status != 'deleted' AND k.status = 'active'",
+                (workspace_id, str(session_id), str(knowledge_base_id)),
+            ).fetchone()
+            is not None
+        )
 
 
 def _has_explicit_transition(
     prior_fact: AtomicFactRecord,
     new_fact: AtomicFactRecord,
 ) -> bool:
-    evidence_text = _fetch_observation_content(str(new_fact["source_observation_id"]))
-    normalized_text = _normalize(evidence_text)
+    if _new_source_authority(new_fact) < _new_source_authority(prior_fact):
+        return False
+    if (
+        prior_fact.get("valid_from")
+        and new_fact.get("valid_from")
+        and str(new_fact["valid_from"]) < str(prior_fact["valid_from"])
+    ):
+        return False
     old_object = _normalize(str(prior_fact["object"]))
     new_object = _normalize(str(new_fact["object"]))
-    mentions_both_objects = old_object in normalized_text and new_object in normalized_text
-    has_transition_marker = any(marker in normalized_text for marker in TRANSITION_MARKERS)
-    if not has_transition_marker:
-        return False
-    if mentions_both_objects:
-        return True
-    return _has_correction_marker(normalized_text) and _fact_comparison_key(
-        prior_fact
-    ) == _fact_comparison_key(new_fact)
+    for evidence_text in _fact_source_texts(new_fact):
+        normalized_text = _normalize(evidence_text)
+        if not any(marker in normalized_text for marker in TRANSITION_MARKERS):
+            continue
+        if old_object in normalized_text and new_object in normalized_text:
+            return True
+        if (
+            _has_correction_marker(normalized_text)
+            and _fact_comparison_key(prior_fact) == _fact_comparison_key(new_fact)
+            and not _has_document_source(prior_fact, new_fact)
+        ):
+            return True
+    return False
 
 
 def _fact_comparison_key(fact: AtomicFactRecord) -> tuple[str, str]:
@@ -391,11 +604,110 @@ def _source_observations(
 ) -> list[str]:
     return list(
         dict.fromkeys(
-            [
-                str(prior_fact["source_observation_id"]),
-                str(new_fact["source_observation_id"]),
-            ]
+            str(observation_id)
+            for observation_id in (
+                prior_fact.get("source_observation_id"),
+                new_fact.get("source_observation_id"),
+            )
+            if observation_id
         )
+    )
+
+
+def _fact_evidence(fact: AtomicFactRecord) -> list[dict[str, object]]:
+    return list_active_evidence(
+        "atomic_fact", str(fact["id"]), workspace_id=str(fact["workspace_id"])
+    )
+
+
+def _source_ids(*facts: AtomicFactRecord) -> list[str]:
+    return list(
+        dict.fromkeys(str(link["source_id"]) for fact in facts for link in _fact_evidence(fact))
+    )
+
+
+def _evidence_source(link: dict[str, object]) -> dict[str, object] | None:
+    source = link.get("source")
+    return source if isinstance(source, dict) else None
+
+
+def _evidence_sources_of_type(
+    links: list[dict[str, object]], source_type: str
+) -> list[dict[str, object]]:
+    sources: list[dict[str, object]] = []
+    for link in links:
+        source = _evidence_source(link)
+        if source is not None and source.get("source_type") == source_type:
+            sources.append(source)
+    return sources
+
+
+def _fact_scopes(fact: AtomicFactRecord) -> set[tuple[object, object]]:
+    links = _fact_evidence(fact)
+    if not links and fact.get("source_observation_id"):
+        return {(None, None)}
+    return {
+        (
+            source.get("project_id"),
+            source.get("namespace"),
+        )
+        for link in links
+        if (source := _evidence_source(link)) is not None
+    }
+
+
+def _document_knowledge_base_ids(fact: AtomicFactRecord) -> set[str]:
+    return {
+        str(source["knowledge_base_id"])
+        for link in _fact_evidence(fact)
+        if (source := _evidence_source(link)) is not None
+        and source.get("source_type") == "document_chunk"
+        and source.get("knowledge_base_id")
+    }
+
+
+def _has_document_source(*facts: AtomicFactRecord) -> bool:
+    return any(
+        source.get("source_type") == "document_chunk"
+        for fact in facts
+        for link in _fact_evidence(fact)
+        if (source := _evidence_source(link)) is not None
+    )
+
+
+def _fact_source_texts(fact: AtomicFactRecord) -> list[str]:
+    links = _fact_evidence(fact)
+    if links:
+        return [
+            str(source.get("content", ""))
+            for link in links
+            if (source := _evidence_source(link)) is not None
+        ]
+    observation_id = fact.get("source_observation_id")
+    return [_fetch_observation_content(str(observation_id))] if observation_id else []
+
+
+def _new_source_authority(fact: AtomicFactRecord) -> float:
+    links = _fact_evidence(fact)
+    authorities = []
+    for link in links:
+        source = _evidence_source(link)
+        authority = source.get("authority") if source is not None else None
+        if isinstance(authority, int | float):
+            authorities.append(float(authority))
+    return max(authorities, default=1.0)
+
+
+def _temporal_intervals_are_disjoint(
+    prior_fact: AtomicFactRecord, new_fact: AtomicFactRecord
+) -> bool:
+    prior_end = prior_fact.get("valid_until")
+    new_start = new_fact.get("valid_from")
+    new_end = new_fact.get("valid_until")
+    prior_start = prior_fact.get("valid_from")
+    return bool(
+        (prior_end and new_start and str(prior_end) < str(new_start))
+        or (new_end and prior_start and str(new_end) < str(prior_start))
     )
 
 

@@ -17,6 +17,11 @@ import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
+import PipelineJournal from './PipelineJournal';
+import { Eyebrow, ViewHeader, ViewPage } from './view';
+import { cn } from '@/lib/utils';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 
 type LifecycleRow = {
   observation?: Record<string, unknown>;
@@ -46,14 +51,13 @@ export default function PipelineView() {
   const rows = (data?.items ?? []) as LifecycleRow[];
 
   return (
-    <>
-      <div className="view-header">
-        <h2>Memory Pipeline</h2>
-        <p>
-          Fast persistence, session extraction, background consolidation, and durable artifacts
-          for recent turns{sessionId ? ' in this conversation' : ''}.
-        </p>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Memory Pipeline"
+        description={`Fast persistence, session extraction, background consolidation, and durable artifacts for recent turns${
+          sessionId ? ' in this conversation' : ''
+        }.`}
+      />
 
       {rows.length === 0 ? (
         <ViewStatus
@@ -62,13 +66,13 @@ export default function PipelineView() {
           hint="Send a live chat message, then return here to inspect what the memory pipeline produced."
         />
       ) : (
-        <div className="pipeline-list">
+        <div className="flex flex-col gap-4">
           {rows.map((row, index) => (
             <LifecycleCard key={observationId(row) || index} row={row} />
           ))}
         </div>
       )}
-    </>
+    </ViewPage>
   );
 }
 
@@ -85,36 +89,35 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
   const totalArtifacts = ARTIFACTS.reduce((sum, [key]) => sum + number(artifacts[key]), 0);
 
   return (
-    <article className="pipeline-card">
-      <div className="pipeline-card-top">
-        <div>
-          <div className="trace-kicker">{text(observation.role, 'turn')} · {shortId(text(observation.id))}</div>
-          <h3>{preview(text(observation.content, 'No content recorded.'), 140)}</h3>
-          <p>
-            Persisted {formatTime(text(observation.created_at))}. Queue status:{' '}
-            <strong>{labelize(slowStatus)}</strong>.
-          </p>
-        </div>
-        <StatusBadge status={slowStatus} />
-      </div>
+    <Card>
+      <CardHeader>
+        <Eyebrow>{text(observation.role, 'turn')} · {shortId(text(observation.id))}</Eyebrow>
+        <CardTitle className="text-sm text-pretty">{preview(text(observation.content, 'No content recorded.'), 140)}</CardTitle>
+        <CardDescription>Persisted {formatTime(text(observation.created_at))}</CardDescription>
+        <CardAction>
+          <StatusBadge status={slowStatus} />
+        </CardAction>
+      </CardHeader>
 
-      <div className="pipeline-stages">
+      {/* the four stages of one turn, left to right, as one strip */}
+      <CardContent className="flex flex-col gap-4">
+      <ol className="grid overflow-hidden rounded-lg border sm:grid-cols-2 lg:grid-cols-4 *:border-b *:last:border-b-0 sm:*:border-r lg:*:border-b-0 lg:*:last:border-r-0">
         <Stage
-          icon={<Zap size={16} />}
+          icon={<Zap />}
           title="Fast persistence"
           status={text(row.fast_path?.status, 'completed')}
           body="Raw observation saved before model-dependent memory work runs."
           meta={row.fast_path?.queued ? 'Queued for background processing' : 'Not queued'}
         />
         <Stage
-          icon={<Layers size={16} />}
+          icon={<Layers />}
           title="Session extraction"
           status={text(sessionExtraction.status, 'unknown')}
           body={sessionSummary(asRecord(sessionExtraction.counts))}
           meta={`${asRecordArray(sessionExtraction.items).length} working-set item${asRecordArray(sessionExtraction.items).length === 1 ? '' : 's'}`}
         />
         <Stage
-          icon={<Database size={16} />}
+          icon={<Database />}
           title="Background consolidation"
           status={slowStatus}
           body={`${steps.length} slow-path step${steps.length === 1 ? '' : 's'} journaled.`}
@@ -122,51 +125,31 @@ function LifecycleCard({ row }: { row: LifecycleRow }) {
           danger={slowStatus.includes('failed') || slowStatus === 'dead_letter' || slowStatus === 'quarantined'}
         />
         <Stage
-          icon={<PackageCheck size={16} />}
+          icon={<PackageCheck />}
           title="Durable artifacts"
           status={totalArtifacts > 0 ? 'produced' : 'none'}
           body={`${totalArtifacts} artifact${totalArtifacts === 1 ? '' : 's'} linked to this turn.`}
           meta={rejections.length ? `${rejections.length} rejection/error signal${rejections.length === 1 ? '' : 's'}` : 'No stored errors'}
           danger={rejections.length > 0}
         />
-      </div>
+      </ol>
 
-      <div className="pipeline-artifact-grid">
-        {ARTIFACTS.map(([key, label, Icon]) => (
-          <div className="pipeline-artifact" key={key}>
-            <Icon size={15} />
-            <span>{label}</span>
-            <strong>{number(artifacts[key])}</strong>
-          </div>
-        ))}
-      </div>
+      <dl className="grid grid-cols-2 gap-x-6 sm:grid-cols-3 lg:grid-cols-6">
+        {ARTIFACTS.map(([key, label, Icon]) => {
+          const count = number(artifacts[key]);
+          return (
+            <div className="flex items-center gap-2 border-b py-2 lg:border-b-0" key={key}>
+              <Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+              <dt className="min-w-0 flex-1 truncate text-muted-foreground">{label}</dt>
+              <dd className={cn('font-mono font-medium tabular-nums', count > 0 ? 'text-signal' : 'text-faint')}>{count}</dd>
+            </div>
+          );
+        })}
+      </dl>
+      </CardContent>
 
-      <details className="pipeline-details">
-        <summary>Step journal and artifact ids</summary>
-        <div className="pipeline-detail-columns">
-          <div>
-            <h4>Slow-path steps</h4>
-            {steps.length ? (
-              <ul className="pipeline-step-list">
-                {steps.map((step) => (
-                  <li key={`${step.step_name}-${step.updated_at}`}>
-                    <span>{labelize(text(step.step_name))}</span>
-                    <strong className={step.last_error ? 'danger' : ''}>{labelize(text(step.status))}</strong>
-                    {step.last_error ? <small>{text(step.last_error)}</small> : null}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No slow-path step journal entries yet.</p>
-            )}
-          </div>
-          <div>
-            <h4>Artifact ids</h4>
-            <pre>{JSON.stringify(artifactIds, null, 2)}</pre>
-          </div>
-        </div>
-      </details>
-    </article>
+      <PipelineJournal steps={steps} artifactIds={artifactIds} artifactLabels={ARTIFACTS} />
+    </Card>
   );
 }
 
@@ -186,17 +169,17 @@ function Stage({
   danger?: boolean;
 }) {
   return (
-    <div className={`pipeline-stage${danger ? ' danger' : ''}`}>
-      <div className="pipeline-stage-icon">{icon}</div>
-      <div>
-        <div className="pipeline-stage-head">
-          <h4>{title}</h4>
-          <span>{labelize(status)}</span>
-        </div>
-        <p>{body}</p>
-        {meta ? <small>{meta}</small> : null}
+    <li className="flex min-w-0 flex-col gap-1.5 p-3">
+      <div className="flex items-center gap-2 [&_svg]:size-3.5 [&_svg]:shrink-0 [&_svg]:text-muted-foreground">
+        {icon}
+        <h4 className="min-w-0 flex-1 truncate font-medium">{title}</h4>
       </div>
-    </div>
+      <span className={cn('font-mono text-[11px] tracking-wider uppercase', danger ? 'text-destructive' : 'text-faint')}>
+        {labelize(status)}
+      </span>
+      <p className="text-pretty text-muted-foreground">{body}</p>
+      {meta ? <p className={cn('font-mono text-[11px]', danger ? 'text-destructive' : 'text-faint')}>{meta}</p> : null}
+    </li>
   );
 }
 
@@ -205,10 +188,10 @@ function StatusBadge({ status }: { status: string }) {
   const completed = status === 'completed' || status === 'done';
   const Icon = failed ? AlertTriangle : completed ? CheckCircle : CircleDashed;
   return (
-    <div className={`pipeline-status-badge${failed ? ' danger' : completed ? ' ok' : ''}`}>
-      <Icon size={15} />
+    <Badge variant={failed ? 'destructive' : 'outline'} className={completed ? 'text-signal' : undefined}>
+      <Icon data-icon="inline-start" />
       {labelize(status)}
-    </div>
+    </Badge>
   );
 }
 

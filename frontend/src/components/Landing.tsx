@@ -1,693 +1,488 @@
-import {
-  Database,
-  Radar,
-  Network,
-  ShieldCheck,
-  Sun,
-  Moon,
-  Layers,
-  ArrowRight,
-  RefreshCw,
-  Play,
-  Cable,
-} from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { ArrowRight, Moon, Play, RotateCcw, Sun } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
+import MemoryLayerGraph from './MemoryLayerGraph';
+import { Num } from './view';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
-const CAPABILITIES = [
-  {
-    icon: <Database size={24} />,
-    title: 'Cross-session memory',
-    desc: 'Consolidates observations into durable facts that remain available after the conversation ends.',
-  },
-  {
-    icon: <Layers size={24} />,
-    title: 'Session correction handling',
-    desc: 'Applies corrections to the active working set immediately, then carries them into durable memory.',
-  },
-  {
-    icon: <RefreshCw size={24} />,
-    title: 'Contradiction & supersession',
-    desc: 'Links conflicting facts and marks outdated information as superseded without deleting its history.',
-  },
-  {
-    icon: <Radar size={24} />,
-    title: 'Foresight activation',
-    desc: 'Records commitments and deadlines, then retrieves them when time and context make them relevant.',
-  },
-  {
-    icon: <Network size={24} />,
-    title: 'Deep synthesis',
-    desc: 'Builds reflections from related memories after enough supporting evidence has accumulated.',
-  },
-  {
-    icon: <ShieldCheck size={24} />,
-    title: 'Retrieval sufficiency',
-    desc: 'Routes each query to quick, relational, or deep retrieval and preserves the evidence used in the answer.',
-  },
-];
+/* ─────────────────────────────────────────────────────────
+ * LANDING — "Instrument"
+ *
+ * Type-led and left-aligned: every section is a labelled row
+ * (index + name in the margin, content beside it) separated by
+ * hairlines. Controls and tables are shadcn/ui components
+ * (Button, ToggleGroup, Table, Badge, Separator); page layout
+ * and type live in landing.css.
+ *
+ * Motion: the hero staggers in once on load, and the memory
+ * pipeline figure plays its sequence the first time it scrolls
+ * into view. Both are first-time, explanatory moments; the rest
+ * of the page only changes colour.
+ * ───────────────────────────────────────────────────────── */
 
-const STEPS = [
-  {
-    num: '01',
-    title: 'Observe',
-    desc: 'Persists each conversational turn with its session and source metadata.',
-    badge: 'Raw input'
-  },
-  {
-    num: '02',
-    title: 'Structure',
-    desc: 'Extracts facts, entities, constraints, and typed relationships.',
-    badge: 'Slow consolidation'
-  },
-  {
-    num: '03',
-    title: 'Retrieve',
-    desc: 'Selects quick, relational, or deep retrieval based on the question.',
-    badge: 'Two-speed pipeline'
-  },
-  {
-    num: '04',
-    title: 'Reason',
-    desc: 'Adds the selected evidence to the model prompt and records an answer trace.',
-    badge: 'Answer trace'
-  },
+/** An example trace for one question. Illustrative, and labelled as such on the page. */
+const TRACE_ROWS = [
+  { label: 'fast path', value: 'Turn saved', detail: 'Stored with its session, workspace and source.', status: '142 ms' },
+  { label: 'working set', value: 'Correction active', detail: '“PostgreSQL replaces MongoDB” applies before consolidation finishes.', status: 'hot' },
+  { label: 'graph edge', value: 'SUPERSEDED_BY', detail: 'The MongoDB fact stays traceable but is no longer active.', status: 'typed' },
+  { label: 'answer trace', value: '4 evidence sources', detail: 'Memories, route and sufficiency check are kept with the answer.', status: 'audit' },
+  { label: 'context budget', value: 'Selected evidence only', detail: 'The prompt carries chosen memory, not the whole transcript.', status: 'trimmed' },
 ];
 
 const MEMORY_LAYERS = [
+  { level: 'L1', title: 'Session working set', data: '{ correction: "PostgreSQL replaces MongoDB", state: "active" }' },
+  { level: 'L2', title: 'Hot memory', data: '[ recent_turns, active_constraints, current_goal ]' },
+  { level: 'L3', title: 'Warm / foresight', data: '{ commitments: 1, next_trigger: "project migration" }' },
+  { level: 'L4', title: 'Durable graph', data: '{ fact: "database = PostgreSQL", edge: "SUPERSEDES" }' },
+];
+
+/** `flow` is the direction data moves: written into a layer, or read back out of it. */
+const PIPELINE_STAGES: { name: string; layer: number; flow: 'write' | 'read'; event: string; detail: string }[] = [
+  { name: 'Observe', layer: 0, flow: 'write', event: 'Turn saved', detail: 'The correction enters the session working set immediately.' },
+  { name: 'Promote', layer: 1, flow: 'write', event: 'Hot memory updated', detail: 'The confirmed correction becomes available across sessions.' },
+  { name: 'Consolidate', layer: 3, flow: 'write', event: 'Fact structured', detail: 'The slow path extracts the updated fact and links its evidence.' },
+  { name: 'Recall', layer: 1, flow: 'read', event: 'Evidence retrieved', detail: 'A later session retrieves the active fact from hot memory.' },
+  { name: 'Foresight', layer: 2, flow: 'read', event: 'Trigger checked', detail: 'Time-sensitive memory is included only when the question makes it relevant.' },
+  { name: 'Supersede', layer: 3, flow: 'write', event: 'Old fact retired', detail: 'The previous database fact stays traceable in the graph but is no longer active.' },
+];
+const STAGE_MS = 1800;
+
+const COMPONENTS = [
   {
-    level: 'Level 1',
-    title: 'Session Working Set',
-    data: '{ correction: "PostgreSQL replaces MongoDB", state: "active" }',
+    does: 'Remembers across sessions',
+    how: 'Observations are consolidated into durable facts that outlive the conversation.',
+    part: 'Fast observation storage, slow-path extraction',
   },
   {
-    level: 'Level 2',
-    title: 'Hot Memory',
-    data: '[ recent_turns, active_constraints, current_goal ]',
+    does: 'Applies corrections at once',
+    how: 'A correction takes effect in the current session, before consolidation finishes.',
+    part: 'Session working set, hot memory',
   },
   {
-    level: 'Level 3',
-    title: 'Warm / Foresight Memory',
-    data: '{ commitments: 1, next_trigger: "project migration" }',
+    does: 'Retires outdated facts',
+    how: 'The old value is marked superseded and kept for history. Nothing is silently deleted.',
+    part: 'CONTRADICTS and SUPERSEDED_BY edges, validity windows',
   },
   {
-    level: 'Level 4',
-    title: 'Durable Graph',
-    data: '{ fact: "database = PostgreSQL", edge: "SUPERSEDES" }',
+    does: 'Raises commitments on time',
+    how: 'Deadlines and commitments are recorded, then retrieved when time and context make them relevant.',
+    part: 'Foresight records in warm memory',
+  },
+  {
+    does: 'Synthesises reflections',
+    how: 'Related memories are summarised once enough supporting evidence has accumulated.',
+    part: 'Community detection, reflection synthesis',
+  },
+  {
+    does: 'Retrieves within a budget',
+    how: 'Each question is routed to quick, relational or deep retrieval, and lower-priority context is trimmed.',
+    part: 'Retrieval router, Chroma vector search, graph traversal',
   },
 ];
 
-const PIPELINE_STAGES = [
-  {
-    name: 'Observe',
-    layer: 0,
-    event: 'Turn persisted',
-    detail: 'The correction enters the session working set immediately.',
-  },
-  {
-    name: 'Promote',
-    layer: 1,
-    event: 'Hot memory updated',
-    detail: 'The confirmed correction becomes available across sessions.',
-  },
-  {
-    name: 'Consolidate',
-    layer: 3,
-    event: 'Fact structured',
-    detail: 'The slow path extracts the updated fact and links its evidence.',
-  },
-  {
-    name: 'Recall',
-    layer: 1,
-    event: 'Evidence retrieved',
-    detail: 'A later session retrieves the active fact from hot memory.',
-  },
-  {
-    name: 'Foresight',
-    layer: 2,
-    event: 'Trigger checked',
-    detail: 'Time-sensitive memory is included only when the query makes it relevant.',
-  },
-  {
-    name: 'Supersede',
-    layer: 0,
-    event: 'Old fact retired',
-    detail: 'The previous database fact remains traceable but is no longer active.',
-  },
+/** evaluation/local/published_summary.json, generated 2026-07-12: 13 cases, 13 passed. */
+const EVAL_GROUPS = [
+  { name: 'Direct fact recall', checks: 'A specific attribute is recalled from past turns.', passed: 1, total: 1 },
+  { name: 'Cross-session recall', checks: 'A verified fact is recalled in a later session.', passed: 1, total: 1 },
+  { name: 'Session correction handling', checks: 'A correction is used within the session it was made in.', passed: 1, total: 1 },
+  { name: 'Contradiction handling', checks: 'New data that conflicts with stored memory is detected.', passed: 2, total: 2 },
+  { name: 'Supersession', checks: 'The outdated fact is replaced in the temporal graph.', passed: 1, total: 1 },
+  { name: 'Foresight activation', checks: 'A recorded commitment is raised when it becomes relevant.', passed: 1, total: 1 },
+  { name: 'Deep synthesis', checks: 'Reflections are built from clustered memories.', passed: 3, total: 3 },
+  { name: 'Routing intent', checks: 'The question is sent to the right retrieval mode.', passed: 2, total: 2 },
+  { name: 'Retrieval sufficiency', checks: 'Retrieval stops once the evidence is enough to answer.', passed: 1, total: 1 },
+];
+const EVAL_PASSED = EVAL_GROUPS.reduce((n, g) => n + g.passed, 0);
+const EVAL_TOTAL = EVAL_GROUPS.reduce((n, g) => n + g.total, 0);
+
+const MCP_SPEC = [
+  { term: 'Endpoint', value: 'https://mira.ninja/mcp', mono: true },
+  { term: 'Transport', value: 'Streamable HTTP' },
+  { term: 'Authorization', value: 'OAuth 2.1 + PKCE' },
+  { term: 'Data boundary', value: 'Workspace-scoped' },
 ];
 
-const HERO_LEDGER = [
-  {
-    label: 'Fast path',
-    value: 'Turn persisted',
-    detail: 'Conversation saved with session, workspace, and source metadata.',
-    status: '142 ms',
-  },
-  {
-    label: 'Working set',
-    value: 'Correction active',
-    detail: '“PostgreSQL replaces MongoDB” is used before durable consolidation finishes.',
-    status: 'hot',
-  },
-  {
-    label: 'Graph edge',
-    value: 'SUPERSEDED_BY',
-    detail: 'Old database memory remains traceable but is no longer active.',
-    status: 'typed',
-  },
-  {
-    label: 'Answer trace',
-    value: '4 evidence sources',
-    detail: 'The response keeps the memories, route, and sufficiency check inspectable.',
-    status: 'audit',
-  },
-  {
-    label: 'Context budget',
-    value: 'Compact evidence',
-    detail: 'The prompt builder uses selected memory instead of replaying the full transcript.',
-    status: 'trimmed',
-  },
-];
+const prefersReducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
-const TRACK_PROOF = [
-  {
-    title: 'Accumulates experience',
-    claim: 'Preferences, corrections, decisions, commitments, and facts are persisted with workspace and source metadata.',
-    backing: 'Fast observation storage + session working set + slow-path durable extraction.',
-  },
-  {
-    title: 'Keeps user preferences active',
-    claim: 'Session corrections and durable preferences can influence later answers without asking the user to repeat them.',
-    backing: 'Session working set, hot memory, active constraints, and prompt context merging.',
-  },
-  {
-    title: 'Retires outdated memory',
-    claim: 'Old values are not blindly deleted; they become inactive when newer evidence supersedes them.',
-    backing: 'CONTRADICTS / SUPERSEDED_BY graph edges, validity windows, and hot-memory demotion triggers.',
-  },
-  {
-    title: 'Retrieves under a context budget',
-    claim: 'MIRA routes to quick, relational, or deep retrieval and trims lower-priority context before the answer prompt.',
-    backing: 'Retrieval router, Chroma-backed vector search, graph traversal, and prompt budget allocation.',
-  },
-];
-
-const USER_FLOW = [
-  {
-    title: 'Say what matters once',
-    text: 'Tell the assistant your preference, decision, project detail, or deadline.',
-  },
-  {
-    title: 'Correct it when plans change',
-    text: 'MIRA keeps the new value active and marks the old one as superseded.',
-  },
-  {
-    title: 'Return in a later session',
-    text: 'The agent retrieves the useful memory without replaying the whole chat.',
-  },
-  {
-    title: 'Check why it answered',
-    text: 'Open the trace to see the memory records and relationships behind the response.',
-  },
-];
-
-const EVAL_CATEGORIES = [
-  { name: 'Direct fact recall', checks: 'Retrieval matching specific attributes directly from past turns.', status: 'PASSED' },
-  { name: 'Cross-session recall', checks: 'Recall of verified facts across session boundaries.', status: 'PASSED' },
-  { name: 'Contradiction handling', checks: 'Detection of new data conflicting with existing database records.', status: 'PASSED' },
-  { name: 'Supersession', checks: 'Replacing outdated nodes in the temporal graph with newer observations.', status: 'PASSED' },
-  { name: 'Foresight', checks: 'Actionable intent registration and timely warning/trigger matching.', status: 'PASSED' },
-  { name: 'Deep synthesis', checks: 'Leiden cluster reflections and higher-order summary extraction.', status: 'PASSED' },
-  { name: 'Routing intent', checks: 'Accurately selecting between direct, quick, relational, or deep retrieval.', status: 'PASSED' },
-];
+function SectionLabel({ index, name }: { index: string; name: string }) {
+  return (
+    <div className="lp-label">
+      <span className="lp-label-index">{index}</span>
+      <span>{name}</span>
+    </div>
+  );
+}
 
 export default function Landing() {
   const { setPage, theme, toggleTheme } = useApp();
-  const [pipelineStage, setPipelineStage] = useState(0);
-  const [pipelineRunning, setPipelineRunning] = useState(false);
+  const [stage, setStage] = useState(0);
+  const [running, setRunning] = useState(false);
+  // bumps on every stage change, including re-selecting the same stage, so the graph replays
+  const [tick, setTick] = useState(0);
+  const figureRef = useRef<HTMLDivElement>(null);
+  const autoPlayed = useRef(false);
+
+  const goTo = (index: number) => {
+    setStage(index);
+    setTick((t) => t + 1);
+  };
 
   useEffect(() => {
-    if (!pipelineRunning) return;
+    if (!running) return;
     const timer = window.setTimeout(() => {
-      if (pipelineStage === PIPELINE_STAGES.length - 1) {
-        setPipelineRunning(false);
+      if (stage === PIPELINE_STAGES.length - 1) {
+        setRunning(false);
         return;
       }
-      setPipelineStage((stage) => stage + 1);
-    }, 1400);
+      goTo(stage + 1);
+    }, STAGE_MS);
     return () => window.clearTimeout(timer);
-  }, [pipelineRunning, pipelineStage]);
+  }, [running, stage]);
 
-  const activePipelineStage = PIPELINE_STAGES[pipelineStage];
-
-  const runPipeline = () => {
-    setPipelineStage(0);
-    setPipelineRunning(true);
+  const runSequence = () => {
+    goTo(0);
+    setRunning(true);
   };
 
-  const handleLaunch = () => {
-    setPage('auth');
-  };
+  // play the sequence once, the first time the figure is properly on screen
+  useEffect(() => {
+    const el = figureRef.current;
+    if (!el || prefersReducedMotion()) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting || autoPlayed.current) return;
+        autoPlayed.current = true;
+        setStage(0);
+        setTick((t) => t + 1);
+        setRunning(true);
+        observer.disconnect();
+      },
+      { threshold: 0.6 },
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
 
-  const scrollToSection = (id: string, e: React.MouseEvent) => {
-    e.preventDefault();
-    const el = document.getElementById(id);
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth' });
-    }
+  const active = PIPELINE_STAGES[stage];
+  const activeLayer = MEMORY_LAYERS[active.layer];
+  // layers touched by earlier stages of the walk-through
+  const visited = new Set(PIPELINE_STAGES.slice(0, stage).map((s) => s.layer));
+
+  const launch = () => setPage('auth');
+
+  const scrollTo = (id: string, e?: React.MouseEvent) => {
+    e?.preventDefault();
+    document.getElementById(id)?.scrollIntoView({ behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
   };
 
   return (
-    <div className="landing">
-      <nav className="landing-nav">
-        <div className="landing-brand">
-          <BrandMark className="brand-mark" size={25} />
-          <span>MIRA</span>
+    <div className="lp tw">
+      <header className="lp-nav">
+        <div className="lp-nav-inner">
+          <a className="lp-brand" href="#top" onClick={(e) => scrollTo('top', e)}>
+            <BrandMark lockup size={24} title="MIRA" />
+          </a>
+          <nav className="lp-nav-links" aria-label="Sections">
+            <a href="#how-it-works" onClick={(e) => scrollTo('how-it-works', e)}>How it works</a>
+            <a href="#capabilities" onClick={(e) => scrollTo('capabilities', e)}>Components</a>
+            <a href="#results" onClick={(e) => scrollTo('results', e)}>Evaluation</a>
+            <a href="#mcp" onClick={(e) => scrollTo('mcp', e)}>MCP</a>
+            <a href="/developers/docs">Developers</a>
+          </nav>
+          <div className="lp-nav-actions">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
+              title="Toggle theme"
+            >
+              {theme === 'dark' ? <Sun /> : <Moon />}
+            </Button>
+            <Button variant="outline" onClick={launch}>
+              Open MIRA
+            </Button>
+          </div>
         </div>
-        <div className="landing-nav-links">
-          <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
-          <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>How it works</a>
-          <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
-        </div>
-        <div className="landing-nav-actions">
-          <button className="theme-toggle" onClick={toggleTheme} title="Toggle theme">
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
-          </button>
-          <button className="btn-navbar" onClick={handleLaunch}>
-            Launch App
-            <ArrowRight size={14} />
-          </button>
-        </div>
-      </nav>
+      </header>
 
-      <div className="landing-content">
-        <section className="hero">
-          <div className="hero-copy">
-            <div className="hero-badge">
-              <span className="badge-dot" />
-              Persistent memory for AI assistants
-            </div>
-
-            <h1 className="hero-title">
-              Your AI assistant should remember what matters.
-            </h1>
-
-            <p className="hero-sub">
-              MIRA helps agents carry preferences, decisions, corrections, and commitments
-              across sessions. When something changes, old memories are retired instead of
-              silently reused. When the agent answers, you can inspect which memories shaped it.
+      <main className="lp-main" id="top">
+        <section className="lp-hero">
+          <div className="lp-hero-copy">
+            <h1 className="lp-hero-title">Agent memory you can inspect.</h1>
+            <p className="lp-hero-sub">
+              MIRA keeps what a user tells an agent across sessions, retires a fact when it is
+              corrected, and records which memories went into each answer.
             </p>
-
-            <div className="hero-ctas">
-              <button className="btn-primary" onClick={handleLaunch}>
-                Launch MIRA
-                <ArrowRight size={16} />
-              </button>
-              <a
-                className="btn-secondary"
-                href="#how-it-works"
-                onClick={(e) => scrollToSection('how-it-works', e)}
+            <div className="lp-hero-actions">
+              <Button size="lg" className="lp-cta" onClick={launch}>
+                Open the demo
+                <ArrowRight data-icon="inline-end" />
+              </Button>
+              <Button
+                variant="link"
+                size="lg"
+                className="lp-cta-link"
+                nativeButton={false}
+                render={<a href="#how-it-works" onClick={(e) => scrollTo('how-it-works', e)} />}
               >
-                See how memory works
-              </a>
+                Follow a correction through memory
+              </Button>
             </div>
-
-            <div className="hero-status-pills">
-              <span className="status-pill"><span className="status-indicator pass" /> Remembers preferences</span>
-              <span className="status-pill"><span className="status-indicator active" /> Handles corrections</span>
-              <span className="status-pill"><span className="status-indicator active" /> Explains evidence</span>
-              <span className="status-pill"><span className="status-indicator active" /> Works across sessions</span>
-            </div>
+            <p className="lp-hero-stack">SQLite source of truth · Chroma index · typed temporal graph · MCP endpoint</p>
           </div>
 
-          <aside className="hero-ledger" aria-label="MIRA memory runtime ledger">
-            <div className="hero-ledger-top">
-              <span>Runtime ledger</span>
-              <strong>demo workspace</strong>
-            </div>
-            <div className="hero-ledger-query">
-              <span>Later, the user asks</span>
+          <figure className="lp-trace" aria-label="Example answer trace">
+            <figcaption className="lp-trace-head">
+              <span>Example trace</span>
+              <span>demo workspace</span>
+            </figcaption>
+            <div className="lp-trace-line">
+              <span className="lp-trace-key">asked</span>
               <p>“Which database are we using now?”</p>
             </div>
-            <div className="hero-ledger-rows">
-              {HERO_LEDGER.map((row) => (
-                <div className="hero-ledger-row" key={row.label}>
+            <ol className="lp-trace-rows">
+              {TRACE_ROWS.map((row) => (
+                <li className="lp-trace-row" key={row.label}>
+                  <span className="lp-trace-key">{row.label}</span>
                   <div>
-                    <span>{row.label}</span>
                     <strong>{row.value}</strong>
                     <p>{row.detail}</p>
                   </div>
-                  <code>{row.status}</code>
-                </div>
+                  <Badge variant="outline" className="font-mono">{row.status}</Badge>
+                </li>
               ))}
+            </ol>
+            <div className="lp-trace-line lp-trace-answer">
+              <span className="lp-trace-key">answered</span>
+              <p>
+                <strong>PostgreSQL.</strong> The newer correction superseded the older MongoDB memory.
+              </p>
             </div>
-            <div className="hero-ledger-answer">
-              <span>MIRA answers with</span>
-              <strong>PostgreSQL</strong>
-              <p>because the newer correction superseded the older MongoDB memory.</p>
-            </div>
-          </aside>
+          </figure>
         </section>
 
-        <section className="consumer-flow-section">
-          <div className="consumer-flow-header">
-            <span>What this feels like</span>
-            <h2>A memory layer you can inspect, not just trust.</h2>
-          </div>
-          <div className="consumer-flow-grid">
-            {USER_FLOW.map((item, index) => (
-              <article className="consumer-flow-card" key={item.title}>
-                <span>{String(index + 1).padStart(2, '0')}</span>
-                <h3>{item.title}</h3>
-                <p>{item.text}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section className="visual-section">
-          <div className="visual-header-cap">Memory pipeline · Runtime view</div>
-
-          <div className="engine-cockpit">
-            {/* Left: Memory Layers */}
-            <div className="cockpit-layers">
-              <div className="cockpit-heading-row">
-                <h4>Memory layers</h4>
-                <button className="pipeline-run" onClick={runPipeline} disabled={pipelineRunning}>
-                  <Play size={13} fill="currentColor" />
-                  {pipelineRunning ? 'Running' : 'Run sequence'}
-                </button>
-              </div>
-
-              {MEMORY_LAYERS.map((layer, index) => {
-                const active = activePipelineStage.layer === index;
-                return (
-                  <button
-                    className={`cockpit-layer${active ? ' layer-active' : ''}`}
-                    key={layer.level}
-                    onClick={() => {
-                      const matchingStage = PIPELINE_STAGES.findIndex((stage) => stage.layer === index);
-                      if (matchingStage >= 0) setPipelineStage(matchingStage);
-                      setPipelineRunning(false);
-                    }}
-                    type="button"
-                  >
-                    <div className="layer-header">
-                      <span className={`layer-tag${active ? ' active' : ''}`}>{layer.level}</span>
-                      <h5>{layer.title}</h5>
-                    </div>
-                    <div className="layer-data font-mono">{layer.data}</div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Right: Network Graph & Floating Actions */}
-            <div className="cockpit-visualization">
-              <div className="visualization-display">
-                <svg className="cockpit-network-svg" viewBox="0 0 400 300">
-                  <defs>
-                    <linearGradient id="gradient-line" x1="0%" y1="0%" x2="100%" y2="100%">
-                      <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.8" />
-                      <stop offset="100%" stopColor="var(--accent-glow)" stopOpacity="0.2" />
-                    </linearGradient>
-                  </defs>
-
-                  <g className="network-lines">
-                    <line x1="200" y1="150" x2="100" y2="80" stroke="url(#gradient-line)" strokeWidth="1.5" strokeDasharray="4 2" />
-                    <line x1="200" y1="150" x2="300" y2="80" stroke="url(#gradient-line)" strokeWidth="1.5" />
-                    <line x1="200" y1="150" x2="110" y2="220" stroke="url(#gradient-line)" strokeWidth="1.5" />
-                    <line x1="200" y1="150" x2="290" y2="220" stroke="url(#gradient-line)" strokeWidth="1.5" strokeDasharray="6 3" />
-                    <line x1="100" y1="80" x2="300" y2="80" stroke="var(--border-strong)" strokeWidth="1" />
-                    <line x1="110" y1="220" x2="290" y2="220" stroke="var(--border-strong)" strokeWidth="1" />
-                  </g>
-
-                  <g className="network-nodes">
-                    <circle cx="200" cy="150" r="28" fill="var(--surface-soft)" stroke="var(--accent)" strokeWidth="2.5" />
-                    <circle cx="200" cy="150" r="4" fill="var(--accent)" />
-                    <text x="200" y="154" textAnchor="middle" fill="var(--text)" fontSize="9" fontWeight="700">MIRA</text>
-
-                    <g className={`nodes-group${activePipelineStage.layer === 0 || activePipelineStage.layer === 1 ? ' node-active' : ''}`}>
-                      <circle cx="100" cy="80" r="16" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.5" />
-                      <text x="100" y="83" textAnchor="middle" fill="var(--muted)" fontSize="8">Facts</text>
-                      <circle cx="100" cy="80" r="3" fill="#3fb27f" />
-                    </g>
-
-                    <g className={`nodes-group${activePipelineStage.layer === 3 ? ' node-active' : ''}`}>
-                      <circle cx="300" cy="80" r="16" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.5" />
-                      <text x="300" y="83" textAnchor="middle" fill="var(--muted)" fontSize="8">Graph</text>
-                      <circle cx="300" cy="80" r="3" fill="#e0a13a" />
-                    </g>
-
-                    <g className={`nodes-group${activePipelineStage.layer === 2 ? ' node-active' : ''}`}>
-                      <circle cx="110" cy="220" r="16" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.5" />
-                      <text x="110" y="223" textAnchor="middle" fill="var(--muted)" fontSize="8">Future</text>
-                      <circle cx="110" cy="220" r="3" fill="var(--accent)" />
-                    </g>
-
-                    <g className={`nodes-group${activePipelineStage.layer === 3 ? ' node-active' : ''}`}>
-                      <circle cx="290" cy="220" r="16" fill="var(--surface)" stroke="var(--border-strong)" strokeWidth="1.5" />
-                      <text x="290" y="223" textAnchor="middle" fill="var(--muted)" fontSize="8">Reflect</text>
-                      <circle cx="290" cy="220" r="3" fill="#9b7ad6" />
-                    </g>
-                  </g>
-                </svg>
-
-                <div className="pipeline-event" aria-live="polite">
-                  <span>{activePipelineStage.name}</span>
-                  <strong>{activePipelineStage.event}</strong>
-                  <p>{activePipelineStage.detail}</p>
-                </div>
-              </div>
-              <div className="pipeline-stage-tabs" aria-label="Memory pipeline stages">
-                {PIPELINE_STAGES.map((stage, index) => (
-                  <button
-                    className={pipelineStage === index ? 'active' : ''}
-                    key={stage.name}
-                    onClick={() => {
-                      setPipelineStage(index);
-                      setPipelineRunning(false);
-                    }}
-                    type="button"
-                  >
-                    <span>{index + 1}</span>
-                    {stage.name}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </section>
-
-        <section id="capabilities" className="section-padding">
-          <div className="section-meta-eyebrow">Core memory components</div>
-          <h2 className="section-h2">A working memory loop, not a longer prompt</h2>
-          <p className="section-subtitle-text">
-            Each component has a defined role in persistence, consolidation, retrieval, or inspection.
-          </p>
-
-          <div className="features-grid">
-            {CAPABILITIES.map((f, i) => (
-              <div key={i} className="feature-card">
-                <div className="feature-icon-wrapper">{f.icon}</div>
-                <h3>{f.title}</h3>
-                <p>{f.desc}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section id="mcp" className="mcp-access-section" aria-labelledby="mcp-access-title">
-          <div className="mcp-access-copy">
-            <div className="mcp-access-eyebrow">
-              <Cable size={15} />
-              Agent integration
-            </div>
-            <h2 id="mcp-access-title">Use MIRA's memory tools from an MCP client.</h2>
-            <p>
-              MIRA exposes its active retrieval, graph, foresight, and session-memory operations
-              through an authenticated MCP endpoint. OAuth binds each client to the user's
-              workspace before any memory tool runs.
+        <section className="lp-section" id="how-it-works">
+          <SectionLabel index="01" name="How it works" />
+          <div className="lp-section-body">
+            <h2>One correction, followed through memory.</h2>
+            <p className="lp-lede">
+              A user says the project moved from MongoDB to PostgreSQL. The fast path saves the turn
+              straight away; background processing turns it into durable memory that a later
+              session can retrieve.
             </p>
-          </div>
-          <div className="mcp-access-details" aria-label="MCP service details">
-            <div>
-              <span>Transport</span>
-              <strong>Streamable HTTP</strong>
-            </div>
-            <div>
-              <span>Authorization</span>
-              <strong>OAuth 2.1 + PKCE</strong>
-            </div>
-            <div>
-              <span>Data boundary</span>
-              <strong>Workspace-scoped</strong>
-            </div>
-            <code>https://mira.ninja/mcp</code>
-          </div>
-        </section>
 
-        <section className="section-padding track-proof-section">
-          <div className="section-meta-eyebrow">MemoryAgent fit</div>
-          <h2 className="section-h2">Track claims, backed by runtime pieces</h2>
-          <p className="section-subtitle-text">
-            These are not brochure claims. Each behavior maps to a concrete part of MIRA’s current architecture.
-          </p>
-
-          <div className="track-proof-grid">
-            {TRACK_PROOF.map((item) => (
-              <article className="track-proof-card" key={item.title}>
-                <h3>{item.title}</h3>
-                <p>{item.claim}</p>
-                <div>
-                  <span>Backed by</span>
-                  <strong>{item.backing}</strong>
-                </div>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section id="how-it-works" className="section-padding">
-          <div className="section-meta-eyebrow">Memory lifecycle</div>
-          <h2 className="section-h2">From conversation to evidence</h2>
-          <p className="section-subtitle-text">
-            The fast path preserves the turn immediately. Background processing structures durable memory for later retrieval.
-          </p>
-
-          <div className="how-it-works-pipeline">
-            {STEPS.map((s, i) => (
-              <div key={i} className="pipeline-step">
-                <div className="pipeline-step-top">
-                  <div className="pipeline-number">{s.num}</div>
-                  <span className="pipeline-badge">{s.badge}</span>
-                </div>
-                <h3>{s.title}</h3>
-                <p>{s.desc}</p>
-                {i < STEPS.length - 1 && (
-                  <div className="pipeline-connector-line">
-                    <ArrowRight size={20} className="connector-arrow" />
-                  </div>
-                )}
+            <div className="lp-figure" ref={figureRef}>
+              <div className="lp-figure-bar">
+                <ToggleGroup
+                  className="lp-stage-group"
+                  variant="outline"
+                  size="sm"
+                  spacing={0}
+                  value={[String(stage)]}
+                  onValueChange={(next) => {
+                    const picked = next[0];
+                    setRunning(false);
+                    // pressing the current stage again replays it instead of clearing the selection
+                    goTo(picked === undefined ? stage : Number(picked));
+                  }}
+                  aria-label="Memory pipeline stages"
+                >
+                  {PIPELINE_STAGES.map((s, index) => (
+                    <ToggleGroupItem key={s.name} value={String(index)} aria-label={`Stage ${index + 1}: ${s.name}`}>
+                      <span className="lp-stage-index">{index + 1}</span>
+                      {s.name}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+                <Button variant="outline" size="sm" onClick={runSequence} disabled={running}>
+                  {running ? <Play data-icon="inline-start" /> : <RotateCcw data-icon="inline-start" />}
+                  {running ? 'Running' : 'Run sequence'}
+                </Button>
               </div>
-            ))}
-          </div>
-        </section>
 
-        <section id="results" className="section-padding">
-          <div className="section-meta-eyebrow">Evaluation</div>
-          <h2 className="section-h2">Inspect answers and the mechanism behind them</h2>
-          <p className="section-subtitle-text">
-            Local regression cases check recall, correction handling, routing, foresight, and graph evidence. Live benchmark results are reported separately.
-          </p>
-
-          <div className="validation-dashboard">
-            <div className="validation-main-panel">
-              <div className="dashboard-grid">
-                <div className="dashboard-metric-header">
-                  <div className="dashboard-circular-progress">
-                    <div className="progress-ring">
-                      <strong>100%</strong>
-                      <span>Pass Rate</span>
-                    </div>
-                  </div>
-                  <div>
-                    <h3 className="dashboard-title">Local Evaluation Health</h3>
-                    <p className="dashboard-caption">
-                      Saved local cases check answers, retrieval mode, trace evidence, and graph behavior.
-                    </p>
-                  </div>
-                </div>
-
-                <div className="dashboard-stats-strip">
-                  <div className="stat-item">
-                    <span className="stat-lbl">Passed</span>
-                    <strong className="stat-val pass">13</strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-lbl">Failed</span>
-                    <strong className="stat-val fail">0</strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-lbl">Pass Rate</span>
-                    <strong className="stat-val pass">100%</strong>
-                  </div>
-                  <div className="stat-item">
-                    <span className="stat-lbl">Routers Active</span>
-                    <strong className="stat-val neutral">Quick / Relational / Deep</strong>
-                  </div>
-                </div>
+              <div className="lp-figure-stage">
+                <MemoryLayerGraph
+                  layers={MEMORY_LAYERS}
+                  active={active.layer}
+                  flow={active.flow}
+                  visited={visited}
+                  runKey={tick}
+                  label={`Stage ${stage + 1} of ${PIPELINE_STAGES.length}, ${active.name}: ${
+                    active.flow === 'write' ? 'MIRA writes to' : 'MIRA reads from'
+                  } ${activeLayer.title}.`}
+                />
               </div>
-            </div>
 
-            <div className="dashboard-categories-container">
-              <h4 className="categories-header-label">Verification matrix · 7 behavior groups</h4>
-              <div className="category-grid">
-                {EVAL_CATEGORIES.map((c, i) => (
-                  <div key={i} className="dashboard-category-card">
-                    <div className="category-top">
-                      <span className="category-name">{c.name}</span>
-                      <span className="category-status badge-pass">PASSED</span>
-                    </div>
-                    <p className="category-details">{c.checks}</p>
+              <Separator />
+
+              <div className="lp-figure-readout" aria-live="polite">
+                <div className="lp-readout-event">
+                  <div className="lp-readout-meta">
+                    <Badge variant="outline" className="font-mono">
+                      <Num value={stage + 1} />/{PIPELINE_STAGES.length}
+                    </Badge>
+                    <span>{active.flow === 'write' ? 'writes to' : 'reads from'}</span>
+                    <Badge className="bg-signal font-mono text-signal-foreground">{activeLayer.level}</Badge>
+                    <span>{activeLayer.title}</span>
                   </div>
-                ))}
+                  <p>
+                    <strong>{active.event}.</strong> {active.detail}
+                  </p>
+                </div>
+                <code className="lp-readout-data">{activeLayer.data}</code>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="final-cta-section">
-          <div className="final-cta-card">
-            <h2>Inspect the memory loop on a real conversation.</h2>
-            <p>Open the demo to follow a message through persistence, retrieval, graph updates, and its final answer trace.</p>
-            <button className="btn-primary centered-cta" onClick={handleLaunch}>
-              Launch MIRA
-              <ArrowRight size={16} />
-            </button>
-          </div>
-        </section>
-
-        <footer className="landing-footer">
-          <div className="landing-footer-brand">
-            <div className="landing-brand">
-              <BrandMark className="brand-mark" size={22} />
-              <span>MIRA</span>
-            </div>
-            <p>
-              Memory infrastructure for agents that need durable context, correction handling,
-              retrieval traces, and inspectable graph-backed memory.
+        <section className="lp-section" id="capabilities">
+          <SectionLabel index="02" name="Components" />
+          <div className="lp-section-body">
+            <h2>What it does, and the part that does it.</h2>
+            <p className="lp-lede">
+              Each behaviour maps to a piece of the running system, so you can open the app and
+              look at it working.
             </p>
+            <Table className="lp-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Behaviour</TableHead>
+                  <TableHead>What happens</TableHead>
+                  <TableHead>Implemented by</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {COMPONENTS.map((c) => (
+                  <TableRow key={c.does}>
+                    <TableCell className="lp-cell-strong">{c.does}</TableCell>
+                    <TableCell className="lp-cell-muted">{c.how}</TableCell>
+                    <TableCell className="lp-cell-mono">{c.part}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
           </div>
+        </section>
 
-          <nav className="landing-footer-links" aria-label="Footer navigation">
+        <section className="lp-section" id="results">
+          <SectionLabel index="03" name="Evaluation" />
+          <div className="lp-section-body">
+            <h2>
+              {EVAL_PASSED} of {EVAL_TOTAL} local regression cases pass.
+            </h2>
+            <p className="lp-lede">
+              Saved cases check the answer, the retrieval mode, the trace evidence and the graph
+              behaviour. Summary generated 12 July 2026; live benchmark results are reported
+              separately in the app.
+            </p>
+            <Table className="lp-table">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Group</TableHead>
+                  <TableHead>Checks that</TableHead>
+                  <TableHead className="text-right">Passed</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {EVAL_GROUPS.map((g) => (
+                  <TableRow key={g.name}>
+                    <TableCell className="lp-cell-strong">{g.name}</TableCell>
+                    <TableCell className="lp-cell-muted">{g.checks}</TableCell>
+                    <TableCell className="text-right">
+                      <Badge variant="outline" className="font-mono text-signal">
+                        {g.passed}/{g.total}
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+
+        <section className="lp-section" id="mcp">
+          <SectionLabel index="04" name="MCP" />
+          <div className="lp-section-body">
+            <h2>Use the memory tools from an MCP client.</h2>
+            <p className="lp-lede">
+              Retrieval, graph, foresight and session-memory operations are available through an
+              authenticated MCP endpoint. OAuth binds each client to the user’s workspace before
+              any memory tool runs.
+            </p>
+            <Table className="lp-table lp-table-spec">
+              <TableBody>
+                {MCP_SPEC.map((item) => (
+                  <TableRow key={item.term}>
+                    <TableHead scope="row">{item.term}</TableHead>
+                    <TableCell className={item.mono ? 'lp-cell-code' : undefined}>{item.value}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </section>
+
+        <section className="lp-section lp-close">
+          <SectionLabel index="05" name="Try it" />
+          <div className="lp-section-body">
+            <h2>Send a message and watch where it goes.</h2>
+            <p className="lp-lede">
+              The demo workspace needs no account. Follow one message through persistence,
+              retrieval and graph updates to its answer trace.
+            </p>
+            <Button size="lg" className="lp-cta" onClick={launch}>
+              Open the demo
+              <ArrowRight data-icon="inline-end" />
+            </Button>
+          </div>
+        </section>
+      </main>
+
+      <footer className="lp-footer">
+        <div className="lp-footer-inner">
+          <div className="lp-footer-brand">
+            <span className="lp-brand">
+              <BrandMark lockup size={20} title="MIRA" />
+            </span>
+            <p>Inspectable memory for AI agents.</p>
+          </div>
+          <nav className="lp-footer-links" aria-label="Footer">
             <div>
-              <span>Product</span>
-              <a href="#capabilities" onClick={(e) => scrollToSection('capabilities', e)}>Capabilities</a>
-              <a href="#how-it-works" onClick={(e) => scrollToSection('how-it-works', e)}>Memory lifecycle</a>
-              <a href="#results" onClick={(e) => scrollToSection('results', e)}>Evaluation</a>
+              <span>Page</span>
+              <a href="#how-it-works" onClick={(e) => scrollTo('how-it-works', e)}>How it works</a>
+              <a href="#capabilities" onClick={(e) => scrollTo('capabilities', e)}>Components</a>
+              <a href="#results" onClick={(e) => scrollTo('results', e)}>Evaluation</a>
+              <a href="#mcp" onClick={(e) => scrollTo('mcp', e)}>MCP access</a>
+              <a href="/developers/docs">Developer docs</a>
+            </div>
+            <div>
+              <span>App</span>
+              <button type="button" onClick={launch}>Open workspace</button>
+              <button
+                type="button"
+                onClick={() => {
+                  scrollTo('how-it-works');
+                  runSequence();
+                }}
+              >
+                Run the sequence
+              </button>
               <a href="/sitemap.xml">Sitemap</a>
             </div>
             <div>
-              <span>Runtime</span>
-              <button type="button" onClick={handleLaunch}>Open workspace</button>
-              <button type="button" onClick={runPipeline}>Run pipeline view</button>
-              <a href="#mcp" onClick={(e) => scrollToSection('mcp', e)}>MCP access</a>
-              <span className="footer-note">SQLite truth · Chroma index · typed graph</span>
-            </div>
-            <div>
               <span>Contact</span>
-              <a href="https://github.com/jerrygeorge360" target="_blank" rel="noreferrer">
-                GitHub · jerrygeorge360
-              </a>
-              <a href="https://github.com/deltron-fr" target="_blank" rel="noreferrer">
-                GitHub · deltron-fr
-              </a>
+              <a href="https://github.com/jerrygeorge360" target="_blank" rel="noreferrer">GitHub · jerrygeorge360</a>
+              <a href="https://github.com/deltron-fr" target="_blank" rel="noreferrer">GitHub · deltron-fr</a>
             </div>
           </nav>
-        </footer>
-      </div>
+        </div>
+      </footer>
     </div>
   );
 }

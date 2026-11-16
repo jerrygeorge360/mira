@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { ArrowRight, Eye, GitBranch, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Eye, GitBranch, ShieldCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
+import { Button } from '@/components/ui/button';
 
 export default function AuthPage() {
   const { signInDemo, setPage, theme, toggleTheme } = useApp();
@@ -29,10 +30,15 @@ export default function AuthPage() {
       <div className="auth-orbit" aria-hidden="true" />
 
       <section className="auth-panel" aria-labelledby="auth-title">
-        <button className="auth-brand" onClick={() => setPage('landing')}>
-          <BrandMark className="brand-mark" size={25} />
-          <span>MIRA</span>
-        </button>
+        <div className="auth-top">
+          <button className="auth-brand" onClick={() => setPage('landing')} aria-label="MIRA home">
+            <BrandMark className="brand-mark" lockup size={26} />
+          </button>
+          <Button variant="ghost" size="sm" onClick={() => setPage('landing')}>
+            <ArrowLeft data-icon="inline-start" />
+            Back
+          </Button>
+        </div>
 
         <div className="auth-copy">
           <div className="auth-kicker">

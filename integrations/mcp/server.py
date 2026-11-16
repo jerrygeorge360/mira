@@ -24,10 +24,15 @@ from core.db.repositories import (
     list_active_foresight,
 )
 from core.memory.graph import find_edges_by_type, get_neighbors
+from core.memory.lifecycle import (
+    forget_memory_by_id,
+    get_memory_state,
+    record_feedback_for_trace,
+)
 from core.memory.observation import persist_turn_fast_path
+from core.memory.slow_path import run_memory_sleep_once
 from core.retrieval.auto import route_retrieval
-from core.retrieval.deep import retrieve_deep
-from core.retrieval.quick import retrieve_quick
+from core.retrieval.router import route_retrieval as retrieve_by_mode
 from core.session.working_set import export_prompt_ready_session_items
 
 ToolParams = dict[str, object]
@@ -95,6 +100,22 @@ MCP_TOOL_DESCRIPTIONS = {
         "Returns the selected mode, routing reason, and evidence. Use graph inspection separately "
         "when the "
         "answer requires explicit conflict or lineage analysis."
+    ),
+    "inspect_memory_state": (
+        "Inspect lifecycle state for one workspace-owned memory, including freshness, "
+        "retention, verification, and runtime trust inputs."
+    ),
+    "memory_sleep": (
+        "Run one bounded, reversible memory sleep cycle that reviews retention, "
+        "consolidates duplicates, refreshes reflections, and archives low-value state."
+    ),
+    "forget_memory": (
+        "Forget one workspace-owned memory by lifecycle id. This preserves the source record and "
+        "provenance history while excluding the memory from normal recall."
+    ),
+    "answer_feedback": (
+        "Record whether the memories behind an answer were correct, verified, or refuted. "
+        "Feedback reinforces or weakens lifecycle state without deleting source history."
     ),
 }
 
@@ -230,6 +251,44 @@ def build_mcp_server(context: WorkspaceContext | None = None) -> MCPServer:
             },
         )
     )
+    server.register(
+        MCPTool(
+            "inspect_memory_state",
+            MCP_TOOL_DESCRIPTIONS["inspect_memory_state"],
+            partial(_inspect_memory_state, active_context),
+            {"source_type": "string", "source_id": "string"},
+        )
+    )
+    server.register(
+        MCPTool(
+            "memory_sleep",
+            MCP_TOOL_DESCRIPTIONS["memory_sleep"],
+            partial(_memory_sleep, active_context),
+            {"max_items": "int (optional, default 100)"},
+        )
+    )
+    server.register(
+        MCPTool(
+            "forget_memory",
+            MCP_TOOL_DESCRIPTIONS["forget_memory"],
+            partial(_forget_memory, active_context),
+            {"memory_id": "string", "reason": "string"},
+        )
+    )
+    server.register(
+        MCPTool(
+            "answer_feedback",
+            MCP_TOOL_DESCRIPTIONS["answer_feedback"],
+            partial(_answer_feedback, active_context),
+            {
+                "trace_id": "string",
+                "answer_correct": "bool (optional)",
+                "verified": "bool (optional)",
+                "refuted": "bool (optional)",
+                "evidence": "any (optional)",
+            },
+        )
+    )
     return server
 
 
@@ -255,7 +314,13 @@ def _retrieve_memory(context: WorkspaceContext, params: ToolParams) -> ToolResul
     limit = _int(params.get("limit"), DEFAULT_LIMIT)
     if session_id:
         _require_owned_session(context, session_id)
-    results = retrieve_quick(query, session_id, limit, workspace_id=context.workspace_id)
+    results = retrieve_by_mode(
+        query,
+        mode="quick",
+        limit=limit,
+        session_id=session_id,
+        workspace_id=context.workspace_id,
+    )
     return {"results": results, "count": len(results)}
 
 
@@ -295,20 +360,78 @@ def _run_retrieval_query(context: WorkspaceContext, params: ToolParams) -> ToolR
     if session_id:
         _require_owned_session(context, session_id)
     limit = _int(params.get("limit"), DEFAULT_LIMIT)
+    requested_mode = _optional_str(params, "mode")
+    if requested_mode is not None and requested_mode not in {"auto", "quick", "deep", "relational"}:
+        raise ValueError("mode must be one of: auto, quick, deep, relational")
     decision = route_retrieval(query, session_id)
-    mode = _optional_str(params, "mode") or str(decision["mode"])
-    if mode == "deep":
-        results = retrieve_deep(query, session_id, limit, workspace_id=context.workspace_id)
-    else:
-        # Quick Mode also backs the relational fallback here: resolving graph
-        # anchors from free text is agent-side logic and is not duplicated.
-        results = retrieve_quick(query, session_id, limit, workspace_id=context.workspace_id)
+    mode = requested_mode or str(decision["mode"])
+    results = retrieve_by_mode(
+        query,
+        mode=mode,
+        limit=limit,
+        session_id=session_id,
+        workspace_id=context.workspace_id,
+    )
     return {
         "mode": mode,
         "reason": decision.get("reason"),
         "results": results,
         "count": len(results),
     }
+
+
+def _inspect_memory_state(context: WorkspaceContext, params: ToolParams) -> ToolResult:
+    source_type = _require_str(params, "source_type")
+    source_id = _require_str(params, "source_id")
+    try:
+        state = get_memory_state(source_type, source_id, context.workspace_id)
+    except ValueError as error:
+        if "memory source not found" not in str(error):
+            raise
+        return {"state": None, "found": False}
+    if state is None:
+        return {"state": None, "found": False}
+    return {"state": state, "found": True}
+
+
+def _memory_sleep(context: WorkspaceContext, params: ToolParams) -> ToolResult:
+    max_items = _int(params.get("max_items"), 100)
+    if max_items < 1 or max_items > 1000:
+        raise ValueError("max_items must be between 1 and 1000")
+    return {
+        "sleep": run_memory_sleep_once(
+            context.workspace_id,
+            max_items=max_items,
+            trigger="mcp",
+        )
+    }
+
+
+def _forget_memory(context: WorkspaceContext, params: ToolParams) -> ToolResult:
+    memory_id = _require_str(params, "memory_id")
+    reason = _require_str(params, "reason")
+    memory = forget_memory_by_id(memory_id, context.workspace_id, reason=reason)
+    return {"memory": memory}
+
+
+def _answer_feedback(context: WorkspaceContext, params: ToolParams) -> ToolResult:
+    trace_id = _require_str(params, "trace_id")
+    answer_correct = params.get("answer_correct")
+    if answer_correct is not None and not isinstance(answer_correct, bool):
+        raise ValueError("answer_correct must be a boolean when provided")
+    verified = params.get("verified", False)
+    refuted = params.get("refuted", False)
+    if not isinstance(verified, bool) or not isinstance(refuted, bool):
+        raise ValueError("verified and refuted must be booleans")
+    updated = record_feedback_for_trace(
+        trace_id,
+        context.workspace_id,
+        answer_correct=answer_correct,
+        verified=verified,
+        refuted=refuted,
+        evidence=params.get("evidence"),
+    )
+    return {"trace_id": trace_id, "updated": updated, "count": len(updated)}
 
 
 def _require_owned_session(context: WorkspaceContext, session_id: str) -> None:

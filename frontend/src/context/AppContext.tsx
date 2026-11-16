@@ -21,7 +21,12 @@ interface AppState {
   theme: 'dark' | 'light';
   toggleTheme: () => void;
   page: 'landing' | 'auth' | 'app';
-  setPage: (p: 'landing' | 'auth' | 'app') => void;
+  /**
+   * Go to a page. By default this adds a browser-history entry, so Back returns
+   * to where the user came from; `replace` swaps the current entry instead
+   * (used after signing in or out, where going "back" to the old page is wrong).
+   */
+  setPage: (p: Page, options?: { replace?: boolean }) => void;
   authUser: AuthUser | null;
   authReady: boolean;
   signInDemo: () => Promise<void>;
@@ -43,6 +48,31 @@ interface AppState {
   refreshMemory: () => void;
 }
 
+type Page = 'landing' | 'auth' | 'app';
+
+/** Each page gets a hash so its history entry is distinct and readable in the address bar. */
+const PAGE_HASH: Record<Page, string> = { landing: '', auth: '#sign-in', app: '#app' };
+
+function isPage(value: unknown): value is Page {
+  return value === 'landing' || value === 'auth' || value === 'app';
+}
+
+/** The developer portal (/developers/…) has its own routes; the landing/sign-in/app hashes don't apply there. */
+function onDeveloperPortal() {
+  return /^\/developers(\/|$)/.test(window.location.pathname);
+}
+
+function writeHistory(page: Page, replace: boolean) {
+  if (onDeveloperPortal()) {
+    // keep the portal URL as it is; only record which page the app is on, without adding an entry
+    window.history.replaceState({ page }, '', window.location.pathname + window.location.search);
+    return;
+  }
+  const url = `${window.location.pathname}${PAGE_HASH[page]}`;
+  if (replace) window.history.replaceState({ page }, '', url);
+  else window.history.pushState({ page }, '', url);
+}
+
 const AppCtx = createContext<AppState | null>(null);
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -52,9 +82,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (saved === 'dark' || saved === 'light') return saved;
     return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
   });
-  const [page, setPage] = useState<'landing' | 'auth' | 'app'>(() =>
+  const [page, setPageState] = useState<Page>(() =>
     new URLSearchParams(window.location.search).get('auth') === 'success' ? 'auth' : 'landing'
   );
+  const setPage = (requested: Page, options?: { replace?: boolean }) => {
+    // someone already signed in never needs the sign-in page: "Open MIRA" takes them to the app
+    const next = requested === 'auth' && authUser ? 'app' : requested;
+    setPageState(next);
+    // Landing section links (#how-it-works) are handled in-page and never reach history,
+    // so the only entries here are page changes.
+    if (window.history.state?.page === next) return;
+    writeHistory(next, Boolean(options?.replace));
+  };
+
+  // Browser Back / Forward: show the page that entry was recorded for.
+  useEffect(() => {
+    // tag the entry the app loaded on, so there is something to come back to
+    if (!isPage(window.history.state?.page)) {
+      window.history.replaceState({ page }, '', window.location.pathname + window.location.search);
+    }
+    const onPop = (event: PopStateEvent) => {
+      setPageState(isPage(event.state?.page) ? event.state.page : 'landing');
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [activeThread, setActiveThread] = useState('new');
@@ -77,8 +129,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (!active) return;
         setAuthUser(toAuthUser(auth));
         setUseRealAgent(true);
-        setPage('app');
-        if (window.location.search) window.history.replaceState({}, '', window.location.pathname);
+        setPageState('app');
+        const portalReturnPath = window.sessionStorage.getItem('mira.developerPortalReturnPath');
+        const safePortalPath = portalReturnPath === '/developers/dashboard'
+          ? portalReturnPath
+          : window.location.pathname;
+        window.sessionStorage.removeItem('mira.developerPortalReturnPath');
+        if (window.location.search || safePortalPath !== window.location.pathname) {
+          window.history.replaceState({ page: 'app' }, '', safePortalPath);
+        } else {
+          // An existing session opens straight into the app; replace the entry so Back leaves as usual.
+          writeHistory('app', true);
+        }
       })
       .catch(() => {
         if (!active) return;
@@ -98,7 +160,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const auth = await api.authMe();
     setAuthUser(toAuthUser(auth));
     setUseRealAgent(true);
-    setPage('app');
+    // the sign-in entry becomes the app entry: Back from the app goes to the landing page
+    setPage('app', { replace: true });
   };
   const signOut = async () => {
     try { await api.logout(); } catch { /* Clear local state even if the session expired. */ }
@@ -106,7 +169,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSessionId(null);
     setActiveThread('new');
     setView('Chat');
-    setPage('auth');
+    // set directly: `setPage` would still see the signed-in user and send them to the app
+    setPageState('auth');
+    writeHistory('auth', true);
   };
   const deleteWorkspaceData = async () => {
     await api.deleteWorkspaceData();

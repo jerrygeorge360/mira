@@ -9,13 +9,24 @@ from api.dependencies import fetch_one
 from api.schemas.sessions import (
     ChatMessage,
     CreateSessionRequest,
+    SessionKnowledgeBase,
+    SessionKnowledgeBasesResponse,
     SessionListResponse,
     SessionMessagesResponse,
     SessionResponse,
     SessionSummary,
     SessionWorkingSetResponse,
+    UpdateSessionKnowledgeBasesRequest,
 )
-from core.db.repositories import bind_workspace, list_observations, message_counts_by_session
+from core.db.repositories import (
+    bind_workspace,
+    list_knowledge_bases,
+    list_observations,
+    list_session_knowledge_base_ids,
+    message_counts_by_session,
+    replace_session_knowledge_base_ids,
+)
+from core.retrieval.router import source_aware_retrieval_enabled_for_workspace
 from core.session.read_models import active_session_items, list_session_working_set_read_model
 from core.session_deletion import delete_session_data
 
@@ -102,6 +113,51 @@ def get_session_route(
 ) -> SessionResponse:
     """Return session metadata."""
     return _session_response(_get_session_or_404(session_id, auth.context.workspace_id))
+
+
+@router.get("/{session_id}/knowledge-bases", response_model=SessionKnowledgeBasesResponse)
+def get_session_knowledge_bases_route(
+    session_id: str,
+    auth: WorkspaceAuth,
+) -> SessionKnowledgeBasesResponse:
+    """List workspace KBs and the allowlist currently attached to this session."""
+    workspace_id = auth.context.workspace_id
+    _get_session_or_404(session_id, workspace_id)
+    attached = set(list_session_knowledge_base_ids(session_id, workspace_id=workspace_id))
+    knowledge_bases = [
+        SessionKnowledgeBase(
+            id=str(row["id"]),
+            name=str(row["name"]),
+            description=str(row["description"]) if row.get("description") is not None else None,
+            attached=str(row["id"]) in attached,
+        )
+        for row in list_knowledge_bases(workspace_id=workspace_id)
+    ]
+    return SessionKnowledgeBasesResponse(
+        session_id=session_id,
+        knowledge_bases=knowledge_bases,
+        retrieval_enabled=source_aware_retrieval_enabled_for_workspace(workspace_id=workspace_id),
+    )
+
+
+@router.put("/{session_id}/knowledge-bases", response_model=SessionKnowledgeBasesResponse)
+def update_session_knowledge_bases_route(
+    request: Request,
+    session_id: str,
+    payload: UpdateSessionKnowledgeBasesRequest,
+    auth: WorkspaceAuth,
+) -> SessionKnowledgeBasesResponse:
+    """Replace a session's KB allowlist; unselected libraries stay private to the shelf."""
+    require_csrf(request, auth)
+    workspace_id = auth.context.workspace_id
+    _get_session_or_404(session_id, workspace_id)
+    try:
+        replace_session_knowledge_base_ids(
+            session_id, payload.knowledge_base_ids, workspace_id=workspace_id
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    return get_session_knowledge_bases_route(session_id, auth)
 
 
 @router.get("/{session_id}/working-set", response_model=SessionWorkingSetResponse)

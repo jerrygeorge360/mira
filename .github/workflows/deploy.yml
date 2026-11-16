@@ -1,12 +1,9 @@
   name: Deploy
 
+  # Legacy Alibaba ECS deployment. Keep the workflow available for manual
+  # recovery without trying to deploy to an expired host after every CI run.
   on:
-    workflow_run:
-      workflows: [ "CI" ]
-      types:
-        - completed
-      branches:
-        - main
+    workflow_dispatch:
 
   jobs:
     build-and-deploy:

@@ -36,7 +36,11 @@ def keyword_search_observations(
 
 
 def keyword_search_atomic_facts(
-    query: str, limit: int, *, workspace_id: str = LEGACY_WORKSPACE_ID
+    query: str,
+    limit: int,
+    *,
+    workspace_id: str = LEGACY_WORKSPACE_ID,
+    include_inactive: bool = False,
 ) -> list[Record]:
     """Search atomic facts by subject, predicate, and object text."""
     terms = _query_terms(query)
@@ -44,7 +48,7 @@ def keyword_search_atomic_facts(
     if not terms.normalized_query:
         return []
 
-    rows = _fetch_atomic_fact_candidates(terms, workspace_id)
+    rows = _fetch_atomic_fact_candidates(terms, workspace_id, include_inactive=include_inactive)
     scored = [
         _with_score(
             dict(row),
@@ -99,19 +103,28 @@ def _fetch_observation_candidates(terms: _QueryTerms, workspace_id: str) -> list
     return [dict(row) for row in rows]
 
 
-def _fetch_atomic_fact_candidates(terms: _QueryTerms, workspace_id: str) -> list[Record]:
-    clauses, parameters = _like_clauses(("subject", "predicate", "object"), terms)
+def _fetch_atomic_fact_candidates(
+    terms: _QueryTerms,
+    workspace_id: str,
+    *,
+    include_inactive: bool = False,
+) -> list[Record]:
+    clauses, like_parameters = _like_clauses(("subject", "predicate", "object"), terms)
     if not clauses:
         return []
+    status_clause = "" if include_inactive else "AND status = ?"
+    parameters: tuple[object, ...] = (workspace_id,)
+    if not include_inactive:
+        parameters += ("active",)
     statement = f"""
         SELECT id, workspace_id, subject, predicate, object, confidence, status,
                source_observation_id, created_at, valid_from, valid_until
         FROM atomic_facts
-        WHERE workspace_id = ? AND status = ? AND ({" OR ".join(clauses)})
+        WHERE workspace_id = ? {status_clause} AND ({" OR ".join(clauses)})
         ORDER BY created_at DESC
         """  # nosec B608
     with repository_connection() as connection:
-        rows = connection.execute(statement, (workspace_id, "active", *parameters)).fetchall()
+        rows = connection.execute(statement, (*parameters, *like_parameters)).fetchall()
     return [dict(row) for row in rows]
 
 

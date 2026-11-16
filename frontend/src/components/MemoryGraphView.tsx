@@ -4,6 +4,13 @@ import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import GraphView, { type GraphData } from './GraphView';
 import { ViewStatus } from './ViewStatus';
+import { Search } from 'lucide-react';
+import { Eyebrow, Num, Stat, StatStrip, ViewHeader, ViewPage } from './view';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Field, FieldLabel } from '@/components/ui/field';
+import { InputGroup, InputGroupAddon, InputGroupInput } from '@/components/ui/input-group';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 const TYPE_COLORS: Record<string, string> = {
   entity: '#d97757',
@@ -122,11 +129,11 @@ export default function MemoryGraphView() {
   }, [edges, filteredNodes, edgeCategoryFilter, edgeTypeFilter, search, timeFilter]);
 
   return (
-    <div>
-      <div className="view-header">
-        <h2>Memory Graph</h2>
-        <p>Typed temporal topology · click a node to inspect, scroll to zoom, drag to pan</p>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Memory Graph"
+        description="Typed temporal topology. Click a node to inspect it, scroll to zoom, drag to pan."
+      />
       {nodes.length === 0 ? (
         <ViewStatus
           status={status}
@@ -135,115 +142,73 @@ export default function MemoryGraphView() {
         />
       ) : (
         <>
-          <div className="metric-row">
-            {[
-              { label: 'Nodes', value: String(nodes.length) },
-              { label: 'Edges', value: String(edges.length) },
-              { label: 'Edge types', value: String(new Set(edges.map((e) => e.edge_type)).size) },
-            ].map((m, i) => (
-              <div key={i} className="metric-card">
-                <div className="val">{m.value}</div>
-                <div className="lbl">{m.label}</div>
-              </div>
-            ))}
-          </div>
-          <div className="graph-filter-panel">
-            <div className="graph-filter-row">
-              <label className="graph-search">
-                <span>Search graph</span>
-                <input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Find entity, edge, source ID, or relationship"
-                />
-              </label>
-              <div className="graph-quick-actions">
-                <button type="button" onClick={() => setEdgeCategoryFilter('conflict')}>
+          <StatStrip>
+            <Stat label="Nodes" value={nodes.length} />
+            <Stat label="Edges" value={edges.length} />
+            <Stat label="Edge types" value={new Set(edges.map((e) => e.edge_type)).size} />
+            <Stat label="Showing" value={<><Num value={filteredNodes.length} /> · <Num value={filteredEdges.length} /></>} detail="nodes · edges after filters" />
+          </StatStrip>
+
+          <Card>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap items-end gap-3">
+                <Field className="min-w-64 flex-1">
+                  <FieldLabel htmlFor="graph-search">Search graph</FieldLabel>
+                  <InputGroup>
+                    <InputGroupAddon>
+                      <Search />
+                    </InputGroupAddon>
+                    <InputGroupInput
+                      id="graph-search"
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Find entity, edge, source ID, or relationship"
+                    />
+                  </InputGroup>
+                </Field>
+                <Button variant="outline" onClick={() => setEdgeCategoryFilter('conflict')}>
                   Show contradiction chain
-                </button>
-                <button type="button" onClick={() => setEdgeCategoryFilter('evidence')}>
+                </Button>
+                <Button variant="outline" onClick={() => setEdgeCategoryFilter('evidence')}>
                   Show evidence lineage
-                </button>
+                </Button>
               </div>
-            </div>
-            <div className="graph-filter-group">
-              <span>Nodes</span>
-              <button
-                type="button"
-                className={nodeTypeFilter === 'all' ? 'active' : ''}
-                onClick={() => setNodeTypeFilter('all')}
-              >
-                All
-              </button>
-              {nodeTypes.map((type) => (
-                <button
-                  type="button"
-                  key={type}
-                  className={nodeTypeFilter === type ? 'active' : ''}
-                  onClick={() => setNodeTypeFilter(type)}
-                >
-                  {type.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Relationship groups</span>
-              {EDGE_CATEGORIES.map((category) => (
-                <button
-                  type="button"
-                  key={category.id}
-                  className={edgeCategoryFilter === category.id ? 'active' : ''}
-                  onClick={() => {
-                    setEdgeCategoryFilter(category.id);
-                    setEdgeTypeFilter('all');
-                  }}
-                >
-                  {category.label}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Edge type</span>
-              <button
-                type="button"
-                className={edgeTypeFilter === 'all' ? 'active' : ''}
-                onClick={() => setEdgeTypeFilter('all')}
-              >
-                All
-              </button>
-              {edgeTypes.map((type) => (
-                <button
-                  type="button"
-                  key={type}
-                  className={edgeTypeFilter === type ? 'active' : ''}
-                  onClick={() => setEdgeTypeFilter(type)}
-                >
-                  {type.replace('_', ' ')}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-group">
-              <span>Time range</span>
-              {[
-                ['all', 'All time'],
-                ['today', 'Today'],
-                ['week', '7 days'],
-                ['month', '30 days'],
-              ].map(([value, label]) => (
-                <button
-                  type="button"
-                  key={value}
-                  className={timeFilter === value ? 'active' : ''}
-                  onClick={() => setTimeFilter(value as TimeFilter)}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <div className="graph-filter-count">
-              Showing {filteredNodes.length} nodes · {filteredEdges.length} edges
-            </div>
-          </div>
+
+              <FilterRow
+                label="Nodes"
+                value={nodeTypeFilter}
+                onChange={setNodeTypeFilter}
+                options={[{ value: 'all', label: 'All' }, ...nodeTypes.map((type) => ({ value: type, label: type.replace('_', ' ') }))]}
+              />
+              <FilterRow
+                label="Relationship groups"
+                value={edgeCategoryFilter}
+                onChange={(next) => {
+                  setEdgeCategoryFilter(next as EdgeCategory);
+                  setEdgeTypeFilter('all');
+                }}
+                options={EDGE_CATEGORIES.map((category) => ({ value: category.id, label: category.label }))}
+              />
+              <FilterRow
+                label="Edge type"
+                value={edgeTypeFilter}
+                onChange={setEdgeTypeFilter}
+                options={[{ value: 'all', label: 'All' }, ...edgeTypes.map((type) => ({ value: type, label: type.replace('_', ' ') }))]}
+              />
+              <FilterRow
+                label="Time range"
+                value={timeFilter}
+                onChange={(next) => setTimeFilter(next as TimeFilter)}
+                options={[
+                  { value: 'all', label: 'All time' },
+                  { value: 'today', label: 'Today' },
+                  { value: 'week', label: '7 days' },
+                  { value: 'month', label: '30 days' },
+                ]}
+              />
+            </CardContent>
+          </Card>
+
           {filteredNodes.length === 0 ? (
             <ViewStatus
               status="live"
@@ -251,10 +216,46 @@ export default function MemoryGraphView() {
               hint="Broaden the node or edge filter to inspect more memory."
             />
           ) : (
-            <GraphView height={460} data={toGraphData(filteredNodes, filteredEdges)} />
+            <GraphView data={toGraphData(filteredNodes, filteredEdges)} />
           )}
         </>
       )}
+    </ViewPage>
+  );
+}
+
+/** One labelled row of mutually exclusive filter options. */
+function FilterRow({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="grid items-center gap-x-4 gap-y-1.5 sm:grid-cols-[10rem_minmax(0,1fr)]">
+      <Eyebrow>{label}</Eyebrow>
+      <ToggleGroup
+        variant="outline"
+        size="sm"
+        // separate buttons, not a joined bar: these rows wrap on narrow screens
+        spacing={1}
+        className="max-w-full flex-wrap"
+        value={[value]}
+        // pressing the selected option again keeps it selected: one is always active
+        onValueChange={(next) => next[0] && onChange(next[0])}
+        aria-label={label}
+      >
+        {options.map((option) => (
+          <ToggleGroupItem key={option.value} value={option.value}>
+            {option.label}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
     </div>
   );
 }

@@ -79,7 +79,15 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "fact_status": frozenset({"active", "superseded", "contradicted", "expired", "rejected"}),
     "graph_node_type": frozenset(
-        {"observation", "entity", "reflection", "community", "foresight", "atomic_fact"}
+        {
+            "observation",
+            "document_chunk",
+            "entity",
+            "reflection",
+            "community",
+            "foresight",
+            "atomic_fact",
+        }
     ),
     "graph_edge_type": frozenset(
         {
@@ -98,7 +106,9 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "reflection_type": frozenset({"user_knowledge", "world_knowledge", "self_knowledge"}),
     "reflection_status": frozenset({"active", "stale", "invalidated", "superseded"}),
-    "foresight_status": frozenset({"pending", "active", "resolved", "expired", "cancelled"}),
+    "foresight_status": frozenset(
+        {"candidate", "pending", "active", "resolved", "expired", "cancelled"}
+    ),
     "working_memory_type": frozenset(
         {
             "project_constraint",
@@ -111,6 +121,8 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "working_memory_status": frozenset({"active", "demoted", "expired", "superseded"}),
     "retrieval_mode": frozenset({"quick", "deep", "relational", "auto", "general"}),
+    "knowledge_base_status": frozenset({"active", "deleted"}),
+    "document_status": frozenset({"uploaded", "processing", "ready", "failed", "deleted"}),
 }
 
 JSON_COLUMNS: frozenset[str] = frozenset(
@@ -134,6 +146,10 @@ JSON_COLUMNS: frozenset[str] = frozenset(
         "community_summary_ids_json",
         "prompt_sections_json",
         "hydration_ids_json",
+        "configuration_json",
+        "before_snapshot_json",
+        "after_snapshot_json",
+        "changes_json",
     }
 )
 
@@ -147,6 +163,9 @@ UPDATED_AT_TABLES: frozenset[str] = frozenset(
         "foresight_records",
         "community_summaries",
         "working_memory",
+        "memory_state",
+        "knowledge_bases",
+        "documents",
     }
 )
 
@@ -338,6 +357,112 @@ TABLE_COLUMNS: dict[str, frozenset[str]] = {
             "created_at",
         }
     ),
+    "memory_state": frozenset(
+        {
+            "id",
+            "source_type",
+            "source_id",
+            "source_authority",
+            "last_accessed_at",
+            "last_verified_at",
+            "successful_uses",
+            "failed_uses",
+            "verification_count",
+            "refuted_count",
+            "retention_score",
+            "stability",
+            "pinned",
+            "lifecycle_status",
+            "created_at",
+            "updated_at",
+        }
+    ),
+    "memory_reviews": frozenset(
+        {
+            "id",
+            "memory_state_id",
+            "trace_id",
+            "event_type",
+            "retrieved",
+            "answer_correct",
+            "answer_wrong",
+            "verified",
+            "refuted",
+            "reinforced",
+            "evidence",
+            "created_at",
+        }
+    ),
+    "memory_sleep_runs": frozenset(
+        {
+            "id",
+            "status",
+            "started_at",
+            "completed_at",
+            "reviewed_count",
+            "reinforced_count",
+            "weakened_count",
+            "consolidated_count",
+            "archived_count",
+            "forgotten_count",
+            "details",
+            "trigger",
+            "finished_at",
+            "configuration_json",
+            "before_snapshot_json",
+            "after_snapshot_json",
+            "changes_json",
+            "error",
+        }
+    ),
+    "memory_sleep_schedule": frozenset(
+        {
+            "workspace_id",
+            "automatic_sleep_enabled",
+            "sleep_interval_hours",
+            "last_sleep_at",
+            "next_sleep_at",
+            "updated_at",
+        }
+    ),
+    "knowledge_bases": frozenset(
+        {"id", "name", "description", "status", "created_at", "updated_at"}
+    ),
+    "documents": frozenset(
+        {
+            "id",
+            "knowledge_base_id",
+            "filename",
+            "mime_type",
+            "size_bytes",
+            "s3_bucket",
+            "s3_key",
+            "checksum_sha256",
+            "status",
+            "error_message",
+            "page_count",
+            "extracted_char_count",
+            "created_at",
+            "updated_at",
+            "processed_at",
+            "deleted_at",
+        }
+    ),
+    "document_chunks": frozenset(
+        {
+            "id",
+            "knowledge_base_id",
+            "document_id",
+            "chunk_index",
+            "content",
+            "heading",
+            "page_start",
+            "page_end",
+            "char_start",
+            "char_end",
+            "created_at",
+        }
+    ),
 }
 
 _WORKSPACE_OWNED_TABLES = frozenset(
@@ -358,6 +483,13 @@ _WORKSPACE_OWNED_TABLES = frozenset(
         "retrieval_logs",
         "prompt_logs",
         "answer_traces",
+        "memory_state",
+        "memory_reviews",
+        "memory_sleep_runs",
+        "memory_sleep_schedule",
+        "knowledge_bases",
+        "documents",
+        "document_chunks",
     }
 )
 for _workspace_table in _WORKSPACE_OWNED_TABLES:
@@ -695,11 +827,11 @@ class WorkspaceRepository:
         return save_observation(session_id, role, content, source, metadata)
 
     def list_observations(
-        self, session_id: str, limit: int | None = None
+        self, session_id: str, limit: int | None = None, *, newest_first: bool = False
     ) -> list[RepositoryRecord]:
         if self.get_session(session_id) is None:
             raise ValueError(f"Session not found in workspace: {session_id}")
-        return list_observations(session_id, limit)
+        return list_observations(session_id, limit, newest_first=newest_first)
 
     def get_atomic_fact(self, fact_id: str) -> RepositoryRecord | None:
         rows = _fetch_all(
@@ -721,6 +853,278 @@ class WorkspaceRepository:
             (trace_id, self.workspace_id),
         )
         return rows[0] if rows else None
+
+
+def create_knowledge_base(
+    name: str,
+    *,
+    workspace_id: str,
+    description: str | None = None,
+    knowledge_base_id: str | None = None,
+    status: str = "active",
+) -> str:
+    """Create a workspace-owned document knowledge base."""
+    if not name.strip():
+        raise ValueError("knowledge base name must not be empty")
+    validate_enum_value("knowledge_base_status", status)
+    require_active_workspace(workspace_id)
+    return _insert_with_generated_id(
+        "knowledge_bases",
+        {
+            "id": knowledge_base_id or _new_id(),
+            "workspace_id": workspace_id,
+            "name": name.strip(),
+            "description": description.strip() if isinstance(description, str) else description,
+            "status": status,
+        },
+    )
+
+
+def get_knowledge_base(
+    knowledge_base_id: str, *, workspace_id: str, include_deleted: bool = False
+) -> RepositoryRecord | None:
+    """Fetch a knowledge base only when it belongs to the requested workspace."""
+    rows = _fetch_all(
+        "SELECT * FROM knowledge_bases WHERE id = ? AND workspace_id = ? "
+        "AND (? = 1 OR status = 'active')",
+        (knowledge_base_id, workspace_id, int(include_deleted)),
+    )
+    return rows[0] if rows else None
+
+
+def list_knowledge_bases(
+    *, workspace_id: str, include_deleted: bool = False
+) -> list[RepositoryRecord]:
+    """List knowledge bases for one workspace, never across workspace boundaries."""
+    return _fetch_all(
+        """
+        SELECT * FROM knowledge_bases
+        WHERE workspace_id = ? AND (? = 1 OR status = 'active')
+        ORDER BY updated_at DESC, id ASC
+        """,
+        (workspace_id, int(include_deleted)),
+    )
+
+
+def list_session_knowledge_base_ids(session_id: str, *, workspace_id: str) -> list[str]:
+    """List only active KBs explicitly attached to a live session in this workspace."""
+    with repository_connection() as connection:
+        session = connection.execute(
+            "SELECT 1 FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
+            (session_id, workspace_id),
+        ).fetchone()
+        if session is None:
+            raise ValueError("session not found in workspace")
+        rows = connection.execute(
+            "SELECT a.knowledge_base_id FROM session_knowledge_base_attachments AS a "
+            "JOIN knowledge_bases AS k ON k.id = a.knowledge_base_id "
+            "AND k.workspace_id = a.workspace_id "
+            "WHERE a.workspace_id = ? AND a.session_id = ? AND k.status = 'active' "
+            "ORDER BY a.created_at, a.knowledge_base_id",
+            (workspace_id, session_id),
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def replace_session_knowledge_base_ids(
+    session_id: str, knowledge_base_ids: list[str], *, workspace_id: str
+) -> list[str]:
+    """Replace a session's explicit KB allowlist after validating every KB owner."""
+    normalized = list(dict.fromkeys(value.strip() for value in knowledge_base_ids if value.strip()))
+    with repository_connection() as connection:
+        session = connection.execute(
+            "SELECT 1 FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
+            (session_id, workspace_id),
+        ).fetchone()
+        if session is None:
+            raise ValueError("session not found in workspace")
+        if normalized:
+            placeholders = ", ".join("?" for _ in normalized)
+            rows = connection.execute(
+                "SELECT id FROM knowledge_bases WHERE workspace_id = ? AND status = 'active' "
+                f"AND id IN ({placeholders})",  # nosec B608 - IDs remain bound parameters
+                (workspace_id, *normalized),
+            ).fetchall()
+            found = {str(row[0]) for row in rows}
+            if found != set(normalized):
+                raise ValueError("knowledge base not found in workspace")
+        connection.execute(
+            "DELETE FROM session_knowledge_base_attachments "
+            "WHERE workspace_id = ? AND session_id = ?",
+            (workspace_id, session_id),
+        )
+        attachment_rows = [
+            (workspace_id, session_id, knowledge_base_id, _now())
+            for knowledge_base_id in normalized
+        ]
+        connection.executemany(
+            "INSERT INTO session_knowledge_base_attachments "
+            "(workspace_id, session_id, knowledge_base_id, created_at) VALUES (?, ?, ?, ?)",
+            attachment_rows,
+        )
+    return normalized
+
+
+def create_document(document: RepositoryRecord, *, workspace_id: str | None = None) -> str:
+    """Insert a document row after validating its workspace and lifecycle status."""
+    prepared = dict(document)
+    effective_workspace = str(prepared.get("workspace_id") or workspace_id or "")
+    if not effective_workspace:
+        raise ValueError("document workspace_id is required")
+    if str(prepared.get("workspace_id", effective_workspace)) != effective_workspace:
+        raise ValueError("document workspace_id does not match the requested workspace")
+    required = {
+        "knowledge_base_id",
+        "filename",
+        "mime_type",
+        "size_bytes",
+        "s3_bucket",
+        "s3_key",
+        "checksum_sha256",
+        "status",
+    }
+    _require_fields("documents", prepared, required)
+    validate_enum_value("document_status", str(prepared["status"]))
+    if (
+        get_knowledge_base(str(prepared["knowledge_base_id"]), workspace_id=effective_workspace)
+        is None
+    ):
+        raise ValueError("knowledge base not found in workspace")
+    prepared["workspace_id"] = effective_workspace
+    return _insert_with_generated_id("documents", prepared)
+
+
+def get_document(
+    document_id: str, *, workspace_id: str, include_deleted: bool = False
+) -> RepositoryRecord | None:
+    """Fetch one document with an explicit workspace boundary."""
+    rows = _fetch_all(
+        "SELECT * FROM documents WHERE id = ? AND workspace_id = ? "
+        "AND (? = 1 OR status != 'deleted')",
+        (document_id, workspace_id, int(include_deleted)),
+    )
+    return rows[0] if rows else None
+
+
+def list_documents(
+    knowledge_base_id: str,
+    *,
+    workspace_id: str,
+    include_deleted: bool = False,
+) -> list[RepositoryRecord]:
+    """List documents in one workspace-owned knowledge base."""
+    return _fetch_all(
+        """
+        SELECT documents.*
+        FROM documents
+        JOIN knowledge_bases
+          ON knowledge_bases.id = documents.knowledge_base_id
+         AND knowledge_bases.workspace_id = documents.workspace_id
+        WHERE documents.knowledge_base_id = ?
+          AND documents.workspace_id = ?
+          AND (? = 1 OR documents.status != 'deleted')
+        ORDER BY documents.created_at DESC, documents.id ASC
+        """,
+        (knowledge_base_id, workspace_id, int(include_deleted)),
+    )
+
+
+def update_document(
+    document_id: str,
+    *,
+    workspace_id: str,
+    status: str | None = None,
+    error_message: str | None = None,
+    page_count: int | None = None,
+    extracted_char_count: int | None = None,
+    processed_at: str | None = None,
+    deleted_at: str | None = None,
+) -> None:
+    """Update mutable processing fields for one workspace-owned document."""
+    if status is not None:
+        validate_enum_value("document_status", status)
+    fields: dict[str, object] = {
+        "status": status,
+        "error_message": error_message,
+        "page_count": page_count,
+        "extracted_char_count": extracted_char_count,
+        "processed_at": processed_at,
+        "deleted_at": deleted_at,
+        "updated_at": _now(),
+    }
+    assignments = [f"{column} = ?" for column, value in fields.items() if value is not None]
+    values = tuple(value for value in fields.values() if value is not None)
+    if not assignments:
+        raise ValueError("document update requires at least one value")
+    with _connect() as connection:
+        cursor = connection.execute(
+            f"UPDATE documents SET {', '.join(assignments)} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (*values, document_id, workspace_id),
+        )
+        if cursor.rowcount == 0:
+            raise ValueError(f"Document not found in workspace: {document_id}")
+
+
+def create_document_chunk(chunk: RepositoryRecord, *, workspace_id: str | None = None) -> str:
+    """Insert one chunk with parent workspace checks enforced by SQLite triggers."""
+    prepared = dict(chunk)
+    effective_workspace = str(prepared.get("workspace_id") or workspace_id or "")
+    if not effective_workspace:
+        raise ValueError("document chunk workspace_id is required")
+    prepared["workspace_id"] = effective_workspace
+    _require_fields(
+        "document_chunks",
+        prepared,
+        {"knowledge_base_id", "document_id", "chunk_index", "content"},
+    )
+    if not str(prepared["content"]).strip():
+        raise ValueError("document chunk content must not be empty")
+    return _insert_with_generated_id("document_chunks", prepared)
+
+
+def get_document_chunk(chunk_id: str, *, workspace_id: str) -> RepositoryRecord | None:
+    """Fetch one chunk only within its owning workspace."""
+    rows = _fetch_all(
+        "SELECT * FROM document_chunks WHERE id = ? AND workspace_id = ?",
+        (chunk_id, workspace_id),
+    )
+    return rows[0] if rows else None
+
+
+def list_document_chunks(document_id: str, *, workspace_id: str) -> list[RepositoryRecord]:
+    """List chunks in stable source order for one workspace-owned document."""
+    return _fetch_all(
+        """
+        SELECT * FROM document_chunks
+        WHERE document_id = ? AND workspace_id = ?
+        ORDER BY chunk_index ASC, id ASC
+        """,
+        (document_id, workspace_id),
+    )
+
+
+def delete_document_chunks(document_id: str, *, workspace_id: str) -> list[str]:
+    """Delete indexed chunk rows and return their ids for vector cleanup."""
+    chunks = list_document_chunks(document_id, workspace_id=workspace_id)
+    with _connect() as connection:
+        connection.execute(
+            "DELETE FROM document_chunks WHERE document_id = ? AND workspace_id = ?",
+            (document_id, workspace_id),
+        )
+    return [str(chunk["id"]) for chunk in chunks]
+
+
+def mark_document_deleted(document_id: str, *, workspace_id: str) -> list[str]:
+    """Mark a document deleted and remove its chunks from SQLite."""
+    chunk_ids = delete_document_chunks(document_id, workspace_id=workspace_id)
+    update_document(
+        document_id,
+        workspace_id=workspace_id,
+        status="deleted",
+        deleted_at=_now(),
+        error_message=None,
+    )
+    return chunk_ids
 
 
 def create_session(
@@ -832,11 +1236,17 @@ def message_counts_by_session(*, workspace_id: str | None = None) -> dict[str, i
     return {str(row["session_id"]): int(row["n"]) for row in rows}
 
 
-def list_observations(session_id: str, limit: int | None = None) -> list[RepositoryRecord]:
-    """List observations for a session in creation order."""
+def list_observations(
+    session_id: str, limit: int | None = None, *, newest_first: bool = False
+) -> list[RepositoryRecord]:
+    """List observations for a session in creation order, optionally newest first."""
     if limit is not None and limit < 1:
         raise ValueError("limit must be a positive integer")
-    query = "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at ASC"
+    query = (
+        "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at DESC"
+        if newest_first
+        else "SELECT * FROM observations WHERE session_id = ? ORDER BY created_at ASC"
+    )
     parameters: tuple[object, ...] = (session_id,)
     if limit is not None:
         query = f"{query} LIMIT ?"
@@ -1162,14 +1572,15 @@ def create_atomic_fact(fact: RepositoryRecord) -> str:
     _require_fields(
         "atomic_facts",
         record,
-        {"subject", "predicate", "object", "confidence", "status", "source_observation_id"},
+        {"subject", "predicate", "object", "confidence", "status"},
     )
+    if not record.get("source_observation_id") and not record.get("workspace_id"):
+        raise ValueError("atomic fact requires a source observation or explicit workspace")
     workspace_id = str(
-        record.setdefault(
-            "workspace_id",
-            _workspace_id_for("observations", str(record["source_observation_id"])),
-        )
+        record.get("workspace_id")
+        or _workspace_id_for("observations", str(record["source_observation_id"]))
     )
+    record["workspace_id"] = workspace_id
     _validate_record_enums(record, {"status": "fact_status"})
     record.setdefault(
         "canonical_subject_id",
@@ -1317,11 +1728,13 @@ def create_foresight_record(record: RepositoryRecord) -> str:
     _require_fields(
         "foresight_records",
         prepared_record,
-        {"content", "status", "source_observation_id"},
+        {"content", "status"},
     )
-    prepared_record.setdefault(
-        "workspace_id",
-        _workspace_id_for("observations", str(prepared_record["source_observation_id"])),
+    if not prepared_record.get("source_observation_id") and not prepared_record.get("workspace_id"):
+        raise ValueError("foresight requires a source observation or explicit workspace")
+    prepared_record["workspace_id"] = str(
+        prepared_record.get("workspace_id")
+        or _workspace_id_for("observations", str(prepared_record["source_observation_id"]))
     )
     _validate_record_enums(prepared_record, {"status": "foresight_status"})
     return _insert_with_generated_id("foresight_records", prepared_record)

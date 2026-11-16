@@ -1,7 +1,21 @@
-import { Activity, Boxes, Cable, Check, Clock3, Cpu, ShieldCheck, Users } from 'lucide-react';
+import { Activity, Boxes, Cable, Check, Cpu, ShieldCheck, Users } from 'lucide-react';
 import { useState } from 'react';
 import { api } from '../api/client';
 import { formatTime, useLiveData } from '../api/useLiveData';
+import LoadingState from './LoadingState';
+import { KeyValue, KeyValueList, Panel, Stat, StatStrip, ViewHeader, ViewPage } from './view';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
+import { Spinner } from '@/components/ui/spinner';
+import { EvilBarChart } from '@/components/evilcharts/charts/recharts-bar-chart';
+import type { ChartConfig } from '@/components/evilcharts/ui/recharts-chart';
+import { CHART_COLORS } from './chartPalette';
+
+const REGISTRATION_CONFIG = {
+  signups: { label: 'Registrations', colors: CHART_COLORS.signal },
+} satisfies ChartConfig;
 
 export default function AdminView() {
   const { data, status } = useLiveData(() => api.adminOverview(), []);
@@ -13,14 +27,20 @@ export default function AdminView() {
   const [switchingProvider, setSwitchingProvider] = useState<string | null>(null);
 
   if (status === 'loading') {
-    return <div className="view-empty"><div className="view-empty-msg">Loading platform overview...</div></div>;
+    return (
+      <Empty className="border">
+        <LoadingState label="Loading platform overview" />
+      </Empty>
+    );
   }
   if (status === 'offline' || !data) {
     return (
-      <div className="view-empty">
-        <div className="view-empty-msg">Administration unavailable</div>
-        <div className="view-empty-hint">This view requires an explicitly configured platform administrator.</div>
-      </div>
+      <Empty className="border">
+        <EmptyHeader>
+          <EmptyTitle>Administration unavailable</EmptyTitle>
+          <EmptyDescription>This view requires an explicitly configured platform administrator.</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
     );
   }
 
@@ -29,128 +49,154 @@ export default function AdminView() {
   const queueAttention = (data.queue.failed ?? 0)
     + (data.queue.dead_letter ?? 0)
     + (data.queue.quarantined ?? 0);
-  const maxRegistrations = Math.max(1, ...data.registrations_last_30_days.map(item => item.count));
 
   return (
-    <div className="admin-view">
-      <div className="view-header admin-view-header">
-        <div>
-          <h2>Administration</h2>
-          <p>Aggregate product usage and runtime health. No conversation or memory content is exposed.</p>
-        </div>
-        <span><ShieldCheck size={14} /> Read only</span>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Administration"
+        description="Aggregate product usage and runtime health. No conversation or memory content is exposed."
+      >
+        <Badge variant="outline">
+          <ShieldCheck data-icon="inline-start" />
+          Read only
+        </Badge>
+      </ViewHeader>
 
-      <div className="admin-metric-grid">
-        <Metric icon={<Users size={18} />} label="Registered people" value={data.users.registered} detail={`${data.users.new_last_7_days} joined in 7 days`} />
-        <Metric icon={<Activity size={18} />} label="Active people" value={data.users.active_last_7_days} detail="Logged in during the last 7 days" />
-        <Metric icon={<Boxes size={18} />} label="Active workspaces" value={workspaceTotal} detail={`${data.workspaces.personal ?? 0} personal · ${data.workspaces.demo ?? 0} demo`} />
-        <Metric icon={<Clock3 size={18} />} label="Active sessions" value={data.activity.active_web_sessions} detail={`${data.activity.conversations} conversations`} />
-      </div>
+      <StatStrip>
+        <Stat
+          label="Registered people"
+          value={data.users.registered}
+          detail={`${data.users.new_last_7_days} joined in 7 days`}
+        />
+        <Stat
+          label="Active people"
+          value={data.users.active_last_7_days}
+          detail="Logged in during the last 7 days"
+        />
+        <Stat
+          label="Active workspaces"
+          value={workspaceTotal}
+          detail={`${data.workspaces.personal ?? 0} personal · ${data.workspaces.demo ?? 0} demo`}
+        />
+        <Stat
+          label="Active sessions"
+          value={data.activity.active_web_sessions}
+          detail={`${data.activity.conversations} conversations`}
+        />
+      </StatStrip>
 
-      <div className="admin-panel-grid">
-        <section className="admin-panel admin-provider-panel">
-          <div className="admin-panel-title"><Cpu size={17} /><h3>Model provider</h3></div>
+      <div className="grid items-start gap-4 md:grid-cols-2">
+        <Panel title="Model provider" icon={<Cpu />} className="md:col-span-2">
           {providerStatus === 'loading' || !providerData ? (
-            <p className="admin-generated">Loading provider profiles...</p>
+            <LoadingState label="Loading provider profiles" />
           ) : (
-            <>
-              <div className="admin-kv"><span>Active profile</span><strong>{providerData.active ?? 'none'}</strong></div>
-              <div className="admin-kv"><span>Source</span><strong>{providerData.source}</strong></div>
-              <div className="admin-kv"><span>Model</span><strong>{providerData.model ?? 'not configured'}</strong></div>
-              <div className="admin-provider-list">
+            <div className="grid gap-x-8 gap-y-4 md:grid-cols-2">
+              <KeyValueList>
+                <KeyValue label="Active profile">{providerData.active ?? 'none'}</KeyValue>
+                <KeyValue label="Source">{providerData.source}</KeyValue>
+                <KeyValue label="Model">{providerData.model ?? 'not configured'}</KeyValue>
+              </KeyValueList>
+              <ul className="flex flex-col *:border-b *:last:border-b-0">
                 {providerData.providers.map(provider => {
                   const active = provider.name === providerData.active;
                   const switching = switchingProvider === provider.name;
                   return (
-                    <button
-                      type="button"
-                      key={provider.name}
-                      className={`admin-provider-option${active ? ' active' : ''}`}
-                      disabled={active || switchingProvider !== null}
-                      onClick={async () => {
-                        setSwitchingProvider(provider.name);
-                        try {
-                          setProviderData(await api.updateAdminProvider(provider.name));
-                        } finally {
-                          setSwitchingProvider(null);
-                        }
-                      }}
-                    >
-                      <span>
-                        <strong>{provider.name}</strong>
-                        <small>{provider.model}</small>
+                    <li key={provider.name} className="flex items-center justify-between gap-3 py-2">
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-xs font-medium">{provider.name}</span>
+                        <span className="truncate font-mono text-xs text-muted-foreground">{provider.model}</span>
                       </span>
-                      {active ? <Check size={16} /> : switching ? 'Switching' : 'Use'}
-                    </button>
+                      {active ? (
+                        <Badge className="bg-signal text-signal-foreground">
+                          <Check data-icon="inline-start" />
+                          Active
+                        </Badge>
+                      ) : (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={switchingProvider !== null}
+                          onClick={async () => {
+                            setSwitchingProvider(provider.name);
+                            try {
+                              setProviderData(await api.updateAdminProvider(provider.name));
+                            } finally {
+                              setSwitchingProvider(null);
+                            }
+                          }}
+                        >
+                          {switching && <Spinner data-icon="inline-start" />}
+                          {switching ? 'Switching' : 'Use'}
+                        </Button>
+                      )}
+                    </li>
                   );
                 })}
-              </div>
-            </>
-          )}
-        </section>
-
-        <section className="admin-panel">
-          <div className="admin-panel-title"><Users size={17} /><h3>Registration</h3></div>
-          <div className="admin-kv"><span>Last 7 days</span><strong>{data.users.new_last_7_days}</strong></div>
-          <div className="admin-kv"><span>Last 30 days</span><strong>{data.users.new_last_30_days}</strong></div>
-          <div className="admin-kv"><span>Active in 7 days</span><strong>{data.users.active_last_7_days}</strong></div>
-          <div className="admin-registration-list">
-            {data.registrations_last_30_days.length === 0 ? (
-              <p>No registrations in the last 30 days.</p>
-            ) : data.registrations_last_30_days.map(item => (
-              <div key={item.date}>
-                <time dateTime={item.date}>{formatDate(item.date)}</time>
-                <span><i style={{ width: `${Math.max(8, (item.count / maxRegistrations) * 100)}%` }} /></span>
-                <strong>{item.count}</strong>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="admin-panel">
-          <div className="admin-panel-title"><Activity size={17} /><h3>Runtime activity</h3></div>
-          <div className="admin-kv"><span>Conversations</span><strong>{data.activity.conversations}</strong></div>
-          <div className="admin-kv"><span>Observations</span><strong>{data.activity.observations}</strong></div>
-          <div className="admin-kv"><span>Retrieval traces</span><strong>{data.activity.retrieval_traces}</strong></div>
-          <div className="admin-kv"><span>Queue records</span><strong>{queueTotal}</strong></div>
-          <div className={`admin-status${queueAttention > 0 ? ' attention' : ''}`}>
-            <span>{queueAttention > 0 ? 'Queue needs attention' : 'No queue failures'}</span>
-            <strong>{queueAttention}</strong>
-          </div>
-        </section>
-
-        <section className="admin-panel">
-          <div className="admin-panel-title"><Cable size={17} /><h3>OAuth and MCP</h3></div>
-          <div className="admin-kv"><span>Registered clients</span><strong>{data.oauth.registered_clients}</strong></div>
-          <div className="admin-kv"><span>Active access tokens</span><strong>{data.oauth.active_access_tokens}</strong></div>
-          <div className="admin-kv"><span>Pending work</span><strong>{data.queue.pending ?? 0}</strong></div>
-          <div className="admin-kv"><span>Quarantined work</span><strong>{data.queue.quarantined ?? 0}</strong></div>
-        </section>
-
-        <section className="admin-panel">
-          <div className="admin-panel-title"><Boxes size={17} /><h3>Workspace distribution</h3></div>
-          {Object.entries(data.workspaces).map(([type, count]) => (
-            <div className="admin-kv" key={type}>
-              <span>{type.replaceAll('_', ' ')}</span>
-              <strong>{count}</strong>
+              </ul>
             </div>
-          ))}
-          <p className="admin-generated">Snapshot generated {formatTime(data.generated_at)}</p>
-        </section>
-      </div>
-    </div>
-  );
-}
+          )}
+        </Panel>
 
-function Metric({ icon, label, value, detail }: { icon: React.ReactNode; label: string; value: number; detail: string }) {
-  return (
-    <section className="admin-metric">
-      <div>{icon}</div>
-      <span>{label}</span>
-      <strong>{value.toLocaleString()}</strong>
-      <p>{detail}</p>
-    </section>
+        <Panel title="Registration" icon={<Users />}>
+          <KeyValueList>
+            <KeyValue label="Last 7 days">{data.users.new_last_7_days}</KeyValue>
+            <KeyValue label="Last 30 days">{data.users.new_last_30_days}</KeyValue>
+            <KeyValue label="Active in 7 days">{data.users.active_last_7_days}</KeyValue>
+          </KeyValueList>
+          {data.registrations_last_30_days.length === 0 ? (
+            <p className="pt-3 text-xs text-muted-foreground">No registrations in the last 30 days.</p>
+          ) : (
+            <div className="h-44 pt-4">
+              <EvilBarChart
+                data={data.registrations_last_30_days.map(item => ({ day: formatDate(item.date), signups: item.count }))}
+                config={REGISTRATION_CONFIG}
+                xDataKey="day"
+                barRadius={4}
+                className="h-full w-full"
+              >
+                <EvilBarChart.Grid />
+                <EvilBarChart.XAxis dataKey="day" />
+                <EvilBarChart.Tooltip />
+                <EvilBarChart.Bar dataKey="signups" variant="gradient" />
+              </EvilBarChart>
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Runtime activity" icon={<Activity />} contentClassName="flex flex-col gap-3">
+          <KeyValueList>
+            <KeyValue label="Conversations">{data.activity.conversations}</KeyValue>
+            <KeyValue label="Observations">{data.activity.observations}</KeyValue>
+            <KeyValue label="Retrieval traces">{data.activity.retrieval_traces}</KeyValue>
+            <KeyValue label="Queue records">{queueTotal}</KeyValue>
+          </KeyValueList>
+          <Alert variant={queueAttention > 0 ? 'destructive' : 'default'}>
+            <AlertDescription className="flex items-center justify-between gap-3">
+              <span>{queueAttention > 0 ? 'Queue needs attention' : 'No queue failures'}</span>
+              <span className="font-mono tabular-nums">{queueAttention}</span>
+            </AlertDescription>
+          </Alert>
+        </Panel>
+
+        <Panel title="OAuth and MCP" icon={<Cable />}>
+          <KeyValueList>
+            <KeyValue label="Registered clients">{data.oauth.registered_clients}</KeyValue>
+            <KeyValue label="Active access tokens">{data.oauth.active_access_tokens}</KeyValue>
+            <KeyValue label="Pending work">{data.queue.pending ?? 0}</KeyValue>
+            <KeyValue label="Quarantined work">{data.queue.quarantined ?? 0}</KeyValue>
+          </KeyValueList>
+        </Panel>
+
+        <Panel title="Workspace distribution" icon={<Boxes />}>
+          <KeyValueList>
+            {Object.entries(data.workspaces).map(([type, count]) => (
+              <KeyValue key={type} label={type.replaceAll('_', ' ')}>{count}</KeyValue>
+            ))}
+          </KeyValueList>
+          <p className="pt-3 font-mono text-xs text-faint">Snapshot generated {formatTime(data.generated_at)}</p>
+        </Panel>
+      </div>
+    </ViewPage>
   );
 }
 

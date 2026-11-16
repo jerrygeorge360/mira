@@ -31,6 +31,10 @@ EXPECTED_TOOLS = {
     "inspect_graph",
     "list_active_foresight",
     "run_retrieval_query",
+    "inspect_memory_state",
+    "memory_sleep",
+    "forget_memory",
+    "answer_feedback",
 }
 MCP_CONTEXT = WorkspaceContext(LEGACY_WORKSPACE_ID, auth_mode="configured")
 
@@ -91,7 +95,7 @@ def test_inspect_session_working_set_tool_shape(database_path: Path) -> None:
 
 def test_retrieve_memory_tool_shape(database_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The retrieve_memory tool returns a results/count envelope."""
-    monkeypatch.setattr("integrations.mcp.server.retrieve_quick", lambda *args, **kwargs: [])
+    monkeypatch.setattr("integrations.mcp.server.retrieve_by_mode", lambda *args, **kwargs: [])
     server = build_mcp_server(MCP_CONTEXT)
     session_id = create_session("jerry")
     save_observation(session_id, "user", "The deploy key lives in the vault.")

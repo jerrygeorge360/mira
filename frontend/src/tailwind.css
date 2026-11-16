@@ -1,0 +1,83 @@
+/* Tailwind + shadcn/ui, wired to MIRA's tokens.
+ *
+ * Loaded first (see main.tsx). Two things differ from a stock shadcn setup:
+ *
+ * 1. No global preflight. The app's older views are plain CSS and rely on
+ *    browser defaults that preflight would reset, so the reset below applies
+ *    only inside shadcn components ([data-slot]) and inside containers that
+ *    opt in with the `tw` class.
+ * 2. No shadcn colour variables. MIRA's tokens in index.css are the single
+ *    source of truth, and three of them share a name with a shadcn variable
+ *    but mean something else (--accent is the green signal colour, --muted is
+ *    a text colour). The Tailwind colour names are therefore mapped here:
+ *    `bg-accent` / `bg-muted` are the quiet hover fill shadcn expects, and the
+ *    green is `signal` (`text-signal`, `bg-signal`, `border-signal`).
+ */
+@layer theme, base, components, utilities;
+
+@import "tailwindcss/theme.css" layer(theme);
+@import "tailwindcss/utilities.css" layer(utilities);
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+@theme inline {
+  --font-sans: var(--sans);
+  --font-mono: var(--mono);
+  --font-heading: var(--sans);
+
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--text);
+  --color-primary-foreground: var(--bg);
+  --color-secondary: var(--surface-soft);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--surface-soft);
+  --color-muted-foreground: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--surface-soft);
+  --color-accent-foreground: var(--text);
+  --color-signal: var(--accent);
+  --color-signal-foreground: var(--accent-ink);
+  --color-signal-soft: var(--accent-soft);
+  --color-destructive: var(--danger);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border-strong);
+  --color-ring: var(--accent);
+
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  --radius-2xl: 18px;
+
+  --ease-out-strong: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@layer base {
+  :where(.tw, .tw *, [data-slot], [data-slot] *),
+  :where(.tw, .tw *, [data-slot], [data-slot] *)::before,
+  :where(.tw, .tw *, [data-slot], [data-slot] *)::after {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: 0 solid var(--border);
+  }
+  :where(.tw, [data-slot]) :where(button),
+  :where(button[data-slot]) {
+    background-color: transparent;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+  }
+  :where(.tw) :where(h1, h2, h3, h4, h5, h6) { font-size: inherit; font-weight: inherit; }
+  :where(.tw) :where(ol, ul, menu) { list-style: none; }
+  :where(.tw) :where(a) { color: inherit; text-decoration: inherit; }
+  :where(.tw) :where(svg, img) { display: block; }
+}

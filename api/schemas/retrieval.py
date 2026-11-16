@@ -27,3 +27,19 @@ class RetrievalTraceResponse(BaseModel):
     prompt_log_id: str | None = None
     created_at: str | None = None
     evidence: list[dict[str, object]]
+
+
+class AnswerFeedbackRequest(BaseModel):
+    """A user verdict for the memory evidence behind one answer."""
+
+    answer_correct: bool | None = None
+    verified: bool = False
+    refuted: bool = False
+    evidence: object | None = None
+
+
+class AnswerFeedbackResponse(BaseModel):
+    """Updated lifecycle states after answer feedback."""
+
+    trace_id: str
+    updated: list[dict[str, object]]
