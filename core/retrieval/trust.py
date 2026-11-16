@@ -56,7 +56,7 @@ INACTIVE_STATUSES = frozenset(
 
 def assess_evidence(item: dict[str, object]) -> TrustAssessment:
     """Assess whether a relevant candidate is safe to place in an answer prompt."""
-    record = _mapping(item.get("record"))
+    record = {**item, **_mapping(item.get("record"))}
     authority = _mapping(item.get("authority"))
     authority_class = str(
         authority.get("class")
@@ -228,7 +228,7 @@ def assess_source_authority(evidence: dict[str, object]) -> str:
 def assess_provenance_completeness(
     evidence: dict[str, object], *, expected_workspace_id: str | None = None
 ) -> dict[str, object]:
-    record = _record(evidence)
+    record = {**evidence, **_record(evidence)}
     source = str(evidence.get("source", ""))
     workspace = evidence.get("workspace_id") or record.get("workspace_id")
     workspace_match = expected_workspace_id is None or workspace == expected_workspace_id

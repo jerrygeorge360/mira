@@ -299,7 +299,7 @@ def test_domain_reflection_uses_evidence_without_personal_synthesis(
         status = db.execute(
             "SELECT status FROM reflections WHERE id = ?", (reflection_id,)
         ).fetchone()[0]
-    assert status == "stale"
+    assert status == "invalidated"
 
 
 def test_domain_reflection_dedupe_does_not_cross_knowledge_bases(
