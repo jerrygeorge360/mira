@@ -1323,8 +1323,14 @@ select:focus-visible {
 
 /* the mark: a faint resting logo, and a pulse of the signal colour travelling through it */
 .logo-loader { display: block; flex-shrink: 0; overflow: visible; }
-.logo-loader-base { stroke: var(--border-strong); }
-.logo-loader-pulse { stroke: var(--accent); }
+.logo-loader-base { stroke: var(--border-strong); transition: stroke 320ms cubic-bezier(0.23, 1, 0.32, 1); }
+.logo-loader-pulse { stroke: var(--accent); transition: opacity 320ms cubic-bezier(0.23, 1, 0.32, 1); }
+/* idle: the plain logo. The resting mark eases back to full strength and the pulse
+   fades out; its animations are paused so finished replies don't keep animating. */
+.logo-loader.idle .logo-loader-base { stroke: currentColor; }
+.logo-loader.idle .logo-loader-pulse { opacity: 0; }
+.logo-loader.idle .logo-loader-link,
+.logo-loader.idle .logo-loader-node { animation-play-state: paused; }
 .logo-loader-link {
   stroke-dasharray: 1;
   stroke-dashoffset: 1;
@@ -1373,6 +1379,7 @@ select:focus-visible {
   .loading-state-label { animation: none; color: var(--muted); background: none; }
   .logo-loader-link, .logo-loader-node { animation: none; opacity: 1; stroke-dashoffset: 0; }
   .logo-loader-pulse { animation: logo-breathe 2.4s ease-in-out infinite; }
+  .logo-loader.idle .logo-loader-pulse { animation: none; opacity: 0; }
 }
 
 /* ── Assistant message: streamed words, action row, recalled items ── */

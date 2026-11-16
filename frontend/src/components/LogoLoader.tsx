@@ -1,4 +1,4 @@
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
 
 /* ─────────────────────────────────────────────────────────
  * LOGO LOADER — the MIRA mark as a loading animation
@@ -16,6 +16,17 @@ import type { CSSProperties } from 'react';
  * JavaScript timers, so it keeps running smoothly while the
  * main thread is busy loading. Reduced motion shows the mark
  * with a slow, gentle fade instead of the travelling pulse.
+ *
+ * `active={false}` settles it into the plain logo: the pulse
+ * fades out and the resting mark eases back to full strength.
+ * That lets one element be both the logo and the loader — the
+ * chat's assistant avatar animates while MIRA is working and
+ * returns to the logo when the reply is done.
+ *
+ * Every loader shares one clock (a negative delay set from
+ * performance.now() at mount), so when React swaps one loader
+ * for another mid-wait the pulse carries on instead of jumping
+ * back to the start.
  * ───────────────────────────────────────────────────────── */
 
 // Nodes and links in the order the pulse visits them.
@@ -42,17 +53,24 @@ export default function LogoLoader({
   size = 20,
   className,
   label,
+  active = true,
 }: {
   /** height in px; the mark is 1.67× as wide */
   size?: number;
   className?: string;
   /** set when the loader stands alone; inside LoadingState the text label speaks for it */
   label?: string;
+  /** false shows the resting logo; the pulse fades out and stops */
+  active?: boolean;
 }) {
-  const delay = (step: number): CSSProperties => ({ animationDelay: `${step * STEP_MS}ms`, animationDuration: `${CYCLE_MS}ms` });
+  const [phase] = useState(() => performance.now() % CYCLE_MS);
+  const delay = (step: number): CSSProperties => ({
+    animationDelay: `${step * STEP_MS - phase}ms`,
+    animationDuration: `${CYCLE_MS}ms`,
+  });
   return (
     <svg
-      className={`logo-loader${className ? ` ${className}` : ''}`}
+      className={`logo-loader${active ? '' : ' idle'}${className ? ` ${className}` : ''}`}
       viewBox="40 191 529 317"
       height={size}
       width={(size * 529) / 317}

@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, FileUp, GitBranch, Network, Paperclip, Plus, Rout
 import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import LoadingState from './LoadingState';
+import LogoLoader from './LogoLoader';
 import AssistantMessage, { type MessageMeta } from './AssistantMessage';
 import type { TraceStep } from './ThinkingTrace';
 import ComposerMenu, { type MenuRow } from './ComposerMenu';
@@ -365,7 +366,7 @@ export default function ChatView() {
                     ) : (
                       <Message>
                         <MessageAvatar className="self-start bg-transparent pt-1">
-                          <BrandMark size={12} />
+                          <LogoLoader size={12} active={loading && i === messages.length - 1} />
                         </MessageAvatar>
                         <MessageContent>
                           <Bubble variant="ghost">
@@ -393,12 +394,12 @@ export default function ChatView() {
                   <MessageScrollerItem messageId="pending">
                     <Message>
                       <MessageAvatar className="self-start bg-transparent pt-1">
-                        <BrandMark size={12} />
+                        <LogoLoader size={12} />
                       </MessageAvatar>
                       <MessageContent>
                         <Bubble variant="ghost">
                           <BubbleContent>
-                            <LoadingState label={status} />
+                            <LoadingState label={status} mark={false} />
                           </BubbleContent>
                         </Bubble>
                       </MessageContent>

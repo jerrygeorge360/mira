@@ -41,11 +41,14 @@ export default function LoadingState({
   label = 'Working',
   size = 'inline',
   showElapsed = true,
+  mark = true,
   className,
 }: {
   label?: string;
   size?: 'inline' | 'page';
   showElapsed?: boolean;
+  /** false drops the animated mark, for when the logo beside it is already animating (the chat avatar) */
+  mark?: boolean;
   className?: string;
 }) {
   const elapsed = useElapsed();
@@ -54,7 +57,7 @@ export default function LoadingState({
   return (
     <div role="status" aria-live="polite" className={`loading-state${page ? ' page' : ''}${className ? ` ${className}` : ''}`}>
       <div className="loading-state-row">
-        <LogoLoader size={page ? 44 : 14} />
+        {mark && <LogoLoader size={page ? 44 : 14} />}
         <span className="loading-state-label">{label}</span>
         {showElapsed && <span className="loading-state-elapsed">{elapsed}</span>}
       </div>
