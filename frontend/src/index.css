@@ -599,8 +599,11 @@ select:focus-visible {
 
 .rail-history-btn {
   display: block;
-  width: 100%;
-  margin: 1px 8px;
+  /* fill the grid column, no wider: `width: 100%` plus side margins overflowed it by 16px,
+     pushing the title and its highlight under the delete button */
+  width: auto;
+  min-width: 0;
+  margin: 1px 0 1px 8px;
   padding: 8px 12px;
   border: none;
   border-radius: var(--radius-sm);
@@ -615,9 +618,9 @@ select:focus-visible {
 .rail-history-btn:hover { background: var(--surface-hover); color: var(--text); }
 .rail-history-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   padding-right: 8px;
 }
 .rail-history-row.active .rail-history-btn { background: var(--accent-soft); color: var(--accent); }
