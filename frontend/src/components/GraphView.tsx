@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
+import { Minus, Plus, X } from 'lucide-react';
+import { Eyebrow, KeyValue, KeyValueList } from './view';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { GRAPH_DATA } from '../data/mockData';
 
 export interface Node extends d3.SimulationNodeDatum {
@@ -307,113 +313,158 @@ export default function GraphView({ height = 460, data }: Props) {
   };
 
   return (
-    <div className="graph-container">
-      <div className="graph-toolbar" aria-label="Graph controls">
-        <button type="button" onClick={() => zoomBy(1.25)} aria-label="Zoom in">+</button>
-        <button type="button" onClick={() => zoomBy(0.8)} aria-label="Zoom out">−</button>
-        <button type="button" onClick={fitVisible}>Fit</button>
-        <button type="button" onClick={fitSelection}>Selection</button>
-        <button type="button" onClick={resetZoom}>Reset</button>
+    <div className="tw relative overflow-hidden rounded-xl border bg-card">
+      <div
+        className="absolute top-3 left-3 z-2 flex items-center gap-0.5 rounded-lg border bg-card/90 p-0.5 backdrop-blur"
+        role="toolbar"
+        aria-label="Graph controls"
+      >
+        <Button variant="ghost" size="icon-sm" onClick={() => zoomBy(1.25)} aria-label="Zoom in">
+          <Plus />
+        </Button>
+        <Button variant="ghost" size="icon-sm" onClick={() => zoomBy(0.8)} aria-label="Zoom out">
+          <Minus />
+        </Button>
+        <Button variant="ghost" size="sm" onClick={fitVisible}>Fit</Button>
+        <Button variant="ghost" size="sm" onClick={fitSelection}>Selection</Button>
+        <Button variant="ghost" size="sm" onClick={resetZoom}>Reset</Button>
       </div>
-      <div className="graph-label-toolbar" aria-label="Graph label mode">
-        {[
-          ['key', 'Key labels'],
-          ['entities', 'Entities'],
-          ['none', 'No labels'],
-        ].map(([mode, label]) => (
-          <button
-            key={mode}
-            type="button"
-            className={labelMode === mode ? 'active' : ''}
-            onClick={() => setLabelMode(mode as LabelMode)}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      <svg ref={svgRef} className="graph-canvas" style={{ height }} />
+
+      <ToggleGroup
+        className="absolute top-3 right-3 z-2 max-w-[calc(100%-15rem)] overflow-x-auto rounded-md bg-card/90 backdrop-blur"
+        variant="outline"
+        size="sm"
+        spacing={0}
+        value={[labelMode]}
+        onValueChange={(next) => next[0] && setLabelMode(next[0] as LabelMode)}
+        aria-label="Graph label mode"
+      >
+        <ToggleGroupItem value="key">Key labels</ToggleGroupItem>
+        <ToggleGroupItem value="entities">Entities</ToggleGroupItem>
+        <ToggleGroupItem value="none">No labels</ToggleGroupItem>
+      </ToggleGroup>
+
+      <svg ref={svgRef} className="block w-full" style={{ height }} />
+
       {(selectedNode || selectedEdge) && (
-        <div className="graph-inspector">
-          {selectedNode && (
-            <>
-              <div className="graph-inspector-kicker">{selectedNode.type}</div>
-              <div className="graph-inspector-title">{selectedNode.name}</div>
-              <div className="graph-inspector-sub">{selectedNode.headline || selectedNode.sourceTable || 'Graph node'}</div>
-              <div className="graph-inspector-grid">
-                <InspectorField label="Source" value={sourceLabel(selectedNode.sourceTable, selectedNode.sourceId)} />
-                <InspectorField label="Created" value={formatCompactDate(selectedNode.createdAt)} />
-                <InspectorField label="Status" value={selectedNode.status || 'active'} tone="accent" />
-              </div>
-              {selectedNode.summary && <div className="graph-inspector-body">{selectedNode.summary}</div>}
-              <details className="graph-inspector-details">
-                <summary>Advanced details</summary>
-                <InspectorField label="Node ID" value={selectedNode.id} />
-                {selectedNode.metadata && <pre>{JSON.stringify(selectedNode.metadata, null, 2)}</pre>}
-              </details>
-            </>
-          )}
-          {selectedEdge && (
-            <>
-              <div className="graph-inspector-kicker">{relationshipCategory(selectedEdge.type)} relationship</div>
-              <div className="graph-inspector-title">{selectedEdge.type || 'RELATED'}</div>
-              <div className="graph-inspector-sub">
-                {nodeName(selectedEdge.source)} → {nodeName(selectedEdge.target)}
-              </div>
-              <div className="graph-inspector-grid">
-                <InspectorField label="Status" value={selectedEdge.status || 'active'} tone="accent" />
-                <InspectorField label="Confidence" value={formatConfidence(selectedEdge.confidence)} />
-                <InspectorField label="Valid window" value={formatValidity(selectedEdge.validFrom, selectedEdge.validUntil)} />
-                <InspectorField label="Created" value={formatCompactDate(selectedEdge.createdAt)} />
-              </div>
-              <div className="graph-inspector-body">{relationshipDescription(selectedEdge.type)}</div>
-              <details className="graph-inspector-details">
-                <summary>Advanced details</summary>
-                <InspectorField label="Edge ID" value={selectedEdge.id} />
-                <InspectorField label="Valid from" value={formatCompactDate(selectedEdge.validFrom)} />
-                <InspectorField label="Valid until" value={formatCompactDate(selectedEdge.validUntil)} />
-                <InspectorField label="Invalidated at" value={formatCompactDate(selectedEdge.invalidatedAt)} />
-                <InspectorField
-                  label="Evidence"
-                  value={selectedEdge.sourceObservations?.length ? selectedEdge.sourceObservations.join(', ') : undefined}
-                />
-                {selectedEdge.metadata && <pre>{JSON.stringify(selectedEdge.metadata, null, 2)}</pre>}
-              </details>
-            </>
-          )}
-          <button className="graph-inspector-close" onClick={() => { setSelectedNode(null); setSelectedEdge(null); }} aria-label="Close graph inspector">
-            ×
-          </button>
-        </div>
+        <Card
+          size="sm"
+          className="absolute top-14 right-3 z-3 max-h-[calc(100%-5rem)] w-[min(340px,calc(100%-1.5rem))] overflow-y-auto bg-card/95 backdrop-blur"
+        >
+          <CardHeader>
+            <Eyebrow>{selectedNode ? selectedNode.type : `${relationshipCategory(selectedEdge?.type)} relationship`}</Eyebrow>
+            <CardTitle className="wrap-break-word">
+              {selectedNode ? selectedNode.name : selectedEdge?.type || 'RELATED'}
+            </CardTitle>
+            <CardDescription className="wrap-break-word">
+              {selectedNode
+                ? selectedNode.headline || selectedNode.sourceTable || 'Graph node'
+                : `${nodeName(selectedEdge?.source)} → ${nodeName(selectedEdge?.target)}`}
+            </CardDescription>
+            <CardAction>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                onClick={() => {
+                  setSelectedNode(null);
+                  setSelectedEdge(null);
+                }}
+                aria-label="Close graph inspector"
+              >
+                <X />
+              </Button>
+            </CardAction>
+          </CardHeader>
+
+          <CardContent className="flex flex-col gap-3">
+            {selectedNode && (
+              <>
+                <KeyValueList>
+                  <InspectorField label="Source" value={sourceLabel(selectedNode.sourceTable, selectedNode.sourceId)} />
+                  <InspectorField label="Created" value={formatCompactDate(selectedNode.createdAt)} />
+                  <InspectorField label="Status" value={selectedNode.status || 'active'} />
+                </KeyValueList>
+                {selectedNode.summary && <p className="text-pretty text-muted-foreground">{selectedNode.summary}</p>}
+                <Collapsible>
+                  <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="-ml-2" />}>
+                    Advanced details
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="flex flex-col gap-2 pt-1">
+                    <KeyValueList>
+                      <InspectorField label="Node ID" value={selectedNode.id} />
+                    </KeyValueList>
+                    {selectedNode.metadata && <InspectorJson value={selectedNode.metadata} />}
+                  </CollapsibleContent>
+                </Collapsible>
+              </>
+            )}
+            {selectedEdge && (
+              <>
+                <KeyValueList>
+                  <InspectorField label="Status" value={selectedEdge.status || 'active'} />
+                  <InspectorField label="Confidence" value={formatConfidence(selectedEdge.confidence)} />
+                  <InspectorField label="Valid window" value={formatValidity(selectedEdge.validFrom, selectedEdge.validUntil)} />
+                  <InspectorField label="Created" value={formatCompactDate(selectedEdge.createdAt)} />
+                </KeyValueList>
+                <p className="text-pretty text-muted-foreground">{relationshipDescription(selectedEdge.type)}</p>
+                <Collapsible>
+                  <CollapsibleTrigger render={<Button variant="ghost" size="xs" className="-ml-2" />}>
+                    Advanced details
+                  </CollapsibleTrigger>
+                  <CollapsibleContent className="flex flex-col gap-2 pt-1">
+                    <KeyValueList>
+                      <InspectorField label="Edge ID" value={selectedEdge.id} />
+                      <InspectorField label="Valid from" value={formatCompactDate(selectedEdge.validFrom)} />
+                      <InspectorField label="Valid until" value={formatCompactDate(selectedEdge.validUntil)} />
+                      <InspectorField label="Invalidated at" value={formatCompactDate(selectedEdge.invalidatedAt)} />
+                      <InspectorField
+                        label="Evidence"
+                        value={selectedEdge.sourceObservations?.length ? selectedEdge.sourceObservations.join(', ') : undefined}
+                      />
+                    </KeyValueList>
+                    {selectedEdge.metadata && <InspectorJson value={selectedEdge.metadata} />}
+                  </CollapsibleContent>
+                </Collapsible>
+              </>
+            )}
+          </CardContent>
+        </Card>
       )}
-      <div className="graph-legend">
-        {Object.entries(TYPE_COLORS).map(([type, color]) => (
-          <div key={type} className="legend-item">
-            <div className="legend-dot" style={{ background: color }} />
-            {type.replace('_', ' ')}
-          </div>
-        ))}
-      </div>
-      <div className="graph-legend relationship-legend">
-        <div className="legend-item">
-          <span className="legend-line conflict" />
-          contradicts
-        </div>
-        <div className="legend-item">
-          <span className="legend-line supersession" />
-          superseded
-        </div>
-        <div className="legend-item">
-          <span className="legend-line evidence" />
-          mentions
-        </div>
-        <div className="legend-item">
-          <span className="legend-line derived" />
-          derived
-        </div>
+
+      {/* legend: node types by colour, relationships by the same stroke the canvas draws */}
+      <div className="pointer-events-none absolute bottom-3 left-3 flex flex-col gap-1.5 font-mono text-[11px] text-muted-foreground">
+        <ul className="flex flex-wrap gap-x-3 gap-y-1">
+          {Object.entries(TYPE_COLORS).map(([type, color]) => (
+            <li key={type} className="flex items-center gap-1.5">
+              <span className="size-2 rounded-full" style={{ background: color }} aria-hidden="true" />
+              {type.replace('_', ' ')}
+            </li>
+          ))}
+        </ul>
+        <ul className="flex flex-wrap gap-x-3 gap-y-1">
+          {LEGEND_RELATIONSHIPS.map(([type, label]) => {
+            const style = relationshipStyle(type);
+            return (
+              <li key={type} className="flex items-center gap-1.5">
+                <svg width="22" height="6" aria-hidden="true">
+                  <line x1="0" y1="3" x2="22" y2="3" stroke={style.color} strokeWidth={style.width} strokeDasharray={style.dash} />
+                </svg>
+                {label}
+              </li>
+            );
+          })}
+        </ul>
       </div>
     </div>
   );
 }
+
+const LEGEND_RELATIONSHIPS = [
+  ['CONTRADICTS', 'contradicts'],
+  ['SUPERSEDED_BY', 'superseded'],
+  ['MENTIONS', 'mentions'],
+  ['DERIVED_FROM', 'derived'],
+] as const;
 
 function nodeName(node: string | number | Node | undefined): string {
   if (node && typeof node === 'object' && 'name' in node) return node.name;
@@ -491,21 +542,17 @@ function relationshipDescription(type: string | undefined): string {
   return 'A typed relationship stored in the durable memory graph.';
 }
 
-function InspectorField({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value?: string | number | null;
-  tone?: 'accent';
-}) {
+/** A label → value row that renders nothing when there is no value. */
+function InspectorField({ label, value }: { label: string; value?: string | number | null }) {
   if (value === undefined || value === null || value === '') return null;
+  return <KeyValue label={label}>{value}</KeyValue>;
+}
+
+function InspectorJson({ value }: { value: unknown }) {
   return (
-    <div className="graph-inspector-field">
-      <span>{label}</span>
-      <strong className={tone === 'accent' ? 'accent' : undefined}>{value}</strong>
-    </div>
+    <pre className="max-h-48 overflow-auto rounded-lg border bg-background p-2 font-mono text-[11px] text-muted-foreground">
+      {JSON.stringify(value, null, 2)}
+    </pre>
   );
 }
 

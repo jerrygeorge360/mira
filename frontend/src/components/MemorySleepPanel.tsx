@@ -4,13 +4,10 @@ import {
   Check,
   CheckCircle2,
   ChevronRight,
-  Clock3,
-  LoaderCircle,
   Moon,
   Play,
   RefreshCw,
   Save,
-  SlidersHorizontal,
   Sparkles,
   TrendingDown,
   TrendingUp,
@@ -19,6 +16,16 @@ import { useEffect, useMemo, useState } from 'react';
 import { api } from '../api/client';
 import { formatTime } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
+import { Eyebrow, KeyValue, KeyValueList, Num, Panel, SCORE_FORMAT } from './view';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Field, FieldDescription, FieldLabel } from '@/components/ui/field';
+import { InputGroup, InputGroupAddon, InputGroupInput, InputGroupText } from '@/components/ui/input-group';
+import { Spinner } from '@/components/ui/spinner';
+import { Switch } from '@/components/ui/switch';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 
 type JsonRecord = Record<string, unknown>;
 type ChangeFilter = 'all' | 'reinforced' | 'weakened' | 'archived' | 'forgotten' | 'unchanged';
@@ -243,46 +250,36 @@ export default function MemorySleepPanel() {
   const actionSummary = selectedRun ? summarizeActions(selectedRun) : [];
   const hasSnapshot = metrics.length > 0;
 
-  return (
-    <section className="memory-sleep-shell" aria-labelledby="memory-sleep-title">
-      <div className="memory-sleep-panel memory-sleep-controls-panel">
-        <div className="memory-sleep-heading">
-          <div className="health-section-head">
-            <Moon size={17} />
-            <div>
-              <h3 id="memory-sleep-title">Memory Sleep</h3>
-              <p>Schedule bounded lifecycle maintenance and inspect exactly what changed.</p>
-            </div>
-          </div>
-          <StatusPill status={status} />
-        </div>
+  const busy = running || isActiveStatus(status);
 
-        <div className="memory-sleep-control-grid">
-          <div className="memory-sleep-setting-card">
-            <div className="memory-sleep-setting-label">
-              <SlidersHorizontal size={15} />
-              <span>Automatic sleep</span>
-            </div>
-            <label className="memory-sleep-switch-row">
-              <input
-                type="checkbox"
+  return (
+    <section className="flex flex-col gap-4" aria-labelledby="memory-sleep-title">
+      <Panel
+        title={<span id="memory-sleep-title">Memory Sleep</span>}
+        icon={<Moon />}
+        description="Schedule bounded lifecycle maintenance and inspect exactly what changed."
+        action={<StatusPill status={status} />}
+        contentClassName="flex flex-col gap-4"
+      >
+        <div className="grid gap-x-8 gap-y-5 md:grid-cols-3">
+          <Field>
+            <FieldLabel htmlFor="sleep-automatic">Automatic sleep</FieldLabel>
+            <div className="flex items-center gap-2.5">
+              <Switch
+                id="sleep-automatic"
                 checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
+                onCheckedChange={setEnabled}
                 disabled={loading || saving}
               />
-              <span className="memory-sleep-switch" aria-hidden="true" />
-              <strong>{enabled ? 'On' : 'Off'}</strong>
-            </label>
-            <p>Runs from the worker when the configured interval is due.</p>
-          </div>
+              <span className="font-mono text-xs">{enabled ? 'On' : 'Off'}</span>
+            </div>
+            <FieldDescription>Runs from the worker when the configured interval is due.</FieldDescription>
+          </Field>
 
-          <div className="memory-sleep-setting-card">
-            <label className="memory-sleep-setting-label" htmlFor="sleep-interval">
-              <Clock3 size={15} />
-              <span>Sleep every</span>
-            </label>
-            <div className="memory-sleep-number-input">
-              <input
+          <Field>
+            <FieldLabel htmlFor="sleep-interval">Sleep every</FieldLabel>
+            <InputGroup className="w-36">
+              <InputGroupInput
                 id="sleep-interval"
                 type="number"
                 min="1"
@@ -292,209 +289,230 @@ export default function MemorySleepPanel() {
                 onChange={(event) => setIntervalHours(event.target.value)}
                 disabled={loading || saving}
               />
-              <span>hours</span>
-            </div>
-            <p>Choose a whole number from 1 to 168.</p>
-          </div>
+              <InputGroupAddon align="inline-end">
+                <InputGroupText>hours</InputGroupText>
+              </InputGroupAddon>
+            </InputGroup>
+            <FieldDescription>Choose a whole number from 1 to 168.</FieldDescription>
+          </Field>
 
-          <div className="memory-sleep-schedule-card">
-            <ScheduleValue label="Last sleep" value={config?.lastSleepAt} />
-            <ScheduleValue label="Next sleep" value={enabled ? config?.nextSleepAt : undefined} emptyLabel={enabled ? 'Not scheduled' : 'Automatic sleep is off'} />
-          </div>
+          <KeyValueList>
+            <KeyValue label="Last sleep">{config?.lastSleepAt ? formatSleepTimestamp(config.lastSleepAt) : 'Not recorded'}</KeyValue>
+            <KeyValue label="Next sleep">
+              {enabled
+                ? config?.nextSleepAt
+                  ? formatSleepTimestamp(config.nextSleepAt)
+                  : 'Not scheduled'
+                : 'Automatic sleep is off'}
+            </KeyValue>
+          </KeyValueList>
         </div>
 
-        <div className="memory-sleep-actions">
-          <button type="button" className="memory-sleep-button secondary" onClick={saveSettings} disabled={loading || saving}>
-            {saving ? <LoaderCircle size={15} className="spin" /> : <Save size={15} />}
-            {saving ? 'Saving…' : 'Save Settings'}
-          </button>
-          <button type="button" className="memory-sleep-button primary" onClick={runSleepNow} disabled={loading || running || isActiveStatus(status)}>
-            {running || isActiveStatus(status) ? <LoaderCircle size={15} className="spin" /> : <Play size={15} />}
-            {running || isActiveStatus(status) ? 'Sleep running…' : 'Run Sleep Now'}
-          </button>
-          {config?.lastSleepAt && <span className="memory-sleep-updated">Last completed {formatSleepTimestamp(config.lastSleepAt)}</span>}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="outline" onClick={saveSettings} disabled={loading || saving}>
+            {saving ? <Spinner data-icon="inline-start" /> : <Save data-icon="inline-start" />}
+            {saving ? 'Saving…' : 'Save settings'}
+          </Button>
+          <Button onClick={runSleepNow} disabled={loading || busy}>
+            {busy ? <Spinner data-icon="inline-start" /> : <Play data-icon="inline-start" />}
+            {busy ? 'Sleep running…' : 'Run sleep now'}
+          </Button>
         </div>
 
         {error && (
-          <div className="memory-sleep-message error" role="alert">
-            <AlertTriangle size={15} />
-            <span>{error}</span>
-          </div>
+          <Alert variant="destructive">
+            <AlertTriangle />
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
         )}
         {notice && !error && (
-          <div className="memory-sleep-message success" role="status">
-            <Check size={15} />
-            <span>{notice}</span>
-          </div>
+          <Alert role="status">
+            <Check />
+            <AlertDescription>{notice}</AlertDescription>
+          </Alert>
         )}
-      </div>
+      </Panel>
 
-      <div className="memory-sleep-detail-grid">
-        <section className="memory-sleep-panel memory-sleep-latest-panel">
-          <div className="memory-sleep-panel-title">
-            <Sparkles size={16} />
-            <div>
-              <h3>{selectedRun?.status === 'failed' ? 'Sleep failure' : 'Latest sleep'}</h3>
-              <p>{selectedRun ? `${titleCase(selectedRun.trigger)} · ${formatSleepStatus(selectedRun.status)}` : 'No sleep runs yet.'}</p>
-            </div>
-            {detailLoading && <LoaderCircle size={15} className="spin memory-sleep-detail-loader" />}
-          </div>
-
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Panel
+          title={selectedRun?.status === 'failed' ? 'Sleep failure' : 'Latest sleep'}
+          icon={<Sparkles />}
+          description={
+            selectedRun ? `${titleCase(selectedRun.trigger)} · ${formatSleepStatus(selectedRun.status)}` : 'No sleep runs yet.'
+          }
+          action={detailLoading ? <Spinner /> : undefined}
+          contentClassName="flex flex-col gap-4"
+        >
           {!selectedRun ? (
-            <div className="memory-sleep-empty">Run sleep manually or wait for the first scheduled cycle.</div>
+            <p className="text-muted-foreground">Run sleep manually or wait for the first scheduled cycle.</p>
           ) : (
             <>
               {selectedRun.error && (
-                <div className="memory-sleep-run-error" role="alert">
-                  <AlertTriangle size={14} />
-                  <span>{selectedRun.error}</span>
-                </div>
+                <Alert variant="destructive">
+                  <AlertTriangle />
+                  <AlertDescription>{selectedRun.error}</AlertDescription>
+                </Alert>
               )}
               {hasSnapshot ? (
-                <div className="memory-sleep-snapshot" aria-label="Before and after memory snapshot">
-                  <div className="memory-sleep-snapshot-head"><span>Memory snapshot</span><b>Before</b><b>After</b></div>
-                  {metrics.map((metric) => (
-                    <div className="memory-sleep-snapshot-row" key={metric.key}>
-                      <span>{metric.label}</span>
-                      <strong>{formatMetric(metric.before, metric.format)}</strong>
-                      <strong>{formatMetric(metric.after, metric.format)}</strong>
-                      <Delta before={metric.before} after={metric.after} />
-                    </div>
-                  ))}
-                </div>
+                <Table aria-label="Before and after memory snapshot">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Memory snapshot</TableHead>
+                      <TableHead className="text-right">Before</TableHead>
+                      <TableHead className="text-right">After</TableHead>
+                      <TableHead className="text-right">Change</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {metrics.map((metric) => (
+                      <TableRow key={metric.key}>
+                        <TableCell>{metric.label}</TableCell>
+                        <TableCell className="text-right font-mono"><Metric value={metric.before} format={metric.format} /></TableCell>
+                        <TableCell className="text-right font-mono"><Metric value={metric.after} format={metric.format} /></TableCell>
+                        <TableCell className="text-right">
+                          <Delta before={metric.before} after={metric.after} />
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
               ) : (
-                <div className="memory-sleep-empty">This run did not return before/after snapshot metrics.</div>
+                <p className="text-muted-foreground">This run did not return before/after snapshot metrics.</p>
               )}
               {actionSummary.length > 0 && (
-                <div className="memory-sleep-action-summary">
-                  <span>Actions taken</span>
-                  <div>
-                    {actionSummary.map((action) => <b key={action.label}>{action.value} {action.label}</b>)}
+                <div className="flex flex-col gap-2">
+                  <Eyebrow>Actions taken</Eyebrow>
+                  <div className="flex flex-wrap gap-1.5">
+                    {actionSummary.map((action) => (
+                      <Badge variant="secondary" className="font-mono" key={action.label}>
+                        {action.value} {action.label}
+                      </Badge>
+                    ))}
                   </div>
                 </div>
               )}
             </>
           )}
-        </section>
+        </Panel>
 
-        <section className="memory-sleep-panel memory-sleep-history-panel">
-          <div className="memory-sleep-panel-title">
-            <RefreshCw size={16} />
-            <div>
-              <h3>Recent sleep runs</h3>
-              <p>{loading ? 'Loading history…' : `${runs.length} recent ${runs.length === 1 ? 'run' : 'runs'}`}</p>
-            </div>
-          </div>
+        <Panel
+          title="Recent sleep runs"
+          icon={<RefreshCw />}
+          description={loading ? 'Loading history…' : `${runs.length} recent ${runs.length === 1 ? 'run' : 'runs'}`}
+        >
           {runs.length === 0 ? (
-            <div className="memory-sleep-empty">No sleep history is available yet.</div>
+            <p className="text-muted-foreground">No sleep history is available yet.</p>
           ) : (
-            <div className="memory-sleep-run-list">
+            <ul className="-mx-2 flex flex-col gap-0.5">
               {runs.map((run, index) => (
-                <button
-                  type="button"
-                  key={run.id || `${run.startedAt || 'run'}-${index}`}
-                  className={`memory-sleep-run-row${selectedRunId === run.id ? ' selected' : ''}`}
-                  onClick={() => selectRun(run)}
-                >
-                  <span className={`memory-sleep-run-dot ${run.status}`} />
-                  <span className="memory-sleep-run-time">
-                    <strong>{formatSleepTimestamp(run.startedAt)}</strong>
-                    <small>{titleCase(run.trigger)}</small>
-                  </span>
-                  <span className="memory-sleep-run-summary">{runSummary(run)}</span>
-                  <span className={`memory-sleep-status-text ${run.status}`}>{formatSleepStatus(run.status)}</span>
-                  <ChevronRight size={15} />
-                </button>
+                <li key={run.id || `${run.startedAt || 'run'}-${index}`}>
+                  <Button
+                    variant={selectedRunId === run.id ? 'secondary' : 'ghost'}
+                    className="h-auto w-full justify-start gap-3 py-2 text-left"
+                    aria-pressed={selectedRunId === run.id}
+                    onClick={() => selectRun(run)}
+                  >
+                    <span className="flex w-28 shrink-0 flex-col">
+                      <span>{formatSleepTimestamp(run.startedAt)}</span>
+                      <span className="font-mono font-normal text-muted-foreground">{titleCase(run.trigger)}</span>
+                    </span>
+                    <span className="min-w-0 flex-1 truncate font-normal text-muted-foreground">{runSummary(run)}</span>
+                    <StatusPill status={run.status} />
+                    <ChevronRight data-icon="inline-end" />
+                  </Button>
+                </li>
               ))}
-            </div>
+            </ul>
           )}
-        </section>
+        </Panel>
       </div>
 
       {selectedRun && (
-        <section className="memory-sleep-panel memory-sleep-changes-panel">
-          <div className="memory-sleep-panel-title memory-sleep-changes-heading">
-            <Archive size={16} />
-            <div>
-              <h3>Changed memories</h3>
-              <p>Inspect the compact delta returned for this run.</p>
-            </div>
-            <div className="memory-sleep-filter-row" role="tablist" aria-label="Memory change filters">
-              {FILTERS.map((filter) => (
-                <button
-                  type="button"
-                  key={filter.value}
-                  role="tab"
-                  aria-selected={changeFilter === filter.value}
-                  className={changeFilter === filter.value ? 'active' : ''}
-                  onClick={() => setChangeFilter(filter.value)}
-                >
-                  {filter.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <Panel
+          title="Changed memories"
+          icon={<Archive />}
+          description="Inspect the compact delta returned for this run."
+          contentClassName="flex flex-col gap-3"
+        >
+          <ToggleGroup
+            variant="outline"
+            size="sm"
+            spacing={0}
+            className="max-w-full overflow-x-auto"
+            value={[changeFilter]}
+            onValueChange={(next) => next[0] && setChangeFilter(next[0] as ChangeFilter)}
+            aria-label="Memory change filters"
+          >
+            {FILTERS.map((filter) => (
+              <ToggleGroupItem key={filter.value} value={filter.value}>
+                {filter.label}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
           {selectedRun.changes.length === 0 ? (
-            <div className="memory-sleep-empty">No per-memory change details were returned for this run.</div>
+            <p className="text-muted-foreground">No per-memory change details were returned for this run.</p>
           ) : filteredChanges.length === 0 ? (
-            <div className="memory-sleep-empty">No {changeFilter} memories were returned for this run.</div>
+            <p className="text-muted-foreground">No {changeFilter} memories were returned for this run.</p>
           ) : (
-            <div className="memory-sleep-change-list">
-              {filteredChanges.map((change) => <ChangeCard key={change.id} change={change} />)}
-            </div>
+            <ul className="grid gap-x-8 md:grid-cols-2">
+              {filteredChanges.map((change) => <ChangeRow key={change.id} change={change} />)}
+            </ul>
           )}
-        </section>
+        </Panel>
       )}
     </section>
-  );
-}
-
-function ScheduleValue({ label, value, emptyLabel = 'Not recorded' }: { label: string; value?: string; emptyLabel?: string }) {
-  return (
-    <div className="memory-sleep-schedule-value">
-      <span>{label}</span>
-      <strong>{value ? formatSleepTimestamp(value) : emptyLabel}</strong>
-    </div>
   );
 }
 
 function StatusPill({ status }: { status: SleepStatus }) {
   const active = isActiveStatus(status);
   return (
-    <span className={`memory-sleep-status-pill ${status}`}>
-      {active && <LoaderCircle size={13} className="spin" />}
-      {!active && status === 'completed' && <CheckCircle2 size={13} />}
-      {!active && status === 'failed' && <AlertTriangle size={13} />}
-      {!active && !['completed', 'failed'].includes(status) && <span className="memory-sleep-status-dot" />}
+    <Badge
+      variant={status === 'failed' ? 'destructive' : 'outline'}
+      className={status === 'completed' ? 'text-signal' : undefined}
+    >
+      {active && <Spinner data-icon="inline-start" />}
+      {!active && status === 'completed' && <CheckCircle2 data-icon="inline-start" />}
+      {!active && status === 'failed' && <AlertTriangle data-icon="inline-start" />}
       {active ? 'Running…' : formatSleepStatus(status)}
-    </span>
+    </Badge>
   );
 }
 
 function Delta({ before, after }: { before?: number; after?: number }) {
-  if (before === undefined || after === undefined || before === after) return <span className="memory-sleep-delta neutral">—</span>;
+  if (before === undefined || after === undefined || before === after) {
+    return <span className="font-mono text-faint">—</span>;
+  }
   const increase = after > before;
   return (
-    <span className={`memory-sleep-delta ${increase ? 'increase' : 'decrease'}`}>
-      {increase ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
-      {formatSigned(after - before)}
+    <span className="inline-flex items-center gap-1 font-mono tabular-nums">
+      {increase ? <TrendingUp className="size-3" aria-hidden="true" /> : <TrendingDown className="size-3" aria-hidden="true" />}
+      <Num
+        value={after - before}
+        format={{ signDisplay: 'always', maximumFractionDigits: Number.isInteger(after - before) ? 0 : 2 }}
+      />
     </span>
   );
 }
 
-function ChangeCard({ change }: { change: MemoryChange }) {
-  const icon = change.kind === 'reinforced' ? <TrendingUp size={14} /> : change.kind === 'weakened' ? <TrendingDown size={14} /> : change.kind === 'unchanged' ? <Check size={14} /> : <Archive size={14} />;
+function ChangeRow({ change }: { change: MemoryChange }) {
+  const Icon = change.kind === 'reinforced' ? TrendingUp : change.kind === 'weakened' ? TrendingDown : change.kind === 'unchanged' ? Check : Archive;
   return (
-    <article className={`memory-sleep-change-card ${change.kind}`}>
-      <div className="memory-sleep-change-icon">{icon}</div>
-      <div className="memory-sleep-change-copy">
-        <div className="memory-sleep-change-meta"><span>{titleCase(change.kind)}</span>{change.afterStatus && <small>{change.afterStatus}</small>}</div>
-        <strong>{change.title}</strong>
+    <li className="flex gap-3 border-b py-2.5">
+      <Icon className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+      <div className="flex min-w-0 flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <Eyebrow>{titleCase(change.kind)}</Eyebrow>
+          {change.afterStatus && <Badge variant="outline" className="font-mono">{change.afterStatus}</Badge>}
+        </div>
+        <span className="font-medium text-pretty">{change.title}</span>
         {(change.beforeScore !== undefined || change.afterScore !== undefined) && (
-          <p>Retention: {formatMetric(change.beforeScore, 'score')} → {formatMetric(change.afterScore, 'score')}</p>
+          <span className="font-mono text-muted-foreground">
+            Retention: {formatMetric(change.beforeScore, 'score')} → {formatMetric(change.afterScore, 'score')}
+          </span>
         )}
       </div>
-    </article>
+    </li>
   );
 }
 
@@ -663,8 +681,13 @@ function formatMetric(value: number | undefined, format: 'count' | 'score' = 'co
   return value.toLocaleString();
 }
 
-function formatSigned(value: number): string {
-  return `${value > 0 ? '+' : ''}${Number.isInteger(value) ? value : value.toFixed(2)}`;
+/** A snapshot value as a rolling number: counts as integers, scores (0–1) to two places. */
+function Metric({ value, format = 'count' }: { value?: number; format?: 'count' | 'score' }) {
+  if (value === undefined) return <span className="text-faint">—</span>;
+  if (format === 'score') {
+    return value <= 1 ? <Num value={value} format={SCORE_FORMAT} /> : <Num value={value} format={{ maximumFractionDigits: 1 }} suffix="%" />;
+  }
+  return <Num value={value} />;
 }
 
 function formatSleepTimestamp(value?: string): string {

@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, ArrowRight, Compass, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { Eyebrow } from './view';
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { Card, CardAction, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
 type GuideStep = {
   view: string;
@@ -128,59 +132,71 @@ export default function DemoWalkthrough() {
 
   if (!open) {
     return (
-      <button className="demo-guide-launcher" onClick={showGuide}>
-        <Compass size={16} />
+      <Button variant="outline" size="sm" className="demo-guide-launcher" onClick={showGuide}>
+        <Compass data-icon="inline-start" />
         Guide
-      </button>
+      </Button>
     );
   }
 
   return (
-    <aside className="demo-guide-panel" aria-label="Demo walkthrough">
-      <div className="demo-guide-top">
-        <div>
-          <span className="demo-guide-kicker">Demo walkthrough</span>
-          <h2>{step.title}</h2>
+    // fixed bottom-right, above the page; position comes from .demo-guide-panel
+    <Card className="demo-guide-panel w-[min(22rem,calc(100vw-1.5rem))]" role="complementary" aria-label="Demo walkthrough">
+      <CardHeader>
+        <Eyebrow>Demo walkthrough · {stepIndex + 1} / {STEPS.length}</Eyebrow>
+        <CardTitle className="text-sm text-pretty">{step.title}</CardTitle>
+        <CardAction>
+          <Button variant="ghost" size="icon-sm" onClick={closeGuide} aria-label="Close guide">
+            <X />
+          </Button>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-3">
+        {/* one segment per step; the hit area is taller than the 2px bar it draws */}
+        <div className="flex gap-1" role="group" aria-label={`Step ${stepIndex + 1} of ${STEPS.length}`}>
+          {STEPS.map((item, index) => (
+            <button
+              key={item.label}
+              type="button"
+              className="group/step flex h-4 flex-1 cursor-pointer items-center"
+              onClick={() => setStepIndex(index)}
+              aria-label={`Open ${item.label}`}
+              aria-current={index === stepIndex ? 'step' : undefined}
+            >
+              <span
+                className={cn(
+                  'h-0.5 w-full transition-colors',
+                  index === stepIndex ? 'bg-signal' : index < stepIndex ? 'bg-foreground/40' : 'bg-border group-hover/step:bg-border-strong',
+                )}
+              />
+            </button>
+          ))}
         </div>
-        <button className="demo-guide-icon" onClick={closeGuide} aria-label="Close guide">
-          <X size={16} />
-        </button>
-      </div>
 
-      <div className="demo-guide-progress" aria-label={`Step ${stepIndex + 1} of ${STEPS.length}`}>
-        {STEPS.map((item, index) => (
-          <button
-            key={item.label}
-            className={index === stepIndex ? 'active' : ''}
-            onClick={() => setStepIndex(index)}
-            aria-label={`Open ${item.label}`}
-          />
-        ))}
-      </div>
+        <div className="flex flex-col gap-1.5">
+          <span className="font-medium">{step.label}</span>
+          <p className="text-pretty text-muted-foreground">{step.body}</p>
+        </div>
+        <p className="border-l-2 border-signal pl-3 text-pretty">{step.task}</p>
+      </CardContent>
 
-      <div className="demo-guide-meta">
-        <strong>{step.label}</strong>
-        <span>{stepIndex + 1} / {STEPS.length}</span>
-      </div>
-      <p>{step.body}</p>
-      <div className="demo-guide-task">{step.task}</div>
-
-      <div className="demo-guide-actions">
-        <button onClick={() => move(-1)} disabled={stepIndex === 0}>
-          <ArrowLeft size={15} />
+      <CardFooter className="justify-between">
+        <Button variant="ghost" size="sm" onClick={() => move(-1)} disabled={stepIndex === 0}>
+          <ArrowLeft data-icon="inline-start" />
           Back
-        </button>
+        </Button>
         {stepIndex === STEPS.length - 1 ? (
-          <button className="primary" onClick={closeGuide}>
+          <Button size="sm" onClick={closeGuide}>
             Finish
-          </button>
+          </Button>
         ) : (
-          <button className="primary" onClick={() => move(1)}>
+          <Button size="sm" onClick={() => move(1)}>
             Next
-            <ArrowRight size={15} />
-          </button>
+            <ArrowRight data-icon="inline-end" />
+          </Button>
         )}
-      </div>
-    </aside>
+      </CardFooter>
+    </Card>
   );
 }

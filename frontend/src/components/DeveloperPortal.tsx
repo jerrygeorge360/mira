@@ -4,6 +4,7 @@ import { useApp } from '../context/AppContext';
 import BrandMark from './BrandMark';
 import DeveloperDocsView from './DeveloperDocsView';
 import DeveloperPlatformView from './DeveloperPlatformView';
+import '../developer-portal.css';
 
 export default function DeveloperPortal() {
   const { authReady, authUser, signOut } = useApp();

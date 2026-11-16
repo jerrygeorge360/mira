@@ -1,8 +1,14 @@
-import { GitMerge, Network, ShieldCheck } from 'lucide-react';
+import { GitMerge, ShieldCheck } from 'lucide-react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { useApp } from '../context/AppContext';
 import { ViewStatus } from './ViewStatus';
+import { Eyebrow, KeyValue, KeyValueList, ViewHeader, ViewPage } from './view';
+import { Badge } from '@/components/ui/badge';
+import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Button } from '@/components/ui/button';
+import { Separator } from '@/components/ui/separator';
 
 type Row = Record<string, unknown>;
 
@@ -15,14 +21,11 @@ export default function CommunitiesView() {
   const items = (data?.items as Row[] | undefined) ?? [];
 
   return (
-    <div>
-      <div className="view-header">
-        <h2>Communities</h2>
-        <p>
-          Graph-derived warm retrieval contexts. Overlap is preserved when communities support
-          different retrieval angles.
-        </p>
-      </div>
+    <ViewPage>
+      <ViewHeader
+        title="Communities"
+        description="Graph-derived warm retrieval contexts. Overlap is preserved when communities support different retrieval angles."
+      />
       {items.length === 0 ? (
         <ViewStatus
           status={status}
@@ -30,11 +33,11 @@ export default function CommunitiesView() {
           hint="Community summaries are built once the entity graph is dense enough to cluster."
         />
       ) : (
-        <div className="communities-grid">
+        <div className="grid items-start gap-4 lg:grid-cols-2">
           {items.map((community) => <CommunityCard key={String(community.id)} community={community} />)}
         </div>
       )}
-    </div>
+    </ViewPage>
   );
 }
 
@@ -42,62 +45,62 @@ function CommunityCard({ community }: { community: Row }) {
   const overlaps = asRows(community.overlapping_communities);
   const recommendation = text(community.merge_recommendation, 'preserve_for_context');
   const review = recommendation === 'review_possible_duplicate';
+  const explanation = text(community.community_explanation);
   return (
-    <article className={`community-card${review ? ' review' : ''}`}>
-      <div className="community-card-top">
-        <div>
-          <div className="community-kicker">Community · {shortId(text(community.community_id))}</div>
-          <h3>{text(community.title, text(community.community_id, 'Community'))}</h3>
+    <Card>
+      <CardHeader>
+        <Eyebrow>Community · {shortId(text(community.community_id))}</Eyebrow>
+        <CardTitle>{text(community.title, text(community.community_id, 'Community'))}</CardTitle>
+        <CardDescription className="text-pretty">{text(community.summary)}</CardDescription>
+        <CardAction>
+          <Badge variant={review ? 'destructive' : 'outline'}>
+            {review ? <GitMerge data-icon="inline-start" /> : <ShieldCheck data-icon="inline-start" />}
+            {labelize(recommendation)}
+          </Badge>
+        </CardAction>
+      </CardHeader>
+
+      <CardContent className="flex flex-col gap-4">
+        <KeyValueList>
+          <KeyValue label="Memories">{number(community.member_count)}</KeyValue>
+          <KeyValue label="Cohesion">{number(community.cohesion_score).toFixed(2)}</KeyValue>
+          <KeyValue label="Updated">{formatTime(text(community.updated_at))}</KeyValue>
+        </KeyValueList>
+
+        {explanation && <p className="text-xs text-pretty text-muted-foreground">{explanation}</p>}
+
+        <Separator />
+
+        <div className="flex flex-col gap-2">
+          <Eyebrow>Overlapping communities</Eyebrow>
+          {overlaps.length > 0 ? (
+            <ul className="flex flex-col *:border-b *:last:border-b-0">
+              {overlaps.map((overlap) => (
+                <li className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-2" key={String(overlap.id)}>
+                  <span className="text-xs font-medium">{text(overlap.title, text(overlap.community_id, 'Community'))}</span>
+                  <span className="font-mono text-xs text-muted-foreground">
+                    {number(overlap.shared_member_count)} shared · {percent(number(overlap.member_overlap_ratio))} member overlap
+                  </span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-xs text-muted-foreground">No overlap detected in the current summary set.</p>
+          )}
         </div>
-        <div className={`community-recommendation${review ? ' review' : ''}`}>
-          {review ? <GitMerge size={15} /> : <ShieldCheck size={15} />}
-          {labelize(recommendation)}
-        </div>
-      </div>
 
-      <p className="community-summary">{text(community.summary)}</p>
-
-      <div className="community-stats">
-        <Stat label="Memories" value={String(number(community.member_count))} />
-        <Stat label="Cohesion" value={number(community.cohesion_score).toFixed(2)} />
-        <Stat label="Updated" value={formatTime(text(community.updated_at))} />
-      </div>
-
-      <div className="community-explanation">
-        <Network size={15} />
-        <span>{text(community.community_explanation)}</span>
-      </div>
-
-      {overlaps.length > 0 ? (
-        <div className="community-overlaps">
-          <h4>Overlapping communities</h4>
-          {overlaps.map((overlap) => (
-            <div className="community-overlap-row" key={String(overlap.id)}>
-              <strong>{text(overlap.title, text(overlap.community_id, 'Community'))}</strong>
-              <span>
-                {number(overlap.shared_member_count)} shared · {percent(number(overlap.member_overlap_ratio))} member overlap
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="community-overlaps empty">No overlap detected in the current summary set.</div>
-      )}
-
-      <details className="community-details">
-        <summary>Member node ids</summary>
-        <pre>{JSON.stringify(community.member_nodes_json ?? [], null, 2)}</pre>
-      </details>
-    </article>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="community-stat">
-      <strong>{value}</strong>
-      <span>{label}</span>
-    </div>
+        <Collapsible>
+          <CollapsibleTrigger render={<Button variant="ghost" size="sm" className="-ml-2.5" />}>
+            Member node ids
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <pre className="mt-2 max-h-56 overflow-auto rounded-lg border bg-background p-3 font-mono text-xs text-muted-foreground">
+              {JSON.stringify(community.member_nodes_json ?? [], null, 2)}
+            </pre>
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
   );
 }
 
