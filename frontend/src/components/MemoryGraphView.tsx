@@ -216,7 +216,7 @@ export default function MemoryGraphView() {
               hint="Broaden the node or edge filter to inspect more memory."
             />
           ) : (
-            <GraphView height={460} data={toGraphData(filteredNodes, filteredEdges)} />
+            <GraphView data={toGraphData(filteredNodes, filteredEdges)} />
           )}
         </>
       )}

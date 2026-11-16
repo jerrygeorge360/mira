@@ -55,9 +55,72 @@
         }
       }
     </script>
+    <script>
+      // Set the theme before anything paints, so the first-load loader (and the app after it)
+      // never flashes the wrong background. AppContext keeps it in sync afterwards.
+      (function () {
+        try {
+          var saved = localStorage.getItem('mira.theme');
+          var theme = saved === 'light' || saved === 'dark' ? saved
+            : (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+          document.documentElement.dataset.theme = theme;
+        } catch (e) { document.documentElement.dataset.theme = 'dark'; }
+      })();
+    </script>
+    <style>
+      /* First-load loader: shown inside #root until React mounts and replaces it.
+         Self-contained (the app's CSS has not loaded yet); same animation as LogoLoader.tsx. */
+      html { background: #0d0e0f; }
+      html[data-theme='light'] { background: #f4f4f1; }
+      .boot { position: fixed; inset: 0; display: grid; place-items: center; }
+      .boot svg { width: 74px; height: 44px; overflow: visible; }
+      .boot-base { stroke: #3b4041; }
+      .boot-pulse { stroke: #a6e36b; }
+      html[data-theme='light'] .boot-base { stroke: #b4b4ab; }
+      html[data-theme='light'] .boot-pulse { stroke: #2c7a1c; }
+      .boot-link { stroke-dasharray: 1; stroke-dashoffset: 1; animation: boot-link 1.7s linear infinite; }
+      .boot-node { opacity: 0; transform-box: fill-box; transform-origin: center; animation: boot-node 1.7s cubic-bezier(0.23, 1, 0.32, 1) infinite; }
+      @keyframes boot-link { 0% { stroke-dashoffset: 1; opacity: 1; } 7% { stroke-dashoffset: 0; opacity: 1; } 42% { stroke-dashoffset: 0; opacity: 1; } 62%, 100% { stroke-dashoffset: 0; opacity: 0; } }
+      @keyframes boot-node { 0% { opacity: 0; transform: scale(0.7); } 8% { opacity: 1; transform: scale(1.08); } 16% { transform: scale(1); } 44% { opacity: 1; transform: scale(1); } 64%, 100% { opacity: 0; transform: scale(1); } }
+      /* only show it if loading actually takes a moment, so fast loads don't flash it */
+      .boot { animation: boot-in 200ms ease 250ms both; }
+      @keyframes boot-in { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes boot-breathe { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) {
+        .boot-link, .boot-node { animation: none; opacity: 1; stroke-dashoffset: 0; }
+        .boot-pulse { animation: boot-breathe 2.4s ease-in-out infinite; }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot" role="status" aria-label="Loading MIRA">
+        <svg viewBox="40 191 529 317" fill="none" aria-hidden="true">
+          <g class="boot-base">
+            <line x1="94.17" y1="420.06" x2="114.48" y2="285.76" stroke-width="30" />
+            <line x1="154.38" y1="263.92" x2="271.38" y2="332.92" stroke-width="30" />
+            <line x1="332.62" y1="335.92" x2="449.62" y2="266.92" stroke-width="30" />
+            <line x1="489.83" y1="285.76" x2="510.14" y2="420.06" stroke-width="30" />
+            <circle cx="95" cy="453" r="34.5" stroke-width="31" />
+            <circle cx="126" cy="246" r="34.5" stroke-width="31" />
+            <circle cx="306" cy="353" r="34.5" stroke-width="31" />
+            <circle cx="483" cy="246" r="34.5" stroke-width="31" />
+            <circle cx="514" cy="453" r="34.5" stroke-width="31" />
+          </g>
+          <g class="boot-pulse">
+            <line class="boot-link" pathLength="1" style="animation-delay: 95ms" x1="94.17" y1="420.06" x2="114.48" y2="285.76" stroke-width="30" />
+            <line class="boot-link" pathLength="1" style="animation-delay: 285ms" x1="154.38" y1="263.92" x2="271.38" y2="332.92" stroke-width="30" />
+            <line class="boot-link" pathLength="1" style="animation-delay: 475ms" x1="332.62" y1="335.92" x2="449.62" y2="266.92" stroke-width="30" />
+            <line class="boot-link" pathLength="1" style="animation-delay: 665ms" x1="489.83" y1="285.76" x2="510.14" y2="420.06" stroke-width="30" />
+            <circle class="boot-node" style="animation-delay: 0ms" cx="95" cy="453" r="34.5" stroke-width="31" />
+            <circle class="boot-node" style="animation-delay: 190ms" cx="126" cy="246" r="34.5" stroke-width="31" />
+            <circle class="boot-node" style="animation-delay: 380ms" cx="306" cy="353" r="34.5" stroke-width="31" />
+            <circle class="boot-node" style="animation-delay: 570ms" cx="483" cy="246" r="34.5" stroke-width="31" />
+            <circle class="boot-node" style="animation-delay: 760ms" cx="514" cy="453" r="34.5" stroke-width="31" />
+          </g>
+        </svg>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

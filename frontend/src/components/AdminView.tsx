@@ -8,8 +8,14 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from '@/components/ui/empty';
-import { Progress } from '@/components/ui/progress';
 import { Spinner } from '@/components/ui/spinner';
+import { EvilBarChart } from '@/components/evilcharts/charts/recharts-bar-chart';
+import type { ChartConfig } from '@/components/evilcharts/ui/recharts-chart';
+import { CHART_COLORS } from './chartPalette';
+
+const REGISTRATION_CONFIG = {
+  signups: { label: 'Registrations', colors: CHART_COLORS.signal },
+} satisfies ChartConfig;
 
 export default function AdminView() {
   const { data, status } = useLiveData(() => api.adminOverview(), []);
@@ -43,7 +49,6 @@ export default function AdminView() {
   const queueAttention = (data.queue.failed ?? 0)
     + (data.queue.dead_letter ?? 0)
     + (data.queue.quarantined ?? 0);
-  const maxRegistrations = Math.max(1, ...data.registrations_last_30_days.map(item => item.count));
 
   return (
     <ViewPage>
@@ -141,21 +146,20 @@ export default function AdminView() {
           {data.registrations_last_30_days.length === 0 ? (
             <p className="pt-3 text-xs text-muted-foreground">No registrations in the last 30 days.</p>
           ) : (
-            <ul className="flex flex-col gap-2 pt-4">
-              {data.registrations_last_30_days.map(item => (
-                <li
-                  key={item.date}
-                  className="grid grid-cols-[4rem_minmax(0,1fr)_2rem] items-center gap-3 font-mono text-xs"
-                >
-                  <time dateTime={item.date} className="text-muted-foreground">{formatDate(item.date)}</time>
-                  <Progress
-                    value={(item.count / maxRegistrations) * 100}
-                    aria-label={`${item.count} registrations on ${formatDate(item.date)}`}
-                  />
-                  <span className="text-right tabular-nums">{item.count}</span>
-                </li>
-              ))}
-            </ul>
+            <div className="h-44 pt-4">
+              <EvilBarChart
+                data={data.registrations_last_30_days.map(item => ({ day: formatDate(item.date), signups: item.count }))}
+                config={REGISTRATION_CONFIG}
+                xDataKey="day"
+                barRadius={4}
+                className="h-full w-full"
+              >
+                <EvilBarChart.Grid />
+                <EvilBarChart.XAxis dataKey="day" />
+                <EvilBarChart.Tooltip />
+                <EvilBarChart.Bar dataKey="signups" variant="gradient" />
+              </EvilBarChart>
+            </div>
           )}
         </Panel>
 

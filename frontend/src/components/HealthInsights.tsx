@@ -1,16 +1,19 @@
 import { useMemo, useState } from 'react';
-import type { PointerEvent, ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { api } from '../api/client';
 import { useLiveData } from '../api/useLiveData';
 import { Num } from './view';
+import { CHART_COLORS } from './chartPalette';
+import { EvilAreaChart } from '@/components/evilcharts/charts/recharts-area-chart';
+import type { ChartConfig } from '@/components/evilcharts/ui/recharts-chart';
 
 /* ─────────────────────────────────────────────────────────
  * HEALTH INSIGHTS — "Insights N ‹ ›" above Memory Health
  *
  * Small, real visualizations the tier cards don't give you:
  *   · how tracked memory splits across tiers (segmented bar)
- *   · what recent sleep runs kept vs let go (line chart)
+ *   · what recent sleep runs kept vs let go (evilcharts area chart)
  * A card appears only when its data exists. Pages crossfade.
  * ───────────────────────────────────────────────────────── */
 
@@ -42,23 +45,6 @@ function shortDate(value: unknown) {
   const date = new Date(typeof value === 'string' ? value : '');
   if (Number.isNaN(date.getTime())) return 'Unknown time';
   return date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-}
-
-/* Catmull-Rom → cubic bezier path through the points, so the line curves
- * smoothly between runs without overshooting the frame much. */
-function smoothPath(points: { x: number; y: number }[]) {
-  if (points.length < 2) return '';
-  let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 0; i < points.length - 1; i += 1) {
-    const p0 = points[Math.max(0, i - 1)];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[Math.min(points.length - 1, i + 2)];
-    const c1 = { x: p1.x + (p2.x - p0.x) / 6, y: p1.y + (p2.y - p0.y) / 6 };
-    const c2 = { x: p2.x - (p3.x - p1.x) / 6, y: p2.y - (p3.y - p1.y) / 6 };
-    d += ` C ${c1.x} ${c1.y}, ${c2.x} ${c2.y}, ${p2.x} ${p2.y}`;
-  }
-  return d;
 }
 
 /* ── card 1: tier allocation ── */
@@ -122,73 +108,48 @@ function TierAllocationCard({ tiers }: { tiers: TierSummary[] }) {
   );
 }
 
-/* ── card 2: sleep activity ── */
+/* ── card 2: sleep activity (evilcharts area chart) ── */
 type RunPoint = { at: unknown; kept: number; letGo: number; reviewed: number };
 
+const SLEEP_CONFIG = {
+  kept: { label: 'Reinforced & consolidated', colors: CHART_COLORS.signal },
+  letGo: { label: 'Archived & forgotten', colors: CHART_COLORS.amber },
+} satisfies ChartConfig;
+
 function SleepActivityCard({ runs }: { runs: RunPoint[] }) {
-  const [hover, setHover] = useState<number | null>(null);
   const keptTotal = runs.reduce((sum, run) => sum + run.kept, 0);
   const letGoTotal = runs.reduce((sum, run) => sum + run.letGo, 0);
-
-  const W = 320;
-  const H = 120;
-  const PAD = { top: 12, bottom: 12 };
-  const max = Math.max(1, ...runs.map((run) => Math.max(run.kept, run.letGo)));
-  const x = (i: number) => (runs.length === 1 ? W / 2 : (i / (runs.length - 1)) * W);
-  const y = (v: number) => PAD.top + (1 - v / max) * (H - PAD.top - PAD.bottom);
-  const keptPath = smoothPath(runs.map((run, i) => ({ x: x(i), y: y(run.kept) })));
-  const letGoPath = smoothPath(runs.map((run, i) => ({ x: x(i), y: y(run.letGo) })));
-
-  const onPointer = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const t = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-    setHover(Math.round(t * (runs.length - 1)));
-  };
-  const hovered = hover === null ? null : runs[hover];
-  const hoverPct = hover === null ? 0 : (x(hover) / W) * 100;
+  const data = runs.map((run) => ({ run: shortDate(run.at), kept: run.kept, letGo: run.letGo }));
 
   return (
     <div className="insight-card">
       <div className="insight-stats">
         <div>
           <span className="insight-card-title"><span className="insight-dot" style={{ background: KEPT_COLOR }} />Reinforced &amp; consolidated</span>
-          <span className="insight-hero small" style={{ color: KEPT_COLOR }}>{keptTotal.toLocaleString()}</span>
+          <span className="insight-hero small" style={{ color: KEPT_COLOR }}><Num value={keptTotal} /></span>
         </div>
         <div>
           <span className="insight-card-title"><span className="insight-dot" style={{ background: LET_GO_COLOR }} />Archived &amp; forgotten</span>
-          <span className="insight-hero small" style={{ color: LET_GO_COLOR }}>{letGoTotal.toLocaleString()}</span>
+          <span className="insight-hero small" style={{ color: LET_GO_COLOR }}><Num value={letGoTotal} /></span>
         </div>
       </div>
-      <div className="insight-chart">
-        <div className="insight-chart-head">
-          <span className="insight-num">
-            {hovered ? `${shortDate(hovered.at)} · reviewed ${hovered.reviewed.toLocaleString()}` : `Last ${runs.length} sleep runs`}
-          </span>
-        </div>
-        <div
-          className="insight-chart-stage"
-          onPointerMove={onPointer}
-          onPointerDown={onPointer}
-          onPointerLeave={() => setHover(null)}
-          role="img"
-          aria-label={`Across the last ${runs.length} sleep runs, ${keptTotal} memories were reinforced or consolidated and ${letGoTotal} were archived or forgotten.`}
-        >
-          <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" aria-hidden="true">
-            <line x1="0" x2={W} y1={y(0)} y2={y(0)} className="insight-baseline" vectorEffect="non-scaling-stroke" />
-            <path d={keptPath} fill="none" stroke={KEPT_COLOR} strokeWidth="2.25" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-            <path d={letGoPath} fill="none" stroke={LET_GO_COLOR} strokeWidth="2.25" vectorEffect="non-scaling-stroke" strokeLinecap="round" />
-          </svg>
-          {hovered && (
-            <>
-              <span className="insight-cursor" style={{ left: `${hoverPct}%` }} />
-              <span className="insight-tooltip" style={{ left: `${Math.min(Math.max(hoverPct, 22), 78)}%` }}>
-                <span><span className="insight-dot small" style={{ background: KEPT_COLOR }} />{hovered.kept} kept</span>
-                <span><span className="insight-dot small" style={{ background: LET_GO_COLOR }} />{hovered.letGo} let go</span>
-              </span>
-            </>
-          )}
-        </div>
+      <div
+        className="tw h-36"
+        role="img"
+        aria-label={`Across the last ${runs.length} sleep runs, ${keptTotal} memories were reinforced or consolidated and ${letGoTotal} were archived or forgotten.`}
+      >
+        <EvilAreaChart data={data} config={SLEEP_CONFIG} curveType="monotone" xDataKey="run" className="h-full w-full">
+          <EvilAreaChart.Grid />
+          <EvilAreaChart.Tooltip />
+          <EvilAreaChart.Area dataKey="kept" variant="gradient" strokeWidth={2}>
+            <EvilAreaChart.ActiveDot variant="colored-border" />
+          </EvilAreaChart.Area>
+          <EvilAreaChart.Area dataKey="letGo" variant="gradient" strokeWidth={2}>
+            <EvilAreaChart.ActiveDot variant="colored-border" />
+          </EvilAreaChart.Area>
+        </EvilAreaChart>
       </div>
+      <span className="font-mono text-[11px] text-faint">Last {runs.length} sleep runs, oldest on the left</span>
     </div>
   );
 }

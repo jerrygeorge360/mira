@@ -1,62 +1,22 @@
 import { useEffect, useState } from 'react';
+import LogoLoader from './LogoLoader';
 
 /* ─────────────────────────────────────────────────────────
- * LOADING STATE — pixel-grid loader for long-running work
+ * LOADING STATE — the MIRA mark loader for long-running work
  *
- * Variants:
- *   drive  — square cells, chevron wavefront driving right;
- *            the 650ms cycle is shorter than the sweep, so
- *            two fronts are always in flight
- *   dots   — same wavefront, circular cells
- *   orbit  — a comet lapping the grid perimeter
- *   surfer — the drive loader paired with a looping video card
- *            (only when `videoSrc` is given; otherwise plain drive)
+ * The animated logo (see LogoLoader) paired with a shimmering
+ * label and a live elapsed timer in mono tabular figures.
  *
- * Paired with a shimmering label and a live elapsed timer in
- * mono tabular figures. Reduced motion freezes the grid and the
- * shimmer (see .loading-state rules in index.css); the timer
- * still ticks.
+ * Sizes:
+ *   inline — a small mark beside the label, for rows, panels
+ *            and the chat's "thinking" bubble (default)
+ *   page   — a large mark centred with the label under it, for
+ *            whole-page waits (lazy views, the developer portal)
+ *
+ * Reduced motion swaps the travelling pulse for a slow fade and
+ * stops the shimmer (see .loading-state rules in index.css); the
+ * timer still ticks.
  * ───────────────────────────────────────────────────────── */
-
-export type LoadingVariant = 'drive' | 'dots' | 'orbit' | 'surfer';
-
-const chevron = Array.from({ length: 9 }, (_, i) => {
-  const r = Math.floor(i / 3);
-  const c = i % 3;
-  return (c + Math.abs(r - 1)) * 90;
-});
-
-const ORBIT_ORDER = [0, 1, 2, 5, 8, 7, 6, 3];
-const orbit = Array.from({ length: 9 }, (_, i) => {
-  const k = ORBIT_ORDER.indexOf(i);
-  return k === -1 ? null : k * 110;
-});
-
-type Pattern = { delays: (number | null)[]; dur: number; round: boolean };
-
-const PATTERNS: Record<'drive' | 'dots' | 'orbit', Pattern> = {
-  drive: { delays: chevron, dur: 650, round: false },
-  dots: { delays: chevron, dur: 650, round: true },
-  orbit: { delays: orbit, dur: 950, round: false },
-};
-
-function LoaderGrid({ delays, dur, round }: Pattern) {
-  return (
-    <span aria-hidden="true" className="loading-grid">
-      {delays.map((delay, index) => (
-        <span
-          key={index}
-          className={`loading-cell${round ? ' round' : ''}${delay === null ? ' idle' : ''}`}
-          style={
-            delay === null
-              ? undefined
-              : { animation: `pixel-on ${dur}ms ease-in-out ${delay}ms infinite` }
-          }
-        />
-      ))}
-    </span>
-  );
-}
 
 /** Wall-clock elapsed time. Measured from a start timestamp rather than counting
  *  ticks, so it stays correct when a background tab throttles the interval. */
@@ -79,53 +39,25 @@ function useElapsed() {
 
 export default function LoadingState({
   label = 'Working',
-  variant = 'drive',
+  size = 'inline',
   showElapsed = true,
-  videoSrc,
   className,
 }: {
   label?: string;
-  variant?: LoadingVariant;
+  size?: 'inline' | 'page';
   showElapsed?: boolean;
-  /** Video for the surfer variant. No default: point it at an asset this project hosts. */
-  videoSrc?: string;
   className?: string;
 }) {
   const elapsed = useElapsed();
-  const [videoOk, setVideoOk] = useState(true);
-  const surfer = variant === 'surfer' && Boolean(videoSrc);
-  const pattern = variant === 'surfer' ? PATTERNS.drive : PATTERNS[variant];
-
-  const row = (
-    <div className="loading-state-row">
-      <LoaderGrid {...pattern} />
-      <span className="loading-state-label">{label}</span>
-      {showElapsed && <span className="loading-state-elapsed">{elapsed}</span>}
-    </div>
-  );
+  const page = size === 'page';
 
   return (
-    <div role="status" aria-live="polite" className={`loading-state${className ? ` ${className}` : ''}`}>
-      {row}
-      {surfer && (
-        <div className="loading-state-card">
-          {videoOk ? (
-            <video
-              src={videoSrc}
-              autoPlay
-              muted
-              loop
-              playsInline
-              onError={() => setVideoOk(false)}
-            />
-          ) : (
-            <div className="loading-state-card-fallback">
-              <LoaderGrid {...PATTERNS.drive} />
-              <span>Video unavailable</span>
-            </div>
-          )}
-        </div>
-      )}
+    <div role="status" aria-live="polite" className={`loading-state${page ? ' page' : ''}${className ? ` ${className}` : ''}`}>
+      <div className="loading-state-row">
+        <LogoLoader size={page ? 44 : 14} />
+        <span className="loading-state-label">{label}</span>
+        {showElapsed && <span className="loading-state-elapsed">{elapsed}</span>}
+      </div>
     </div>
   );
 }
