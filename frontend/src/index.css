@@ -599,8 +599,11 @@ select:focus-visible {
 
 .rail-history-btn {
   display: block;
-  width: 100%;
-  margin: 1px 8px;
+  /* fill the grid column, no wider: `width: 100%` plus side margins overflowed it by 16px,
+     pushing the title and its highlight under the delete button */
+  width: auto;
+  min-width: 0;
+  margin: 1px 0 1px 8px;
   padding: 8px 12px;
   border: none;
   border-radius: var(--radius-sm);
@@ -615,9 +618,9 @@ select:focus-visible {
 .rail-history-btn:hover { background: var(--surface-hover); color: var(--text); }
 .rail-history-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 30px;
+  grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
-  gap: 0;
+  gap: 2px;
   padding-right: 8px;
 }
 .rail-history-row.active .rail-history-btn { background: var(--accent-soft); color: var(--accent); }
@@ -932,6 +935,10 @@ select:focus-visible {
 }
 .graph-edge-label {
   user-select: none;
+}
+/* large graphs: labels only around the selection, so 150 links don't read as noise */
+.graph-edge-label.graph-edge-label-quiet:not(.shown) {
+  display: none;
 }
 .graph-node-label {
   user-select: none;
@@ -1276,7 +1283,7 @@ select:focus-visible {
   .floating-cards { display: none; }
 }
 
-/* ── Loading state: pixel-grid loader + shimmer label + elapsed timer ── */
+/* ── Loading state: the MIRA mark loader + shimmer label + elapsed timer ── */
 .loading-state {
   display: inline-flex;
   flex-direction: column;
@@ -1288,21 +1295,15 @@ select:focus-visible {
   align-items: center;
   gap: 10px;
 }
-.loading-grid {
-  display: grid;
-  flex-shrink: 0;
-  grid-template-columns: repeat(3, 4px);
-  gap: 1.5px;
+/* page size: the mark centred and large, the label and timer under it */
+.loading-state.page {
+  display: flex;
+  width: 100%;
+  min-height: 40vh;
+  align-items: center;
+  justify-content: center;
 }
-.loading-cell {
-  width: 4px;
-  height: 4px;
-  border-radius: 1px;
-  background: var(--text);
-  opacity: 0.15;
-}
-.loading-cell.round { border-radius: 50%; }
-.loading-cell.idle { opacity: 0.07; }
+.loading-state.page .loading-state-row { flex-direction: column; gap: 14px; }
 .loading-state-label {
   font-size: 13px;
   font-weight: 500;
@@ -1319,35 +1320,48 @@ select:focus-visible {
   color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
-.loading-state-card {
-  margin-top: 8px;
-  width: 224px;
-  aspect-ratio: 16 / 9;
-  overflow: hidden;
-  border-radius: var(--radius-sm);
-  background: var(--surface-soft);
-  box-shadow: var(--shadow);
-  transform-origin: top left;
-  animation: pop-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
-}
-.loading-state-card video { width: 100%; height: 100%; object-fit: cover; display: block; }
-.loading-state-card-fallback {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 10px;
-  color: var(--faint);
-}
-/* centred inside the dashed empty-state boxes */
 
-@keyframes pixel-on {
-  0%, 100% { opacity: 0.15; }
-  40% { opacity: 1; }
+/* the mark: a faint resting logo, and a pulse of the signal colour travelling through it */
+.logo-loader { display: block; flex-shrink: 0; overflow: visible; }
+.logo-loader-base { stroke: var(--border-strong); transition: stroke 320ms cubic-bezier(0.23, 1, 0.32, 1); }
+.logo-loader-pulse { stroke: var(--accent); transition: opacity 320ms cubic-bezier(0.23, 1, 0.32, 1); }
+/* idle: the plain logo. The resting mark eases back to full strength and the pulse
+   fades out; its animations are paused so finished replies don't keep animating. */
+.logo-loader.idle .logo-loader-base { stroke: currentColor; }
+.logo-loader.idle .logo-loader-pulse { opacity: 0; }
+.logo-loader.idle .logo-loader-link,
+.logo-loader.idle .logo-loader-node { animation-play-state: paused; }
+.logo-loader-link {
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+  animation-name: logo-link;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
 }
+.logo-loader-node {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation-name: logo-node;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  animation-iteration-count: infinite;
+}
+/* A link draws in quickly, stays, then fades; a node pops in, stays, then fades.
+   The per-element delays (one step apart) turn this into a pulse moving along the M. */
+@keyframes logo-link {
+  0% { stroke-dashoffset: 1; opacity: 1; }
+  7% { stroke-dashoffset: 0; opacity: 1; }
+  42% { stroke-dashoffset: 0; opacity: 1; }
+  62%, 100% { stroke-dashoffset: 0; opacity: 0; }
+}
+@keyframes logo-node {
+  0% { opacity: 0; transform: scale(0.7); }
+  8% { opacity: 1; transform: scale(1.08); }
+  16% { transform: scale(1); }
+  44% { opacity: 1; transform: scale(1); }
+  64%, 100% { opacity: 0; transform: scale(1); }
+}
+
 @keyframes shimmer-text {
   from { background-position: 100% 0; }
   to { background-position: -100% 0; }
@@ -1356,10 +1370,16 @@ select:focus-visible {
   from { opacity: 0; transform: scale(0.96); }
   to { opacity: 1; transform: scale(1); }
 }
+/* reduced motion: no travelling pulse, just the whole mark breathing slowly in the signal colour */
+@keyframes logo-breathe {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .loading-cell { animation: none !important; }
   .loading-state-label { animation: none; color: var(--muted); background: none; }
-  .loading-state-card { animation: none; }
+  .logo-loader-link, .logo-loader-node { animation: none; opacity: 1; stroke-dashoffset: 0; }
+  .logo-loader-pulse { animation: logo-breathe 2.4s ease-in-out infinite; }
+  .logo-loader.idle .logo-loader-pulse { animation: none; opacity: 0; }
 }
 
 /* ── Assistant message: streamed words, action row, recalled items ── */
@@ -2089,44 +2109,6 @@ button.topbar-title[aria-expanded='true'] { background: var(--surface-soft); }
 .insight-detail-title { font-size: 12px; font-weight: 600; }
 .insight-stats { display: flex; gap: 16px; }
 .insight-stats > div { flex: 1; min-width: 0; }
-.insight-chart {
-  margin-top: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-md);
-  background: var(--surface);
-}
-.insight-chart-head { padding: 6px 10px; border-bottom: 1px solid var(--border); font-size: 11.5px; color: var(--faint); }
-.insight-chart-stage { position: relative; height: 140px; touch-action: none; cursor: crosshair; }
-.insight-chart-stage svg { width: 100%; height: 100%; display: block; }
-.insight-baseline { stroke: var(--border); stroke-width: 1; }
-.insight-cursor {
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  width: 1px;
-  background: var(--border-strong);
-  transform: translateX(-0.5px);
-  pointer-events: none;
-}
-.insight-tooltip {
-  position: absolute;
-  top: 8px;
-  display: flex;
-  gap: 10px;
-  padding: 4px 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  box-shadow: var(--shadow);
-  transform: translateX(-50%);
-  font-size: 11.5px;
-  color: var(--text);
-  white-space: nowrap;
-  pointer-events: none;
-  font-variant-numeric: tabular-nums;
-}
-.insight-tooltip > span { display: inline-flex; align-items: center; gap: 5px; }
 @keyframes insight-in {
   from { opacity: 0; filter: blur(4px); }
   to { opacity: 1; filter: blur(0); }

@@ -57,7 +57,17 @@ function isPage(value: unknown): value is Page {
   return value === 'landing' || value === 'auth' || value === 'app';
 }
 
+/** The developer portal (/developers/…) has its own routes; the landing/sign-in/app hashes don't apply there. */
+function onDeveloperPortal() {
+  return /^\/developers(\/|$)/.test(window.location.pathname);
+}
+
 function writeHistory(page: Page, replace: boolean) {
+  if (onDeveloperPortal()) {
+    // keep the portal URL as it is; only record which page the app is on, without adding an entry
+    window.history.replaceState({ page }, '', window.location.pathname + window.location.search);
+    return;
+  }
   const url = `${window.location.pathname}${PAGE_HASH[page]}`;
   if (replace) window.history.replaceState({ page }, '', url);
   else window.history.pushState({ page }, '', url);

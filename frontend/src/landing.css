@@ -146,38 +146,43 @@
 /* the selected stage carries the signal bar, like every other live row in the product */
 .lp-stage-group [aria-pressed='true'] { box-shadow: inset 0 -2px 0 var(--accent); }
 .lp-stage-index { font-family: var(--mono); color: var(--faint); font-variant-numeric: tabular-nums; }
-.lp-figure-stage { padding: 28px 16px 20px; background: var(--bg); }
+.lp-figure-stage { padding: 32px 20px 24px; background: var(--bg); }
 
-.lp-graph { width: 100%; max-width: 620px; height: auto; margin: 0 auto; overflow: visible; }
-.lp-graph-path { fill: none; stroke: var(--border); stroke-width: 1; stroke-dasharray: 3 5; }
-.lp-graph-spoke { stroke: var(--border-strong); stroke-width: 1; }
+/* ── memory layer graph (MemoryLayerGraph.tsx) ── */
+.lp-graph-wrap { width: 100%; max-width: 680px; margin: 0 auto; }
+.lp-graph { display: block; width: 100%; height: auto; overflow: visible; }
+.lp-graph-spoke { fill: none; stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 2 4; }
 .lp-graph-hub { color: var(--text); }
-.lp-graph-hub > circle { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
-.lp-graph-node > circle:first-child {
+.lp-graph-hub > rect { fill: var(--surface); stroke: var(--border-strong); stroke-width: 1; }
+/* the hub answers a read: a brief ring when data arrives from a layer */
+.lp-graph-hub[data-receiving] > rect { animation: lp-hub-in 500ms var(--ease-out) 950ms both; }
+
+.lp-graph-card {
   fill: var(--surface);
-  stroke: var(--border-strong);
+  stroke: var(--border);
   stroke-width: 1;
   transition: fill 200ms ease, stroke 200ms ease;
 }
-.lp-graph-level { font-family: var(--mono); font-size: 12px; fill: var(--muted); transition: fill 200ms ease; }
-.lp-graph-title { font-family: var(--sans); font-size: 12.5px; fill: var(--muted); transition: fill 200ms ease; }
-.lp-graph-node[data-state='active'] > circle:first-child { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
+.lp-graph-level { font-family: var(--mono); letter-spacing: 0.06em; fill: var(--faint); transition: fill 200ms ease; }
+.lp-graph-title { font-family: var(--sans); font-weight: 500; fill: var(--muted); transition: fill 200ms ease; }
+.lp-graph-node[data-state='visited'] .lp-graph-card { stroke: var(--border-strong); }
+.lp-graph-node[data-state='visited'] .lp-graph-title { fill: var(--text); }
+.lp-graph-node[data-state='active'] .lp-graph-card { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
 .lp-graph-node[data-state='active'] .lp-graph-level { fill: var(--accent); }
 .lp-graph-node[data-state='active'] .lp-graph-title { fill: var(--text); }
-.lp-graph-tick { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+.lp-graph-tick circle { fill: var(--accent); }
+.lp-graph-tick path { fill: none; stroke: var(--accent-ink); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-/* per stage: the spoke draws, a packet travels it, a ring pulses where it lands */
+/* per stage: the connector draws, the dot runs it (SVG animateMotion), the card it reaches pulses */
 .lp-graph-spoke-live {
+  fill: none;
   stroke: var(--accent);
   stroke-width: 1.5;
   stroke-dasharray: 1;
-  animation: lp-draw 700ms var(--ease-out) both;
+  animation: lp-draw 650ms var(--ease-out) both;
 }
-.lp-graph-packet {
-  fill: var(--accent);
-  transform: translate(var(--x2), var(--y2));
-  animation: lp-packet 900ms var(--ease-in-out) both, lp-packet-out 260ms ease 1000ms forwards;
-}
+/* starts hidden via its opacity attribute: a CSS opacity would override the SMIL fade */
+.lp-graph-packet { fill: var(--accent); }
 .lp-graph-pulse {
   fill: none;
   stroke: var(--accent);
@@ -185,12 +190,11 @@
   opacity: 0;
   transform-box: fill-box;
   transform-origin: center;
-  animation: lp-pulse 700ms var(--ease-out) 780ms both;
+  animation: lp-pulse 650ms var(--ease-out) 900ms both;
 }
 @keyframes lp-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
-@keyframes lp-packet { from { transform: translate(var(--x1), var(--y1)); } to { transform: translate(var(--x2), var(--y2)); } }
-@keyframes lp-packet-out { to { opacity: 0; } }
-@keyframes lp-pulse { from { opacity: 0.7; transform: scale(1); } to { opacity: 0; transform: scale(1.55); } }
+@keyframes lp-pulse { from { opacity: 0.6; transform: scale(1); } to { opacity: 0; transform: scale(1.08, 1.25); } }
+@keyframes lp-hub-in { from { stroke: var(--accent); } to { stroke: var(--border-strong); } }
 
 .lp-figure-readout {
   display: grid;
@@ -272,7 +276,7 @@
   .lp-hero-title, .lp-hero-sub, .lp-hero-actions, .lp-hero-stack, .lp-trace { animation: lp-fade 200ms ease both; animation-delay: 0ms; }
   /* keep the colour states, drop everything that moves */
   .lp-graph-packet, .lp-graph-pulse { display: none; }
-  .lp-graph-spoke-live { animation: none; }
+  .lp-graph-spoke-live, .lp-graph-hub[data-receiving] > rect { animation: none; }
 }
 
 @media (max-width: 900px) {
@@ -288,9 +292,6 @@
   .lp-trace-key { grid-column: 1 / -1; }
   .lp-trace-line { grid-template-columns: minmax(0, 1fr); }
   .lp-figure-readout { grid-template-columns: minmax(0, 1fr); gap: 12px; }
-  /* the diagram scales to about half size on a phone, so its labels are set larger to stay readable */
-  .lp-graph-title { font-size: 21px; }
-  .lp-graph-level { font-size: 18px; }
   /* tables stack: one row becomes a small block */
   .lp-table thead { display: none; }
   .lp-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 14px 0; }
