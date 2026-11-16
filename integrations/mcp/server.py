@@ -32,7 +32,6 @@ from core.memory.lifecycle import (
 from core.memory.observation import persist_turn_fast_path
 from core.memory.slow_path import run_memory_sleep_once
 from core.retrieval.auto import route_retrieval
-from core.retrieval.quick import retrieve_quick
 from core.retrieval.router import route_retrieval as retrieve_by_mode
 from core.session.working_set import export_prompt_ready_session_items
 
@@ -315,7 +314,13 @@ def _retrieve_memory(context: WorkspaceContext, params: ToolParams) -> ToolResul
     limit = _int(params.get("limit"), DEFAULT_LIMIT)
     if session_id:
         _require_owned_session(context, session_id)
-    results = retrieve_quick(query, session_id, limit, workspace_id=context.workspace_id)
+    results = retrieve_by_mode(
+        query,
+        mode="quick",
+        limit=limit,
+        session_id=session_id,
+        workspace_id=context.workspace_id,
+    )
     return {"results": results, "count": len(results)}
 
 

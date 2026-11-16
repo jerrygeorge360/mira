@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 
 from api.auth import WorkspaceAuth, require_csrf
 from api.schemas.memory import (
+    ForesightConfirmRequest,
     ItemsResponse,
     MemoryForgetRequest,
     MemoryForgetResponse,
@@ -19,6 +20,7 @@ from api.schemas.memory import (
     MemorySleepRunResponse,
     MemorySleepRunsResponse,
 )
+from core.memory.foresight import confirm_document_foresight_candidate
 from core.memory.lifecycle import forget_memory_by_id, list_memory_states
 from core.memory.read_models import (
     get_memory_graph_read_model,
@@ -195,6 +197,28 @@ def get_foresight(
             session_id, status, limit, workspace_id=auth.context.workspace_id
         )
     )
+
+
+@router.post("/foresight/{record_id}/confirm")
+def confirm_foresight(
+    record_id: str,
+    request: Request,
+    payload: ForesightConfirmRequest,
+    auth: WorkspaceAuth,
+) -> dict[str, object]:
+    """Confirm that a document-derived future event applies to this workspace."""
+    require_csrf(request, auth)
+    try:
+        confirmed_id = confirm_document_foresight_candidate(
+            record_id,
+            workspace_id=auth.context.workspace_id,
+            confirmed=payload.confirmed,
+        )
+    except ValueError as error:
+        if "not found" in str(error):
+            raise HTTPException(status_code=404, detail="foresight candidate not found") from error
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"id": confirmed_id, "status": "pending"}
 
 
 @router.get("/reflections", response_model=ItemsResponse)

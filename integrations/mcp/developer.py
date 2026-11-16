@@ -22,6 +22,7 @@ from core.platform.service import (
     get_memory_source,
     record_usage_event,
     resolve_namespace,
+    search_project_documents,
 )
 from core.retrieval.router import route_retrieval
 from integrations.mcp.auth import StaticTokenVerifier, authenticated_project_api_key
@@ -97,17 +98,27 @@ def create_developer_mcp_server() -> FastMCP:
         query: str,
         limit: int = 10,
         mode: str = "auto",
+        include_project_knowledge: bool = False,
     ) -> dict[str, object]:
-        def action(_key: PlatformAPIKey, scope: dict[str, object]) -> dict[str, object]:
+        def action(key: PlatformAPIKey, scope: dict[str, object]) -> dict[str, object]:
             if mode not in {"auto", "quick", "deep", "relational"}:
                 raise ValueError("mode must be auto, quick, deep, or relational")
+            if include_project_knowledge and "documents:read" not in key.scopes:
+                raise PermissionError("API key requires scope documents:read")
+            result_limit = min(max(limit, 1), 50)
             results = route_retrieval(
                 query,
                 mode=mode,
-                limit=min(max(limit, 1), 50),
+                limit=result_limit,
                 session_id=str(scope["session_id"]),
                 workspace_id=str(scope["workspace_id"]),
+                include_documents="documents:read" in key.scopes,
+                allowed_knowledge_base_ids=(str(scope["knowledge_base_id"]),),
             )
+            if include_project_knowledge:
+                results = _combine_project_documents(
+                    results, search_project_documents(key, query, result_limit), result_limit
+                )
             exposed = [_expose_result(item) for item in results]
             return {"namespace": namespace, "results": exposed, "count": len(exposed)}
 
@@ -145,15 +156,26 @@ def create_developer_mcp_server() -> FastMCP:
         return _invoke("memory.history", "memories:read", namespace, 0, action)
 
     @mcp.tool(description=_DESCRIPTIONS["get_context"])
-    def get_context(namespace: str, query: str, limit: int = 8) -> dict[str, object]:
-        def action(_key: PlatformAPIKey, scope: dict[str, object]) -> dict[str, object]:
+    def get_context(
+        namespace: str, query: str, limit: int = 8, include_project_knowledge: bool = False
+    ) -> dict[str, object]:
+        def action(key: PlatformAPIKey, scope: dict[str, object]) -> dict[str, object]:
+            if include_project_knowledge and "documents:read" not in key.scopes:
+                raise PermissionError("API key requires scope documents:read")
+            result_limit = min(max(limit, 1), 30)
             results = route_retrieval(
                 query,
                 mode="auto",
-                limit=min(max(limit, 1), 30),
+                limit=result_limit,
                 session_id=str(scope["session_id"]),
                 workspace_id=str(scope["workspace_id"]),
+                include_documents="documents:read" in key.scopes,
+                allowed_knowledge_base_ids=(str(scope["knowledge_base_id"]),),
             )
+            if include_project_knowledge:
+                results = _combine_project_documents(
+                    results, search_project_documents(key, query, result_limit), result_limit
+                )
             return {
                 "namespace": namespace,
                 "context": [_expose_result(item) for item in results],
@@ -163,6 +185,26 @@ def create_developer_mcp_server() -> FastMCP:
         return _invoke("memory.context", "memories:read", namespace, len(query), action)
 
     return mcp
+
+
+def _combine_project_documents(
+    namespace_results: list[dict[str, object]],
+    project_results: list[dict[str, object]],
+    limit: int,
+) -> list[dict[str, object]]:
+    return sorted(
+        [*namespace_results, *project_results],
+        key=_evidence_score,
+        reverse=True,
+    )[:limit]
+
+
+def _evidence_score(item: dict[str, object]) -> float:
+    for key in ("relevance_score", "score"):
+        score = item.get(key)
+        if isinstance(score, int | float):
+            return float(score)
+    return 0.0
 
 
 def _invoke(

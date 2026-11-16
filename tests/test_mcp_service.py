@@ -7,7 +7,14 @@ from pathlib import Path
 
 import pytest
 
-from core.db.repositories import configure_database, create_session, create_workspace
+from core.db.repositories import (
+    WorkspaceContext,
+    configure_database,
+    create_knowledge_base,
+    create_session,
+    create_workspace,
+)
+from core.retrieval import quick
 from integrations.mcp.auth import StaticTokenVerifier, workspace_context_for_access_token
 from integrations.mcp.server import (
     MCP_SERVER_INSTRUCTIONS,
@@ -106,6 +113,44 @@ async def test_mcp_call_cannot_cross_workspace(
 
     assert response["ok"] is False
     assert "configured MCP workspace" in response["error"]
+
+
+def test_mcp_retrieve_memory_obeys_session_knowledge_base_allowlist(
+    database_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workspace_id = create_workspace("MCP", "mcp-kb", "development")
+    session_id = create_session("user", workspace_id=workspace_id)
+    create_knowledge_base("Private library", workspace_id=workspace_id)
+    monkeypatch.setenv("MIRA_SOURCE_AWARE_RETRIEVAL_ENABLED", "false")
+    document_queries: list[str | None] = []
+
+    def fake_documents(
+        _query: str,
+        *,
+        workspace_id: str,
+        limit: int,
+        knowledge_base_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        assert workspace_id == workspace_id_expected
+        assert limit == 8
+        document_queries.append(knowledge_base_id)
+        return [{"content": "Private document evidence", "source": "document_chunks"}]
+
+    workspace_id_expected = workspace_id
+    monkeypatch.setattr(quick, "retrieve_document_chunks", fake_documents)
+    monkeypatch.setattr(quick, "_semantic_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(quick, "_keyword_observation_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(quick, "_atomic_fact_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(quick, "_foresight_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(quick, "_recent_observation_candidates", lambda *args, **kwargs: [])
+
+    response = build_mcp_server(WorkspaceContext(workspace_id, auth_mode="mcp")).call_tool(
+        "retrieve_memory", {"query": "private document", "session_id": session_id}
+    )
+
+    assert response["ok"] is True
+    assert response["result"]["results"] == []
+    assert document_queries == []
 
 
 @pytest.mark.asyncio

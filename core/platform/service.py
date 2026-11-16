@@ -8,13 +8,21 @@ import re
 import secrets
 import sqlite3
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from core.db.repositories import (
+    create_knowledge_base as repository_create_knowledge_base,
+)
+from core.db.repositories import (
     create_session,
     create_workspace,
+    get_workspace,
     repository_connection,
+)
+from core.db.repositories import (
+    get_knowledge_base as repository_get_knowledge_base,
 )
 from core.knowledge.service import create_knowledge_base
 from core.memory.lifecycle import forget_memory
@@ -458,6 +466,83 @@ def resolve_namespace(api_key: PlatformAPIKey, namespace: str) -> dict[str, obje
         "created_at": now,
         "updated_at": now,
     }
+
+
+def resolve_project_knowledge(api_key: PlatformAPIKey) -> dict[str, str]:
+    """Return the project-only document workspace, with no namespace observations.
+
+    IDs derive from the authenticated project, never from a caller-supplied workspace.
+    A shared KB is only read when a caller explicitly selects project knowledge.
+    """
+    suffix = hashlib.sha256(f"project-knowledge:{api_key.project_id}".encode()).hexdigest()[:24]
+    workspace_id = f"project_docs_{suffix}"
+    knowledge_base_id = f"kb_project_{suffix}"
+    workspace = get_workspace(workspace_id)
+    if workspace is None:
+        with suppress(ValueError):
+            create_workspace(
+                f"{api_key.project_name} / project knowledge",
+                f"project-docs-{suffix}",
+                "development",
+                owner_user_id=api_key.organization_owner_user_id,
+                workspace_id=workspace_id,
+            )
+        workspace = get_workspace(workspace_id)
+    if workspace is None or workspace.get("owner_user_id") != api_key.organization_owner_user_id:
+        raise PermissionError("project knowledge workspace is unavailable")
+    if workspace.get("status") != "active":
+        raise PermissionError("project knowledge workspace is unavailable")
+    base = repository_get_knowledge_base(knowledge_base_id, workspace_id=workspace_id)
+    if base is None:
+        with suppress(sqlite3.IntegrityError):
+            repository_create_knowledge_base(
+                "Project knowledge",
+                workspace_id=workspace_id,
+                description="Documents shared by explicitly authorized project agents.",
+                knowledge_base_id=knowledge_base_id,
+            )
+        base = repository_get_knowledge_base(knowledge_base_id, workspace_id=workspace_id)
+    if base is None:
+        raise PermissionError("project knowledge base is unavailable")
+    with repository_connection() as connection:
+        existing = connection.execute(
+            "SELECT workspace_id, knowledge_base_id FROM project_knowledge_workspaces "
+            "WHERE project_id = ?",
+            (api_key.project_id,),
+        ).fetchone()
+        if existing is not None and (
+            existing["workspace_id"] != workspace_id
+            or existing["knowledge_base_id"] != knowledge_base_id
+        ):
+            raise PermissionError("project knowledge workspace mapping is inconsistent")
+        connection.execute(
+            "INSERT OR IGNORE INTO project_knowledge_workspaces "
+            "(project_id, workspace_id, knowledge_base_id, created_at) VALUES (?, ?, ?, ?)",
+            (api_key.project_id, workspace_id, knowledge_base_id, now_iso()),
+        )
+        connection.execute(
+            "UPDATE evidence_sources SET project_id = ?, namespace = NULL "
+            "WHERE workspace_id = ? AND project_id IS NULL AND namespace IS NULL",
+            (api_key.project_id, workspace_id),
+        )
+    return {"workspace_id": workspace_id, "knowledge_base_id": knowledge_base_id}
+
+
+def search_project_documents(
+    api_key: PlatformAPIKey, query: str, limit: int
+) -> list[dict[str, object]]:
+    """Search only the explicitly selected project's document workspace."""
+    if "documents:read" not in api_key.scopes:
+        raise PermissionError("API key requires scope documents:read")
+    from core.retrieval.documents import retrieve_document_chunks
+
+    scope = resolve_project_knowledge(api_key)
+    return retrieve_document_chunks(
+        query,
+        workspace_id=scope["workspace_id"],
+        knowledge_base_id=scope["knowledge_base_id"],
+        limit=limit,
+    )
 
 
 def persist_memory(

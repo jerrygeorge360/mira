@@ -2185,6 +2185,7 @@ select:focus-visible {
 .knowledge-bases-panel-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 15px 16px; border-bottom: 1px solid var(--border); }
 .knowledge-bases-panel-head h3 { font-size: 0.9rem; font-weight: 800; }
 .knowledge-bases-panel-head span { color: var(--faint); font-size: 0.7rem; }
+.knowledge-base-access-note { padding: 9px 16px; color: var(--muted); font-size: 0.7rem; line-height: 1.45; border-bottom: 1px solid var(--border); }
 .knowledge-bases-list { display: grid; gap: 5px; padding: 9px; }
 .knowledge-base-card {
   width: 100%;
@@ -4727,6 +4728,23 @@ select:focus-visible {
   font-size: 0.76rem;
   line-height: 1.45;
 }
+.timeline-candidate-action { margin-top: 10px; }
+.timeline-candidate-action p,
+.timeline-action-message,
+.timeline-action-error {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.timeline-candidate-action p { color: var(--muted); }
+.timeline-action-message { color: var(--success, #4caf88); }
+.timeline-action-error { color: var(--danger, #e06c75); }
+.timeline-confirm-button {
+  padding: 8px 12px;
+  font-size: 0.78rem;
+  box-shadow: none;
+}
+.timeline-confirm-button:disabled { opacity: 0.6; cursor: wait; }
 
 /* ── Results / Evaluation ────────────────────────────────────────── */
 .results-abstract {

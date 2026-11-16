@@ -7,12 +7,17 @@ Architecture area: retrieval.
 
 from __future__ import annotations
 
+import json
 import math
 import re
+import sqlite3
+from collections.abc import Collection
 from datetime import UTC, datetime
 
+from core.db.evidence import list_active_evidence
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
+from core.evidence.source import resolve_source
 from core.memory.lifecycle import (
     is_historical_query,
     lifecycle_for_retrieval,
@@ -69,6 +74,8 @@ def retrieve_quick(
     *,
     workspace_id: str | None = None,
     historical: bool = False,
+    include_documents: bool = True,
+    allowed_knowledge_base_ids: Collection[str] | None = None,
 ) -> list[Evidence]:
     """Retrieve prompt-ready direct evidence for specific factual questions."""
     if limit < 1:
@@ -85,10 +92,22 @@ def retrieve_quick(
         *_semantic_candidates(query, limit, workspace_id, historical=historical),
         *_keyword_observation_candidates(query, workspace_id, limit),
         *_atomic_fact_candidates(query, workspace_id, limit, historical=historical),
-        *_document_candidates(query, workspace_id, limit),
+        *(
+            _document_candidates(query, workspace_id, limit, allowed_knowledge_base_ids)
+            if include_documents
+            else []
+        ),
         *_foresight_candidates(query, session_id, workspace_id, historical=historical),
         *_recent_observation_candidates(query, session_id, limit),
     ]
+    if not include_documents or allowed_knowledge_base_ids is not None:
+        candidates = [
+            candidate
+            for candidate in candidates
+            if _candidate_source_allowed(
+                candidate, workspace_id, include_documents, allowed_knowledge_base_ids
+            )
+        ]
     candidates = _enrich_lifecycle(candidates, workspace_id, query=query, historical=historical)
     deduplicated = _merge_duplicates(candidates)
     ranked = _rank_candidates(deduplicated)
@@ -108,6 +127,244 @@ def retrieve_quick(
                 },
             )
     return selected
+
+
+def _candidate_source_allowed(
+    candidate: Evidence,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> bool:
+    source = str(candidate.get("source", ""))
+    if source == "document_chunks":
+        return include_documents and (
+            allowed_knowledge_base_ids is None
+            or candidate.get("knowledge_base_id") in allowed_knowledge_base_ids
+        )
+    if source in {"observations", "recent_observations"}:
+        return True
+    target_type = {
+        "atomic_facts": "atomic_fact",
+        "reflections": "reflection",
+        "foresight_records": "foresight",
+    }.get(source)
+    if target_type is None:
+        return False
+    return source_record_allowed(
+        target_type,
+        str(candidate.get("source_id", "")),
+        workspace_id,
+        include_documents,
+        allowed_knowledge_base_ids,
+        record=candidate.get("record"),
+    )
+
+
+def source_record_allowed(
+    target_type: str,
+    target_id: str,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+    *,
+    record: object = None,
+) -> bool:
+    """Require active, authorized support for scoped derived evidence."""
+    if include_documents and allowed_knowledge_base_ids is None:
+        return True
+    if not target_id:
+        return False
+    try:
+        with repository_connection() as connection:
+            links = connection.execute(
+                """SELECT s.source_type, s.source_id, s.knowledge_base_id
+                   FROM evidence_links AS l
+                   JOIN evidence_sources AS s ON s.id = l.source_id
+                   WHERE l.workspace_id = ? AND l.target_type = ? AND l.target_id = ?
+                     AND l.stance = 'support' AND l.retracted_at IS NULL
+                     AND s.workspace_id = ? AND s.retracted_at IS NULL""",
+                (workspace_id, target_type, target_id, workspace_id),
+            ).fetchall()
+            if links:
+                # The derived text can incorporate every support. One unauthorized source
+                # makes the whole candidate unsafe to expose.
+                return all(
+                    _support_allowed(
+                        connection,
+                        link,
+                        workspace_id,
+                        include_documents,
+                        allowed_knowledge_base_ids,
+                    )
+                    for link in links
+                )
+            return _legacy_support_allowed(connection, target_type, target_id, workspace_id, record)
+    except Exception:
+        # Missing provenance tables or a failed read cannot grant source access.
+        return False
+
+
+def graph_node_allowed(
+    node_id: str,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> bool:
+    """Authorize a graph label through its source record, failing closed if unknown."""
+    if include_documents and allowed_knowledge_base_ids is None:
+        return True
+    with repository_connection() as connection:
+        node = connection.execute(
+            "SELECT source_table, source_id FROM graph_nodes WHERE id = ? AND workspace_id = ?",
+            (node_id, workspace_id),
+        ).fetchone()
+        if node is None or not node["source_id"]:
+            return False
+        source_table = str(node["source_table"])
+        source_id = str(node["source_id"])
+        if source_table == "observations":
+            return (
+                connection.execute(
+                    "SELECT 1 FROM observations WHERE id = ? AND workspace_id = ?",
+                    (source_id, workspace_id),
+                ).fetchone()
+                is not None
+            )
+        if source_table == "document_chunks":
+            if not include_documents:
+                return False
+            row = connection.execute(
+                """SELECT c.knowledge_base_id FROM document_chunks AS c
+                   JOIN documents AS d ON d.id = c.document_id AND d.workspace_id = c.workspace_id
+                   JOIN knowledge_bases AS k ON k.id = d.knowledge_base_id
+                     AND k.workspace_id = d.workspace_id
+                   WHERE c.id = ? AND c.workspace_id = ? AND d.status = 'ready'
+                     AND d.deleted_at IS NULL AND k.status = 'active'
+                     AND d.knowledge_base_id = c.knowledge_base_id""",
+                (source_id, workspace_id),
+            ).fetchone()
+            return row is not None and (
+                allowed_knowledge_base_ids is None
+                or row["knowledge_base_id"] in allowed_knowledge_base_ids
+            )
+        if source_table == "entities":
+            edges = connection.execute(
+                "SELECT * FROM graph_edges WHERE workspace_id = ? AND invalidated_at IS NULL "
+                "AND (source_node_id = ? OR target_node_id = ?)",
+                (workspace_id, node_id, node_id),
+            ).fetchall()
+            return any(
+                source_record_allowed(
+                    "graph_edge",
+                    str(edge["id"]),
+                    workspace_id,
+                    include_documents,
+                    allowed_knowledge_base_ids,
+                    record=dict(edge),
+                )
+                for edge in edges
+            )
+        target_type = {
+            "atomic_facts": "atomic_fact",
+            "reflections": "reflection",
+            "foresight_records": "foresight",
+            "graph_edges": "graph_edge",
+        }.get(source_table)
+        if target_type is None:
+            return False
+        row = connection.execute(
+            f"SELECT * FROM {source_table} WHERE id = ? AND workspace_id = ?",  # nosec B608
+            (source_id, workspace_id),
+        ).fetchone()
+    return row is not None and source_record_allowed(
+        target_type,
+        source_id,
+        workspace_id,
+        include_documents,
+        allowed_knowledge_base_ids,
+        record=dict(row),
+    )
+
+
+def _support_allowed(
+    connection: sqlite3.Connection,
+    link: sqlite3.Row,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> bool:
+    if link["source_type"] == "conversation_observation":
+        return (
+            connection.execute(
+                "SELECT 1 FROM observations WHERE id = ? AND workspace_id = ?",
+                (link["source_id"], workspace_id),
+            ).fetchone()
+            is not None
+        )
+    if link["source_type"] != "document_chunk" or not include_documents:
+        return False
+    knowledge_base_id = link["knowledge_base_id"]
+    if not knowledge_base_id or (
+        allowed_knowledge_base_ids is not None
+        and knowledge_base_id not in allowed_knowledge_base_ids
+    ):
+        return False
+    return (
+        connection.execute(
+            """SELECT 1 FROM document_chunks AS c
+           JOIN documents AS d ON d.id = c.document_id AND d.workspace_id = c.workspace_id
+           JOIN knowledge_bases AS k ON k.id = d.knowledge_base_id
+             AND k.workspace_id = d.workspace_id
+           WHERE c.id = ? AND c.workspace_id = ? AND c.knowledge_base_id = ?
+             AND d.knowledge_base_id = ? AND d.status = 'ready'
+             AND d.deleted_at IS NULL AND k.status = 'active'""",
+            (link["source_id"], workspace_id, knowledge_base_id, knowledge_base_id),
+        ).fetchone()
+        is not None
+    )
+
+
+def _legacy_support_allowed(
+    connection: sqlite3.Connection,
+    target_type: str,
+    target_id: str,
+    workspace_id: str,
+    record: object,
+) -> bool:
+    if not isinstance(record, dict):
+        return False
+    if target_type in {"atomic_fact", "foresight"}:
+        observation_id = record.get("source_observation_id")
+        return (
+            bool(observation_id)
+            and connection.execute(
+                "SELECT 1 FROM observations WHERE id = ? AND workspace_id = ?",
+                (observation_id, workspace_id),
+            ).fetchone()
+            is not None
+        )
+    if target_type == "reflection":
+        rows = connection.execute(
+            """SELECT o.id FROM reflection_evidence AS e
+               JOIN observations AS o ON o.id = e.observation_id
+               WHERE e.reflection_id = ? AND o.workspace_id = ?""",
+            (target_id, workspace_id),
+        ).fetchall()
+        return bool(rows)
+    if target_type == "graph_edge":
+        try:
+            observation_ids = json.loads(str(record.get("source_observations_json", "[]")))
+        except ValueError:
+            return False
+        return bool(observation_ids) and all(
+            connection.execute(
+                "SELECT 1 FROM observations WHERE id = ? AND workspace_id = ?",
+                (observation_id, workspace_id),
+            ).fetchone()
+            is not None
+            for observation_id in observation_ids
+        )
+    return False
 
 
 def quick_retrieve(query: str, limit: int = 8, *, historical: bool = False) -> list[Evidence]:
@@ -151,10 +408,31 @@ def _semantic_candidates(
     return candidates
 
 
-def _document_candidates(query: str, workspace_id: str, limit: int) -> list[Evidence]:
+def _document_candidates(
+    query: str,
+    workspace_id: str,
+    limit: int,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> list[Evidence]:
     """Retrieve source-document evidence without creating lifecycle memory state."""
+    if allowed_knowledge_base_ids is not None and not allowed_knowledge_base_ids:
+        return []
     try:
-        matches = retrieve_document_chunks(query, workspace_id=workspace_id, limit=limit)
+        if allowed_knowledge_base_ids is None:
+            matches = retrieve_document_chunks(query, workspace_id=workspace_id, limit=limit)
+        else:
+            matches = [
+                match
+                for knowledge_base_id in sorted(set(allowed_knowledge_base_ids))
+                if knowledge_base_id
+                for match in retrieve_document_chunks(
+                    query,
+                    workspace_id=workspace_id,
+                    knowledge_base_id=knowledge_base_id,
+                    limit=limit,
+                )
+                if match.get("knowledge_base_id") == knowledge_base_id
+            ]
     except Exception:
         # A missing/temporarily unavailable document index must not break memory retrieval.
         return []
@@ -380,13 +658,87 @@ def _provenance_for_candidate(source_type: str, candidate: Evidence) -> dict[str
     record = candidate.get("record")
     record = record if isinstance(record, dict) else {}
     source_observation_ids: list[str] = []
+    evidence_source_ids: list[str] = []
+    source_descriptors: list[dict[str, object]] = []
     raw_source = record.get("source_observation_id")
     if isinstance(raw_source, str) and raw_source:
         source_observation_ids.append(raw_source)
+    workspace_id = str(record.get("workspace_id") or "")
+    candidate_id = str(candidate.get("source_id") or "")
+    target_type = {
+        "atomic_facts": "atomic_fact",
+        "graph_edges": "graph_edge",
+        "reflections": "reflection",
+        "foresight_records": "foresight",
+    }.get(source_type)
+    linked_sources: list[dict[str, object]] = []
+    if workspace_id and candidate_id and target_type is not None:
+        try:
+            for link in list_active_evidence(target_type, candidate_id, workspace_id=workspace_id):
+                source = link.get("source")
+                if isinstance(source, dict):
+                    linked_sources.append(source)
+        except (ValueError, KeyError):
+            linked_sources = []
+    elif workspace_id and candidate_id and source_type == "document_chunks":
+        with repository_connection() as connection:
+            rows = connection.execute(
+                "SELECT id FROM evidence_sources WHERE workspace_id = ? "
+                "AND source_type = 'document_chunk' AND source_id = ? "
+                "AND retracted_at IS NULL",
+                (workspace_id, candidate_id),
+            ).fetchall()
+        for row in rows:
+            try:
+                linked_sources.append(resolve_source(str(row[0]), workspace_id=workspace_id))
+            except ValueError:
+                continue
+    for source in linked_sources[:12]:
+        evidence_id = str(source.get("id") or "")
+        if evidence_id:
+            evidence_source_ids.append(evidence_id)
+        if source.get("source_type") == "conversation_observation":
+            provenance = source.get("provenance")
+            observation_id = str(source.get("source_id") or "")
+            if observation_id:
+                source_observation_ids.append(observation_id)
+        else:
+            provenance = source.get("provenance")
+        descriptor: dict[str, object] = {
+            key: source[key]
+            for key in (
+                "id",
+                "source_id",
+                "source_type",
+                "project_id",
+                "namespace",
+                "knowledge_base_id",
+                "authority",
+                "observed_at",
+            )
+            if source.get(key) is not None
+        }
+        if isinstance(provenance, dict):
+            descriptor["provenance"] = provenance
+        source_descriptors.append(descriptor)
+    if source_type == "document_chunks" and not source_descriptors:
+        document_provenance = candidate.get("provenance")
+        descriptor = {
+            "source_id": candidate_id,
+            "source_type": "document_chunk",
+        }
+        for key in ("knowledge_base_id", "document_id", "filename", "page_start", "page_end"):
+            if candidate.get(key) is not None:
+                descriptor[key] = candidate[key]
+        if isinstance(document_provenance, dict):
+            descriptor["provenance"] = document_provenance
+        source_descriptors.append(descriptor)
     return {
         "record_type": source_type,
         "record_id": str(candidate["source_id"]),
-        "source_observation_ids": source_observation_ids,
+        "source_observation_ids": list(dict.fromkeys(source_observation_ids)),
+        "evidence_source_ids": list(dict.fromkeys(evidence_source_ids)),
+        "sources": source_descriptors,
     }
 
 

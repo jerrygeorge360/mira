@@ -52,7 +52,9 @@ from core.platform.service import (
     persist_memory,
     platform_overview,
     resolve_namespace,
+    resolve_project_knowledge,
     revoke_api_key,
+    search_project_documents,
     usage_summary,
 )
 from core.retrieval.router import route_retrieval
@@ -328,6 +330,8 @@ def search_memories(
     request.state.platform_namespace = payload.namespace
     request.state.platform_characters = len(payload.query)
     require_scope(api_key, "memories:read")
+    if payload.include_project_knowledge:
+        require_scope(api_key, "documents:read")
     try:
         check_monthly_quota(api_key, "memory.search")
         scope = resolve_namespace(api_key, payload.namespace)
@@ -337,7 +341,15 @@ def search_memories(
             limit=payload.limit,
             session_id=str(scope["session_id"]),
             workspace_id=str(scope["workspace_id"]),
+            include_documents="documents:read" in api_key.scopes,
+            allowed_knowledge_base_ids=(str(scope["knowledge_base_id"]),),
         )
+        if payload.include_project_knowledge:
+            results = sorted(
+                [*results, *search_project_documents(api_key, payload.query, payload.limit)],
+                key=_evidence_score,
+                reverse=True,
+            )[: payload.limit]
     except QuotaExceededError as error:
         raise _quota_http_error(error) from error
     except ValueError as error:
@@ -395,6 +407,7 @@ async def upload_document(
     request: Request,
     *,
     namespace: str = Form(min_length=1, max_length=128),
+    project_shared: bool = Form(False),
     file: UploadFile = File(),  # noqa: B008
     api_key: APIKeyAuth,
 ) -> dict[str, object]:
@@ -402,7 +415,11 @@ async def upload_document(
     request.state.platform_namespace = namespace
     require_scope(api_key, "documents:write")
     try:
-        scope = resolve_namespace(api_key, namespace)
+        scope = (
+            resolve_project_knowledge(api_key)
+            if project_shared
+            else resolve_namespace(api_key, namespace)
+        )
         content = await file.read(MAX_DOCUMENT_BYTES + 1)
         if len(content) > MAX_DOCUMENT_BYTES:
             raise HTTPException(status_code=413, detail="document exceeds the 10 MB upload limit")
@@ -434,12 +451,17 @@ def get_documents(
     request: Request,
     *,
     namespace: str = Query(min_length=1, max_length=128),
+    project_shared: bool = False,
     api_key: APIKeyAuth,
 ) -> dict[str, object]:
     request.state.platform_operation = "document.list"
     request.state.platform_namespace = namespace
     require_scope(api_key, "documents:read")
-    scope = resolve_namespace(api_key, namespace)
+    scope = (
+        resolve_project_knowledge(api_key)
+        if project_shared
+        else resolve_namespace(api_key, namespace)
+    )
     return {
         "namespace": namespace,
         "documents": [
@@ -458,12 +480,17 @@ def remove_document(
     request: Request,
     *,
     namespace: str = Query(min_length=1, max_length=128),
+    project_shared: bool = False,
     api_key: APIKeyAuth,
 ) -> dict[str, object]:
     request.state.platform_operation = "document.delete"
     request.state.platform_namespace = namespace
     require_scope(api_key, "documents:delete")
-    scope = _resolve_namespace_or_404(api_key, namespace)
+    scope = (
+        resolve_project_knowledge(api_key)
+        if project_shared
+        else _resolve_namespace_or_404(api_key, namespace)
+    )
     try:
         result = delete_document(workspace_id=str(scope["workspace_id"]), document_id=document_id)
     except LookupError as error:
@@ -552,6 +579,14 @@ def _quota_http_error(error: QuotaExceededError) -> HTTPException:
             "limit": error.limit,
         },
     )
+
+
+def _evidence_score(item: dict[str, object]) -> float:
+    for key in ("relevance_score", "score"):
+        score = item.get(key)
+        if isinstance(score, int | float):
+            return float(score)
+    return 0.0
 
 
 def _user_id(auth: object) -> str:

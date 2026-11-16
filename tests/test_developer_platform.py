@@ -12,8 +12,10 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from core.db.evidence import register_source
 from core.db.repositories import configure_database, create_user, repository_connection
 from core.db.schema import initialize_database
+from core.evidence.source import resolve_source
 from core.platform import billing
 from core.platform.service import (
     PlatformAPIKey,
@@ -24,6 +26,7 @@ from core.platform.service import (
     get_memory_source,
     persist_memory,
     resolve_namespace,
+    resolve_project_knowledge,
     revoke_api_key,
 )
 
@@ -152,6 +155,56 @@ def test_project_and_namespace_isolation_reuses_internal_workspaces(
     assert get_memory_source(str(same_b["workspace_id"]), memory_id) is None
 
 
+def test_project_knowledge_workspace_is_registered_for_project_allowlists(
+    platform_state: dict[str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _key_record, secret = _key(platform_state)
+    api_key = authenticate_api_key(secret)
+    assert api_key is not None
+
+    scope = resolve_project_knowledge(api_key)
+
+    with repository_connection() as connection:
+        mapping = connection.execute(
+            "SELECT project_id, workspace_id, knowledge_base_id "
+            "FROM project_knowledge_workspaces WHERE project_id = ?",
+            (platform_state["project_id"],),
+        ).fetchone()
+    assert tuple(mapping) == (
+        platform_state["project_id"],
+        scope["workspace_id"],
+        scope["knowledge_base_id"],
+    )
+    now = "2026-11-16T00:00:00+00:00"
+    with repository_connection() as connection:
+        connection.execute(
+            "INSERT INTO documents (id, workspace_id, knowledge_base_id, filename, mime_type, "
+            "size_bytes, s3_bucket, s3_key, checksum_sha256, status, created_at, updated_at) "
+            "VALUES ('project-document', ?, ?, 'shared.txt', 'text/plain', 4, 'bucket', "
+            "'project-key', 'hash', 'ready', ?, ?)",
+            (scope["workspace_id"], scope["knowledge_base_id"], now, now),
+        )
+        connection.execute(
+            "INSERT INTO document_chunks (id, workspace_id, knowledge_base_id, document_id, "
+            "chunk_index, content, created_at) VALUES ('project-chunk', ?, ?, "
+            "'project-document', 0, 'Shared project text.', ?)",
+            (scope["workspace_id"], scope["knowledge_base_id"], now),
+        )
+    source_id = register_source(
+        "document_chunk", "project-chunk", workspace_id=scope["workspace_id"]
+    )
+    source = resolve_source(source_id, workspace_id=scope["workspace_id"])
+    assert source["project_id"] == platform_state["project_id"]
+    assert source["namespace"] is None
+
+    monkeypatch.setenv("MIRA_DOCUMENT_ENRICHMENT_ENABLED", "true")
+    monkeypatch.setenv("MIRA_DOCUMENT_ENRICHMENT_WORKSPACE_IDS", "")
+    monkeypatch.setenv("MIRA_DOCUMENT_ENRICHMENT_PROJECT_IDS", platform_state["project_id"])
+    from core.knowledge.enrichment import enrichment_enabled_for_workspace
+
+    assert enrichment_enabled_for_workspace(scope["workspace_id"])
+
+
 def test_public_rest_enforces_scope_revocation_and_usage_metering(
     platform_state: dict[str, str],
 ) -> None:
@@ -195,7 +248,7 @@ def test_public_rest_enforces_scope_revocation_and_usage_metering(
 def test_public_rest_search_returns_namespace_bound_evidence(
     platform_state: dict[str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    _key_record, secret = _key(platform_state, ["memories:read"])
+    _key_record, secret = _key(platform_state, ["memories:read", "documents:read"])
     import api.routes.platform as platform_routes
     from api.main import create_app
 
@@ -208,9 +261,17 @@ def test_public_rest_search_returns_namespace_bound_evidence(
         limit: int,
         session_id: str,
         workspace_id: str,
+        include_documents: bool,
+        allowed_knowledge_base_ids: tuple[str, ...],
     ) -> list[dict[str, object]]:
         captured.update(
-            query=query, mode=mode, limit=limit, session_id=session_id, workspace_id=workspace_id
+            query=query,
+            mode=mode,
+            limit=limit,
+            session_id=session_id,
+            workspace_id=workspace_id,
+            include_documents=include_documents,
+            allowed_knowledge_base_ids=allowed_knowledge_base_ids,
         )
         return [
             {
@@ -267,6 +328,125 @@ def test_public_rest_search_returns_namespace_bound_evidence(
             "student_123",  # type: ignore[arg-type]
         )["workspace_id"]
     )
+    assert captured["include_documents"] is True
+    scope = resolve_namespace(authenticate_api_key(secret), "student_123")  # type: ignore[arg-type]
+    assert captured["allowed_knowledge_base_ids"] == (scope["knowledge_base_id"],)
+
+
+def test_public_search_document_scope_preserves_memory_only_access(
+    platform_state: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.retrieval.quick as quick
+    from api.main import create_app
+
+    _memory_record, memory_secret = _key(platform_state, ["memories:read"])
+    _document_record, document_secret = _key(platform_state, ["memories:read", "documents:read"])
+    memory_key = authenticate_api_key(memory_secret)
+    assert memory_key is not None
+    scope = resolve_namespace(memory_key, "student_123")
+    persist_memory(memory_key, "student_123", "Private study note.", {})
+
+    calls: list[str | None] = []
+
+    def fake_documents(
+        _query: str,
+        *,
+        workspace_id: str,
+        limit: int,
+        knowledge_base_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        assert workspace_id == scope["workspace_id"]
+        calls.append(knowledge_base_id)
+        return [
+            {
+                "chunk_id": "chunk_private",
+                "knowledge_base_id": knowledge_base_id,
+                "document_id": "doc_private",
+                "content": "Private document text.",
+                "record": {"id": "chunk_private", "workspace_id": workspace_id},
+            }
+        ]
+
+    monkeypatch.setattr(quick, "retrieve_document_chunks", fake_documents)
+    monkeypatch.setattr(quick, "_semantic_candidates", lambda *args, **kwargs: [])
+    with TestClient(create_app()) as client:
+
+        def search(secret: str) -> dict[str, object]:
+            response = client.post(
+                "/v1/memories/search",
+                headers={"Authorization": f"Bearer {secret}"},
+                json={"namespace": "student_123", "query": "private study note", "mode": "quick"},
+            )
+            assert response.status_code == 200, response.text
+            return response.json()
+
+        memory_results = search(memory_secret)["results"]
+        assert any("Private study note" in item["content"] for item in memory_results)
+        assert all("Private document text" not in item["content"] for item in memory_results)
+        assert calls == []
+
+        document_results = search(document_secret)["results"]
+        assert any("Private document text" in item["content"] for item in document_results)
+        assert calls == [scope["knowledge_base_id"]]
+
+
+def test_developer_mcp_search_and_context_guard_documents(
+    platform_state: dict[str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import core.retrieval.quick as quick
+    import core.retrieval.router as retrieval_router
+    import integrations.mcp.developer as developer_mcp
+
+    _memory_record, memory_secret = _key(platform_state, ["memories:read"])
+    _document_record, document_secret = _key(platform_state, ["memories:read", "documents:read"])
+    memory_key = authenticate_api_key(memory_secret)
+    document_key = authenticate_api_key(document_secret)
+    assert memory_key is not None and document_key is not None
+    scope = resolve_namespace(memory_key, "student_123")
+    calls: list[str | None] = []
+
+    def fake_documents(
+        _query: str,
+        *,
+        workspace_id: str,
+        limit: int,
+        knowledge_base_id: str | None = None,
+    ) -> list[dict[str, object]]:
+        assert workspace_id == scope["workspace_id"]
+        calls.append(knowledge_base_id)
+        return [
+            {
+                "chunk_id": "chunk_private",
+                "knowledge_base_id": knowledge_base_id,
+                "document_id": "doc_private",
+                "content": "Private document text.",
+                "record": {"id": "chunk_private", "workspace_id": workspace_id},
+            }
+        ]
+
+    monkeypatch.setattr(quick, "retrieve_document_chunks", fake_documents)
+    monkeypatch.setattr(quick, "_semantic_candidates", lambda *args, **kwargs: [])
+    monkeypatch.setattr(retrieval_router, "choose_retrieval_mode", lambda *args: {"mode": "quick"})
+    server = developer_mcp.create_developer_mcp_server()
+    search = server._tool_manager._tools["search"].fn
+    get_context = server._tool_manager._tools["get_context"].fn
+
+    monkeypatch.setattr(developer_mcp, "authenticated_project_api_key", lambda: memory_key)
+    for result in (
+        search(namespace="student_123", query="private document", mode="quick"),
+        get_context(namespace="student_123", query="private document"),
+    ):
+        assert result["count"] == 0
+    assert calls == []
+
+    monkeypatch.setattr(developer_mcp, "authenticated_project_api_key", lambda: document_key)
+    search_result = search(namespace="student_123", query="private document", mode="quick")
+    context_result = get_context(namespace="student_123", query="private document")
+    assert search_result["results"][0]["content"] == "Private document text."
+    assert context_result["context"][0]["content"] == "Private document text."
+    assert calls == [scope["knowledge_base_id"], scope["knowledge_base_id"]]
 
 
 def test_public_document_upload_uses_shared_knowledge_service_and_meters_file_bytes(

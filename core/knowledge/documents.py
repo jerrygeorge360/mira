@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import os
 import re
 import unicodedata
@@ -31,6 +32,8 @@ from core.db.repositories import (
     update_document,
 )
 from core.llm.embeddings import embed_text
+
+LOGGER = logging.getLogger(__name__)
 
 DEFAULT_S3_REGION = "eu-north-1"
 DOCUMENTS_BUCKET_ENV = "MIRA_DOCUMENTS_S3_BUCKET"
@@ -529,6 +532,17 @@ def ingest_document(
     record = get_document(identifier, workspace_id=workspace_id, include_deleted=True)
     if record is None:
         raise DocumentProcessingError("document disappeared after processing")
+    # Enrichment is a separate lifecycle. Its queue may be temporarily unavailable,
+    # but the already indexed document remains ready for ordinary retrieval.
+    from core.knowledge.enrichment import enrichment_enabled_for_workspace
+
+    if enrichment_enabled_for_workspace(workspace_id):
+        try:
+            from core.db.evidence import enqueue_document_job
+
+            enqueue_document_job(identifier, workspace_id=workspace_id)
+        except Exception:
+            LOGGER.exception("Could not queue document enrichment for %s", identifier)
     return IngestedDocument(
         record,
         tuple(list_document_chunks(identifier, workspace_id=workspace_id)),
@@ -545,6 +559,9 @@ def delete_document(
     document = get_document(document_id, workspace_id=workspace_id, include_deleted=True)
     if document is None:
         raise DocumentValidationError("document not found in workspace")
+    from core.knowledge.enrichment import cancel_and_retract_document
+
+    cancel_and_retract_document(document_id, workspace_id=workspace_id)
     chunk_ids = mark_document_deleted(document_id, workspace_id=workspace_id)
     for chunk_id in chunk_ids:
         chroma.remove_from_index(chunk_id, workspace_id=workspace_id)

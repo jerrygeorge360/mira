@@ -7,7 +7,9 @@ Architecture area: slow path.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -20,6 +22,10 @@ MEMORY_LIFECYCLE_MIGRATION_ID = "0003_memory_lifecycle"
 MEMORY_SLEEP_SCHEDULER_MIGRATION_ID = "0004_memory_sleep_scheduler"
 KNOWLEDGE_BASE_DOCUMENTS_MIGRATION_ID = "0005_knowledge_base_documents"
 DEVELOPER_PLATFORM_MIGRATION_ID = "0006_developer_platform"
+EVIDENCE_MIGRATION_ID = "0007_unified_evidence"
+SOURCE_SCOPE_MIGRATION_ID = "0008_source_scope_attachments"
+RELATION_ROLLBACK_MIGRATION_ID = "0009_relation_rollback_metadata"
+INVALIDATED_RELATION_REPAIR_MIGRATION_ID = "0010_restore_invalidated_relations"
 
 # SQLite is the source of truth for ISSUE-005. Enum-like fields intentionally remain
 # TEXT columns here; repository helpers validate allowed values before writes.
@@ -407,7 +413,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         object TEXT NOT NULL,
         confidence REAL NOT NULL,
         status TEXT NOT NULL DEFAULT 'active',
-        source_observation_id TEXT NOT NULL,
+        source_observation_id TEXT,
         canonical_subject_id TEXT,
         canonical_predicate_id TEXT,
         created_at TEXT NOT NULL,
@@ -494,7 +500,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         content TEXT NOT NULL,
         reason TEXT,
         status TEXT NOT NULL,
-        source_observation_id TEXT NOT NULL,
+        source_observation_id TEXT,
         valid_from TEXT,
         valid_until TEXT,
         always_inject INTEGER NOT NULL DEFAULT 0,
@@ -723,6 +729,93 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
         FOREIGN KEY (document_id) REFERENCES documents (id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS evidence_sources (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        source_type TEXT NOT NULL CHECK (
+            source_type IN ('conversation_observation', 'document_chunk')
+        ),
+        source_id TEXT NOT NULL,
+        project_id TEXT,
+        namespace TEXT,
+        knowledge_base_id TEXT REFERENCES knowledge_bases(id),
+        authority REAL NOT NULL DEFAULT 0.5 CHECK (authority >= 0 AND authority <= 1),
+        content_hash TEXT NOT NULL,
+        metadata_json TEXT,
+        observed_at TEXT,
+        created_at TEXT NOT NULL,
+        retracted_at TEXT,
+        UNIQUE (workspace_id, source_type, source_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS evidence_links (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        source_id TEXT NOT NULL REFERENCES evidence_sources(id),
+        target_type TEXT NOT NULL CHECK (
+            target_type IN ('atomic_fact', 'graph_edge', 'reflection', 'foresight')
+        ),
+        target_id TEXT NOT NULL,
+        atomic_fact_id TEXT REFERENCES atomic_facts(id),
+        graph_edge_id TEXT REFERENCES graph_edges(id),
+        reflection_id TEXT REFERENCES reflections(id),
+        foresight_id TEXT REFERENCES foresight_records(id),
+        stance TEXT NOT NULL CHECK (stance IN ('support', 'contradict')),
+        confidence REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
+        created_at TEXT NOT NULL,
+        retracted_at TEXT,
+        CHECK (
+            (target_type = 'atomic_fact' AND atomic_fact_id = target_id
+                AND graph_edge_id IS NULL AND reflection_id IS NULL AND foresight_id IS NULL) OR
+            (target_type = 'graph_edge' AND graph_edge_id = target_id
+                AND atomic_fact_id IS NULL AND reflection_id IS NULL AND foresight_id IS NULL) OR
+            (target_type = 'reflection' AND reflection_id = target_id
+                AND atomic_fact_id IS NULL AND graph_edge_id IS NULL AND foresight_id IS NULL) OR
+            (target_type = 'foresight' AND foresight_id = target_id
+                AND atomic_fact_id IS NULL AND graph_edge_id IS NULL AND reflection_id IS NULL)
+        )
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS document_enrichment_jobs (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        document_id TEXT NOT NULL REFERENCES documents(id),
+        pipeline_version TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (
+            status IN ('pending', 'processing', 'done', 'failed', 'cancelled')
+        ),
+        attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+        max_attempts INTEGER NOT NULL DEFAULT 3 CHECK (max_attempts > 0),
+        available_at TEXT NOT NULL,
+        lease_until TEXT,
+        worker_id TEXT,
+        last_error TEXT,
+        progress_json TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE (document_id, pipeline_version)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS session_knowledge_base_attachments (
+        workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        knowledge_base_id TEXT NOT NULL REFERENCES knowledge_bases(id),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (workspace_id, session_id, knowledge_base_id)
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS project_knowledge_workspaces (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id),
+        workspace_id TEXT NOT NULL UNIQUE REFERENCES workspaces(id),
+        knowledge_base_id TEXT NOT NULL UNIQUE REFERENCES knowledge_bases(id),
+        created_at TEXT NOT NULL
+    )
+    """,
 )
 
 _INDEX_STATEMENTS: tuple[str, ...] = (
@@ -818,6 +911,21 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     CREATE INDEX IF NOT EXISTS idx_atomic_facts_canonical
     ON atomic_facts (canonical_subject_id, canonical_predicate_id)
     """,
+    "CREATE INDEX IF NOT EXISTS idx_evidence_sources_scope "
+    "ON evidence_sources (workspace_id, source_type, source_id, retracted_at)",
+    "CREATE INDEX IF NOT EXISTS idx_evidence_links_target "
+    "ON evidence_links (workspace_id, target_type, target_id, retracted_at)",
+    "CREATE INDEX IF NOT EXISTS idx_evidence_links_source "
+    "ON evidence_links (source_id, retracted_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_links_active_unique "
+    "ON evidence_links (workspace_id, source_id, target_type, target_id, stance) "
+    "WHERE retracted_at IS NULL",
+    "CREATE INDEX IF NOT EXISTS idx_document_jobs_due "
+    "ON document_enrichment_jobs (workspace_id, status, available_at, lease_until)",
+    "CREATE INDEX IF NOT EXISTS idx_session_kb_attachments_session "
+    "ON session_knowledge_base_attachments (workspace_id, session_id)",
+    "CREATE INDEX IF NOT EXISTS idx_project_knowledge_workspace "
+    "ON project_knowledge_workspaces (workspace_id, project_id)",
 )
 
 _WORKSPACE_TABLES = (
@@ -845,6 +953,11 @@ _WORKSPACE_TABLES = (
     "knowledge_bases",
     "documents",
     "document_chunks",
+    "evidence_sources",
+    "evidence_links",
+    "document_enrichment_jobs",
+    "session_knowledge_base_attachments",
+    "project_knowledge_workspaces",
 )
 
 _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
@@ -970,6 +1083,88 @@ _OWNERSHIP_TRIGGER_STATEMENTS: tuple[str, ...] = tuple(
         SELECT RAISE(ABORT, 'document chunk parents must share its workspace');
     END
     """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_evidence_link_workspace
+    BEFORE INSERT ON evidence_links
+    WHEN NOT EXISTS (SELECT 1 FROM evidence_sources
+                     WHERE id = NEW.source_id AND workspace_id = NEW.workspace_id
+                       AND retracted_at IS NULL)
+      OR (NEW.target_type = 'atomic_fact' AND NOT EXISTS
+          (SELECT 1 FROM atomic_facts WHERE id = NEW.target_id
+             AND workspace_id = NEW.workspace_id))
+      OR (NEW.target_type = 'graph_edge' AND NOT EXISTS
+          (SELECT 1 FROM graph_edges WHERE id = NEW.target_id
+             AND workspace_id = NEW.workspace_id))
+      OR (NEW.target_type = 'reflection' AND NOT EXISTS
+          (SELECT 1 FROM reflections WHERE id = NEW.target_id
+             AND workspace_id = NEW.workspace_id))
+      OR (NEW.target_type = 'foresight' AND NOT EXISTS
+          (SELECT 1 FROM foresight_records WHERE id = NEW.target_id
+             AND workspace_id = NEW.workspace_id))
+    BEGIN
+        SELECT RAISE(ABORT, 'evidence link workspace or source mismatch');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_document_job_workspace
+    BEFORE INSERT ON document_enrichment_jobs
+    WHEN NOT EXISTS (SELECT 1 FROM documents WHERE id = NEW.document_id
+                     AND workspace_id = NEW.workspace_id AND status = 'ready'
+                     AND deleted_at IS NULL)
+    BEGIN
+        SELECT RAISE(ABORT, 'document job requires ready document in workspace');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_kb_attachment_workspace
+    BEFORE INSERT ON session_knowledge_base_attachments
+    WHEN NOT EXISTS (
+        SELECT 1 FROM sessions AS s JOIN knowledge_bases AS k
+          ON k.workspace_id = s.workspace_id
+        WHERE s.id = NEW.session_id AND s.workspace_id = NEW.workspace_id
+          AND s.status != 'deleted' AND k.id = NEW.knowledge_base_id
+          AND k.status = 'active'
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'session knowledge base attachment crosses scope');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_session_kb_attachment_update
+    BEFORE UPDATE ON session_knowledge_base_attachments
+    WHEN NOT EXISTS (
+        SELECT 1 FROM sessions AS s JOIN knowledge_bases AS k
+          ON k.workspace_id = s.workspace_id
+        WHERE s.id = NEW.session_id AND s.workspace_id = NEW.workspace_id
+          AND s.status != 'deleted' AND k.id = NEW.knowledge_base_id
+          AND k.status = 'active'
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'session knowledge base attachment crosses scope');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_project_knowledge_workspace_scope
+    BEFORE INSERT ON project_knowledge_workspaces
+    WHEN NOT EXISTS (
+        SELECT 1 FROM knowledge_bases AS k
+        WHERE k.id = NEW.knowledge_base_id AND k.workspace_id = NEW.workspace_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'project knowledge base does not match workspace');
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS trg_project_knowledge_workspace_scope_update
+    BEFORE UPDATE ON project_knowledge_workspaces
+    WHEN NOT EXISTS (
+        SELECT 1 FROM knowledge_bases AS k
+        WHERE k.id = NEW.knowledge_base_id AND k.workspace_id = NEW.workspace_id
+    )
+    BEGIN
+        SELECT RAISE(ABORT, 'project knowledge base does not match workspace');
+    END
+    """,
 )
 
 # Canonical registries seed the alias vocabulary that lets contradiction/supersession
@@ -1016,6 +1211,9 @@ def initialize_database(database_path: str | Path) -> None:
         _migrate_developer_platform(connection)
         _migrate_atomic_facts_canonical(connection)
         _migrate_canonical_registry_uniqueness(connection)
+        _migrate_evidence(connection)
+        _migrate_source_scopes(connection)
+        _migrate_relation_rollback_metadata(connection)
         for statement in _INDEX_STATEMENTS:
             connection.execute(statement)
         _install_ownership_triggers(connection)
@@ -1039,6 +1237,22 @@ def initialize_database(database_path: str | Path) -> None:
         connection.execute(
             "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
             (DEVELOPER_PLATFORM_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (EVIDENCE_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (SOURCE_SCOPE_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (RELATION_ROLLBACK_MIGRATION_ID, _now()),
+        )
+        connection.execute(
+            "INSERT OR IGNORE INTO schema_migrations (id, applied_at) VALUES (?, ?)",
+            (INVALIDATED_RELATION_REPAIR_MIGRATION_ID, _now()),
         )
         connection.commit()
         violations = connection.execute("PRAGMA foreign_key_check").fetchall()
@@ -1073,6 +1287,12 @@ def _install_ownership_triggers(connection: sqlite3.Connection) -> None:
         "trg_reflection_evidence_workspace",
         "trg_document_knowledge_base_workspace",
         "trg_document_chunk_workspace",
+        "trg_evidence_link_workspace",
+        "trg_document_job_workspace",
+        "trg_session_kb_attachment_workspace",
+        "trg_session_kb_attachment_update",
+        "trg_project_knowledge_workspace_scope",
+        "trg_project_knowledge_workspace_scope_update",
     ]
     for trigger_name in trigger_names:
         connection.execute(f"DROP TRIGGER IF EXISTS {trigger_name}")  # noqa: S608  # nosec B608
@@ -1241,6 +1461,353 @@ def _migrate_atomic_facts_canonical(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE atomic_facts "
             "ADD COLUMN canonical_predicate_id TEXT REFERENCES canonical_predicates (id)"
+        )
+
+
+def _migrate_evidence(connection: sqlite3.Connection) -> None:
+    """Make legacy provenance optional and backfill normalized observation links."""
+    if connection.execute(
+        "SELECT 1 FROM schema_migrations WHERE id = ?", (EVIDENCE_MIGRATION_ID,)
+    ).fetchone():
+        return
+    for table in ("atomic_facts", "foresight_records"):
+        column = next(
+            row
+            for row in connection.execute(f"PRAGMA table_info({table})")
+            if row[1] == "source_observation_id"
+        )
+        if column[3] == 0:
+            continue
+        original = connection.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)
+        ).fetchone()[0]
+        temporary = f"{table}_evidence_new"
+        ddl = re.sub(
+            rf"\bCREATE TABLE(?: IF NOT EXISTS)?\s+['\"`]?{table}['\"`]?",
+            f"CREATE TABLE {temporary}",
+            original,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        ddl = re.sub(
+            r"\bsource_observation_id\s+TEXT\s+NOT NULL\b",
+            "source_observation_id TEXT",
+            ddl,
+            count=1,
+            flags=re.IGNORECASE,
+        )
+        if ddl == original or "source_observation_id TEXT NOT NULL" in ddl:
+            raise RuntimeError(f"cannot rebuild {table} provenance column")
+        connection.execute(ddl)
+        columns = [row[1] for row in connection.execute(f"PRAGMA table_info({table})")]
+        quoted = ", ".join(f'"{name}"' for name in columns)
+        # These identifiers derive exclusively from the fixed table list and its PRAGMA.
+        connection.execute(
+            f"INSERT INTO {temporary} ({quoted}) SELECT {quoted} FROM {table}"  # nosec B608
+        )
+        before = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # nosec B608
+        after = connection.execute(f"SELECT COUNT(*) FROM {temporary}").fetchone()[0]  # nosec B608
+        if before != after:
+            raise RuntimeError(f"{table} rebuild lost rows")
+        connection.execute(f"DROP TABLE {table}")
+        connection.execute(f"ALTER TABLE {temporary} RENAME TO {table}")
+
+    # Backfill only matching, extant observations; never invent provenance.
+    targets = (
+        ("atomic_fact", "atomic_facts", "source_observation_id", "atomic_fact_id"),
+        ("foresight", "foresight_records", "source_observation_id", "foresight_id"),
+    )
+    for kind, table, column, fk_column in targets:
+        confidence = "t.confidence" if table == "atomic_facts" else "1.0"
+        rows = connection.execute(
+            f"SELECT t.id, t.workspace_id, o.id, o.content, o.created_at, {confidence} "  # nosec B608
+            f"FROM {table} AS t JOIN observations AS o ON o.id = t.{column} "
+            "AND o.workspace_id = t.workspace_id "
+            "JOIN sessions AS session ON session.id = o.session_id "
+            "AND session.workspace_id = o.workspace_id AND session.status != 'deleted'"
+        ).fetchall()
+        for target_id, workspace_id, observation_id, content, observed_at, weight in rows:
+            source_id = _backfill_observation_source(
+                connection, workspace_id, observation_id, content, observed_at
+            )
+            _backfill_link(connection, workspace_id, source_id, kind, target_id, fk_column, weight)
+    rows = connection.execute(
+        "SELECT id, workspace_id, source_observations_json FROM graph_edges "
+        "WHERE invalidated_at IS NULL"
+    ).fetchall()
+    for target_id, workspace_id, raw in rows:
+        try:
+            observation_ids = json.loads(raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(observation_ids, list):
+            continue
+        for observation_id in dict.fromkeys(str(value) for value in observation_ids):
+            row = connection.execute(
+                "SELECT o.content, o.created_at FROM observations AS o "
+                "JOIN sessions AS session ON session.id = o.session_id "
+                "AND session.workspace_id = o.workspace_id AND session.status != 'deleted' "
+                "WHERE o.id = ? AND o.workspace_id = ?",
+                (observation_id, workspace_id),
+            ).fetchone()
+            if row:
+                source_id = _backfill_observation_source(
+                    connection, workspace_id, observation_id, *row
+                )
+                _backfill_link(
+                    connection,
+                    workspace_id,
+                    source_id,
+                    "graph_edge",
+                    target_id,
+                    "graph_edge_id",
+                    1.0,
+                )
+    rows = connection.execute(
+        "SELECT r.id, r.workspace_id, o.id, o.content, o.created_at "
+        "FROM reflection_evidence AS e JOIN reflections AS r ON r.id = e.reflection_id "
+        "JOIN observations AS o ON o.id = e.observation_id AND o.workspace_id = r.workspace_id "
+        "JOIN sessions AS session ON session.id = o.session_id "
+        "AND session.workspace_id = o.workspace_id AND session.status != 'deleted' "
+        "WHERE r.status = 'active'"
+    ).fetchall()
+    for target_id, workspace_id, observation_id, content, observed_at in rows:
+        source_id = _backfill_observation_source(
+            connection, workspace_id, observation_id, content, observed_at
+        )
+        _backfill_link(
+            connection, workspace_id, source_id, "reflection", target_id, "reflection_id", 1.0
+        )
+
+
+def _migrate_source_scopes(connection: sqlite3.Connection) -> None:
+    """Backfill source scope from project workspace mappings already in SQLite."""
+    connection.execute(
+        "UPDATE evidence_sources SET "
+        "project_id = (SELECT p.project_id FROM project_namespaces AS p "
+        "WHERE p.workspace_id = evidence_sources.workspace_id), "
+        "namespace = (SELECT p.namespace FROM project_namespaces AS p "
+        "WHERE p.workspace_id = evidence_sources.workspace_id) "
+        "WHERE project_id IS NULL AND namespace IS NULL AND workspace_id IN "
+        "(SELECT workspace_id FROM project_namespaces)"
+    )
+    connection.execute(
+        "UPDATE evidence_sources SET "
+        "project_id = (SELECT p.project_id FROM project_knowledge_workspaces AS p "
+        "WHERE p.workspace_id = evidence_sources.workspace_id) "
+        "WHERE project_id IS NULL AND namespace IS NULL AND workspace_id IN "
+        "(SELECT workspace_id FROM project_knowledge_workspaces)"
+    )
+
+
+def _migrate_relation_rollback_metadata(connection: sqlite3.Connection) -> None:
+    """Backfill relation rollback data and repair retractions from older versions."""
+    has_rollback_metadata_migration = (
+        connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE id = ?",
+            (RELATION_ROLLBACK_MIGRATION_ID,),
+        ).fetchone()
+        is not None
+    )
+    has_invalidated_repair_migration = (
+        connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE id = ?",
+            (INVALIDATED_RELATION_REPAIR_MIGRATION_ID,),
+        ).fetchone()
+        is not None
+    )
+    if has_rollback_metadata_migration and has_invalidated_repair_migration:
+        return
+
+    # Earlier evidence registration assigned every conversation observation the same
+    # authority. Correct only rows matching that legacy default, leaving caller-set
+    # authority values intact.
+    authority_by_role = {"user": 0.95, "assistant": 0.55, "system": 0.4, "tool": 0.35}
+    sources = connection.execute(
+        "SELECT source.id, observation.role FROM evidence_sources AS source "
+        "JOIN observations AS observation ON observation.id = source.source_id "
+        "AND observation.workspace_id = source.workspace_id "
+        "WHERE source.source_type = 'conversation_observation' AND source.authority = 0.95 "
+        "AND observation.role != 'user'"
+    ).fetchall()
+    for source_id, role in sources:
+        connection.execute(
+            "UPDATE evidence_sources SET authority = ? WHERE id = ?",
+            (authority_by_role.get(str(role), 0.35), source_id),
+        )
+
+    relations = connection.execute(
+        "SELECT edge.id, edge.workspace_id, edge.edge_type, edge.invalidated_at, "
+        "edge.source_node_id, edge.target_node_id, edge.metadata_json, old_fact.id, "
+        "old_fact.status, new_fact.id FROM graph_edges AS edge "
+        "JOIN graph_nodes AS old_node ON old_node.id = edge.source_node_id "
+        "AND old_node.workspace_id = edge.workspace_id AND old_node.source_table = 'atomic_facts' "
+        "JOIN atomic_facts AS old_fact ON old_fact.id = old_node.source_id "
+        "AND old_fact.workspace_id = edge.workspace_id "
+        "JOIN graph_nodes AS new_node ON new_node.id = edge.target_node_id "
+        "AND new_node.workspace_id = edge.workspace_id AND new_node.source_table = 'atomic_facts' "
+        "JOIN atomic_facts AS new_fact ON new_fact.id = new_node.source_id "
+        "AND new_fact.workspace_id = edge.workspace_id "
+        "WHERE edge.edge_type IN ('SUPERSEDED_BY', 'CONTRADICTS')"
+    ).fetchall()
+    for (
+        edge_id,
+        workspace_id,
+        edge_type,
+        invalidated_at,
+        source_node_id,
+        target_node_id,
+        raw_metadata,
+        old_fact_id,
+        old_status,
+        new_fact_id,
+    ) in relations:
+        is_invalidated = invalidated_at is not None
+        if is_invalidated and has_invalidated_repair_migration:
+            continue
+        if not is_invalidated and has_rollback_metadata_migration:
+            continue
+        try:
+            metadata = json.loads(str(raw_metadata or "{}"))
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(metadata, dict):
+            continue
+        key = "supersession_rollback" if edge_type == "SUPERSEDED_BY" else "contradiction_rollback"
+        if key in metadata:
+            # The relation lifecycle already restored state when these metadata were
+            # present. Reapplying a contradiction rollback would inflate confidence.
+            continue
+        if edge_type == "SUPERSEDED_BY":
+            # The previous implementation normally superseded an active source fact.
+            # If another active supersession already starts at this fact, preserve the
+            # current superseded state when this relation is later retracted.
+            prior_state = str(old_status)
+            prior_edges = connection.execute(
+                """
+                SELECT 1 FROM graph_edges AS prior_edge
+                JOIN graph_nodes AS prior_node
+                  ON prior_node.id = prior_edge.source_node_id
+                 AND prior_node.workspace_id = prior_edge.workspace_id
+                WHERE prior_edge.workspace_id = (
+                    SELECT workspace_id FROM graph_edges WHERE id = ?
+                )
+                  AND prior_edge.id != ?
+                  AND prior_edge.edge_type = 'SUPERSEDED_BY'
+                  AND prior_edge.invalidated_at IS NULL
+                  AND prior_node.source_table = 'atomic_facts'
+                  AND prior_node.source_id = ?
+                LIMIT 1
+                """,
+                (edge_id, edge_id, old_fact_id),
+            ).fetchone()
+            if prior_edges:
+                prior_state = "superseded"
+            elif prior_state == "superseded":
+                prior_state = "active"
+            if prior_state not in {"active", "superseded", "contradicted", "expired", "rejected"}:
+                prior_state = "active"
+            metadata[key] = {
+                "fact_id": str(old_fact_id),
+                "status": prior_state,
+                "valid_until": None,
+            }
+        else:
+            # Existing apply_contradiction writes used a 0.7 confidence multiplier.
+            metadata[key] = {
+                "fact_ids": [str(old_fact_id), str(new_fact_id)],
+                "confidence_factor": 0.7,
+            }
+        metadata_json = json.dumps(metadata, sort_keys=True)
+        connection.execute(
+            "UPDATE graph_edges SET metadata_json = ? WHERE id = ?",
+            (metadata_json, edge_id),
+        )
+        if invalidated_at is not None:
+            # Older retraction code invalidated relation edges without restoring the
+            # fact state they had changed. Reconcile those rows once during migration.
+            from core.db.evidence import restore_invalidated_graph_relation
+
+            restore_invalidated_graph_relation(
+                connection,
+                {
+                    "edge_type": edge_type,
+                    "metadata_json": metadata_json,
+                    "source_node_id": source_node_id,
+                    "target_node_id": target_node_id,
+                },
+                str(workspace_id),
+            )
+
+
+def _backfill_observation_source(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    observation_id: str,
+    content: str,
+    observed_at: str,
+) -> str:
+    connection.execute(
+        "INSERT OR IGNORE INTO evidence_sources "
+        "(id, workspace_id, source_type, source_id, authority, content_hash, "
+        "observed_at, created_at) "
+        "VALUES (?, ?, 'conversation_observation', ?, 0.95, ?, ?, ?)",
+        (
+            uuid.uuid4().hex,
+            workspace_id,
+            observation_id,
+            hashlib.sha256(content.encode()).hexdigest(),
+            observed_at,
+            _now(),
+        ),
+    )
+    row = connection.execute(
+        "SELECT id FROM evidence_sources WHERE workspace_id = ? "
+        "AND source_type = 'conversation_observation' AND source_id = ?",
+        (workspace_id, observation_id),
+    ).fetchone()
+    if row is None:
+        raise RuntimeError("backfilled observation source could not be loaded")
+    return str(row[0])
+
+
+def _backfill_link(
+    connection: sqlite3.Connection,
+    workspace_id: str,
+    source_id: str,
+    kind: str,
+    target_id: str,
+    fk_column: str,
+    confidence: float,
+) -> None:
+    if (
+        connection.execute(
+            "SELECT 1 FROM evidence_sources WHERE id = ? AND retracted_at IS NULL", (source_id,)
+        ).fetchone()
+        is None
+    ):
+        return
+    existing = connection.execute(
+        "SELECT 1 FROM evidence_links WHERE workspace_id = ? AND source_id = ? "
+        "AND target_type = ? AND target_id = ? AND stance = 'support' "
+        "AND retracted_at IS NULL",
+        (workspace_id, source_id, kind, target_id),
+    ).fetchone()
+    if not existing:
+        connection.execute(
+            f"INSERT INTO evidence_links (id, workspace_id, source_id, target_type, "  # nosec B608
+            f"target_id, {fk_column}, stance, confidence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'support', ?, ?)",
+            (
+                uuid.uuid4().hex,
+                workspace_id,
+                source_id,
+                kind,
+                target_id,
+                target_id,
+                max(0, min(1, float(confidence))),
+                _now(),
+            ),
         )
 
 

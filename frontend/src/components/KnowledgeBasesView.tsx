@@ -18,6 +18,7 @@ import {
   type KnowledgeBaseDocumentsResponse,
   type KnowledgeBaseListResponse,
 } from '../api/client';
+import { useApp } from '../context/AppContext';
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024;
 const MAX_FILE_LABEL = '10 MB';
@@ -26,7 +27,11 @@ const ACCEPTED_EXTENSIONS = ['.txt', '.md', '.docx', '.pdf'];
 type LoadState = 'loading' | 'ready' | 'error';
 
 export default function KnowledgeBasesView() {
+  const { sessionId } = useApp();
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [attachedKnowledgeBaseIds, setAttachedKnowledgeBaseIds] = useState<string[]>([]);
+  const [documentRetrievalEnabled, setDocumentRetrievalEnabled] = useState(false);
+  const [savingAttachment, setSavingAttachment] = useState(false);
   const [documents, setDocuments] = useState<KnowledgeBaseDocument[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [basesState, setBasesState] = useState<LoadState>('loading');
@@ -84,6 +89,28 @@ export default function KnowledgeBasesView() {
   useEffect(() => {
     void loadKnowledgeBases();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    if (!sessionId) {
+      setAttachedKnowledgeBaseIds([]);
+      setDocumentRetrievalEnabled(false);
+      return () => { active = false; };
+    }
+    api.sessionKnowledgeBases(sessionId)
+      .then((response) => {
+        if (active) {
+          setDocumentRetrievalEnabled(response.retrieval_enabled);
+          setAttachedKnowledgeBaseIds(
+            response.knowledge_bases.filter((base) => base.attached).map((base) => base.id),
+          );
+        }
+      })
+      .catch((loadError) => {
+        if (active) setError(errorMessage(loadError, 'Chat library access could not be loaded.'));
+      });
+    return () => { active = false; };
+  }, [sessionId]);
 
   useEffect(() => {
     if (selectedId) {
@@ -188,6 +215,31 @@ export default function KnowledgeBasesView() {
     }
   }
 
+  async function toggleSessionAttachment(knowledgeBase: KnowledgeBase) {
+    if (!sessionId) return;
+    const isAttached = attachedKnowledgeBaseIds.includes(knowledgeBase.id);
+    const nextIds = isAttached
+      ? attachedKnowledgeBaseIds.filter((id) => id !== knowledgeBase.id)
+      : [...attachedKnowledgeBaseIds, knowledgeBase.id];
+    setSavingAttachment(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const response = await api.updateSessionKnowledgeBases(sessionId, nextIds);
+      setDocumentRetrievalEnabled(response.retrieval_enabled);
+      setAttachedKnowledgeBaseIds(
+        response.knowledge_bases.filter((base) => base.attached).map((base) => base.id),
+      );
+      setNotice(isAttached
+        ? `“${knowledgeBase.name}” was removed from this chat.`
+        : `“${knowledgeBase.name}” was attached to this chat.`);
+    } catch (saveError) {
+      setError(errorMessage(saveError, 'Chat library access could not be updated.'));
+    } finally {
+      setSavingAttachment(false);
+    }
+  }
+
   return (
     <div className="knowledge-bases-view">
       <header className="knowledge-bases-header">
@@ -211,6 +263,13 @@ export default function KnowledgeBasesView() {
           <div className="knowledge-bases-panel-head">
             <h3>Your libraries</h3>
             <span>{knowledgeBases.length}</span>
+          </div>
+          <div className="knowledge-base-access-note">
+            {sessionId
+              ? documentRetrievalEnabled
+                ? `${attachedKnowledgeBaseIds.length} librar${attachedKnowledgeBaseIds.length === 1 ? 'y' : 'ies'} attached to this chat`
+                : 'Library access is saved, but document retrieval is disabled for this workspace.'
+              : 'Start or open a chat to choose which libraries MIRA can use.'}
           </div>
           {basesState === 'loading' ? (
             <div className="knowledge-bases-loading">Loading libraries…</div>
@@ -283,6 +342,16 @@ export default function KnowledgeBasesView() {
                   <p>{selectedBase.description || 'Source documents for grounded answers.'}</p>
                 </div>
                 <div className="knowledge-bases-main-actions">
+                  <button
+                    className="knowledge-base-action"
+                    type="button"
+                    onClick={() => void toggleSessionAttachment(selectedBase)}
+                    disabled={!sessionId || savingAttachment}
+                    title={sessionId ? undefined : 'Open a chat first'}
+                  >
+                    {savingAttachment ? <LoaderCircle size={14} className="spin" /> : <BookOpen size={14} />}
+                    {attachedKnowledgeBaseIds.includes(selectedBase.id) ? 'Remove from chat' : 'Use in this chat'}
+                  </button>
                   <button
                     className="knowledge-base-action danger"
                     type="button"

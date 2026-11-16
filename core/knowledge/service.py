@@ -160,7 +160,11 @@ def delete_knowledge_base(*, workspace_id: str, knowledge_base_id: str) -> dict[
 
 def delete_workspace_knowledge_data(*, workspace_id: str) -> dict[str, int]:
     """Remove workspace document rows, vectors, and originals during a reset."""
+    from core.knowledge.enrichment import cancel_and_retract_document
+
     documents = _workspace_documents(workspace_id)
+    for document in documents:
+        cancel_and_retract_document(str(document["id"]), workspace_id=workspace_id)
     s3_deleted = 0
     storage: DocumentStorage | None = None
     if documents:
@@ -189,6 +193,13 @@ def delete_workspace_knowledge_data(*, workspace_id: str) -> dict[str, int]:
             "SELECT COUNT(*) AS count FROM knowledge_bases WHERE workspace_id = ?",
             (workspace_id,),
         ).fetchone()
+        # This function is called by the full workspace reset. Evidence links
+        # reference facts and knowledge bases; clear them before their parents.
+        connection.execute("DELETE FROM evidence_links WHERE workspace_id = ?", (workspace_id,))
+        connection.execute("DELETE FROM evidence_sources WHERE workspace_id = ?", (workspace_id,))
+        connection.execute(
+            "DELETE FROM document_enrichment_jobs WHERE workspace_id = ?", (workspace_id,)
+        )
         connection.execute("DELETE FROM document_chunks WHERE workspace_id = ?", (workspace_id,))
         connection.execute("DELETE FROM documents WHERE workspace_id = ?", (workspace_id,))
         connection.execute("DELETE FROM knowledge_bases WHERE workspace_id = ?", (workspace_id,))

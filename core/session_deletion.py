@@ -7,6 +7,10 @@ import sqlite3
 from datetime import datetime, timezone
 
 from core.db import chroma
+from core.db.evidence import (
+    graph_relation_has_bilateral_support,
+    restore_invalidated_graph_relation,
+)
 from core.db.repositories import repository_connection
 from core.workspace_data import delete_workspace_data
 
@@ -52,6 +56,13 @@ def delete_session_data(session_id: str, *, workspace_id: str) -> dict[str, int]
                 (now, now, session_id, workspace_id),
             )
         )
+        counts["knowledge_base_attachments"] = _rowcount(
+            connection.execute(
+                "DELETE FROM session_knowledge_base_attachments "
+                "WHERE workspace_id = ? AND session_id = ?",
+                (workspace_id, session_id),
+            )
+        )
         counts["observations"] = _rowcount(
             connection.execute(
                 """
@@ -83,6 +94,37 @@ def delete_session_data(session_id: str, *, workspace_id: str) -> dict[str, int]
                 (now, workspace_id, session_id),
             )
         )
+        # Normalized provenance must be withdrawn before a deleted observation is
+        # scrubbed. Other live sources may still support the same derived claim.
+        counts["evidence_links"] = _rowcount(
+            connection.execute(
+                """
+                UPDATE evidence_links SET retracted_at = ?
+                WHERE workspace_id = ? AND retracted_at IS NULL
+                  AND source_id IN (
+                    SELECT id FROM evidence_sources
+                    WHERE workspace_id = ? AND source_type = 'conversation_observation'
+                      AND source_id IN (
+                        SELECT id FROM observations WHERE session_id = ? AND workspace_id = ?
+                      )
+                  )
+                """,
+                (now, workspace_id, workspace_id, session_id, workspace_id),
+            )
+        )
+        counts["evidence_sources"] = _rowcount(
+            connection.execute(
+                """
+                UPDATE evidence_sources SET retracted_at = ?
+                WHERE workspace_id = ? AND retracted_at IS NULL
+                  AND source_type = 'conversation_observation'
+                  AND source_id IN (
+                    SELECT id FROM observations WHERE session_id = ? AND workspace_id = ?
+                  )
+                """,
+                (now, workspace_id, session_id, workspace_id),
+            )
+        )
         counts["reflection_provenance"] = _remove_reflection_provenance(connection, observation_set)
         counts["session_working_set"] = _rowcount(
             connection.execute(
@@ -105,6 +147,14 @@ def delete_session_data(session_id: str, *, workspace_id: str) -> dict[str, int]
                 WHERE workspace_id = ?
                   AND source_observation_id IN (SELECT id FROM observations WHERE session_id = ?)
                   AND status = 'active'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM evidence_links AS link
+                    JOIN evidence_sources AS source ON source.id = link.source_id
+                    WHERE link.atomic_fact_id = atomic_facts.id
+                      AND link.workspace_id = atomic_facts.workspace_id
+                      AND link.stance = 'support' AND link.retracted_at IS NULL
+                      AND source.retracted_at IS NULL
+                  )
                 """,
                 (now, workspace_id, session_id),
             )
@@ -117,6 +167,14 @@ def delete_session_data(session_id: str, *, workspace_id: str) -> dict[str, int]
                 WHERE workspace_id = ?
                   AND source_observation_id IN (SELECT id FROM observations WHERE session_id = ?)
                   AND status IN ('pending', 'active')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM evidence_links AS link
+                    JOIN evidence_sources AS source ON source.id = link.source_id
+                    WHERE link.foresight_id = foresight_records.id
+                      AND link.workspace_id = foresight_records.workspace_id
+                      AND link.stance = 'support' AND link.retracted_at IS NULL
+                      AND source.retracted_at IS NULL
+                  )
                 """,
                 (now, workspace_id, session_id),
             )
@@ -168,13 +226,21 @@ def _remove_reflection_provenance(connection: sqlite3.Connection, observation_id
 def _unsupported_reflection_ids(connection: sqlite3.Connection, workspace_id: str) -> list[str]:
     rows = connection.execute(
         """
-        SELECT reflections.id
-        FROM reflections
-        LEFT JOIN reflection_evidence
-            ON reflection_evidence.reflection_id = reflections.id
-        WHERE reflections.workspace_id = ? AND reflections.status = 'active'
-        GROUP BY reflections.id
-        HAVING COUNT(reflection_evidence.id) = 0
+        SELECT r.id
+        FROM reflections AS r
+        LEFT JOIN reflection_evidence AS legacy
+          ON legacy.reflection_id = r.id
+        LEFT JOIN evidence_links AS link
+          ON link.workspace_id = r.workspace_id AND link.target_type = 'reflection'
+         AND link.target_id = r.id AND link.stance = 'support' AND link.retracted_at IS NULL
+        LEFT JOIN evidence_sources AS source
+          ON source.id = link.source_id AND source.workspace_id = link.workspace_id
+         AND source.retracted_at IS NULL
+        WHERE r.workspace_id = ? AND r.status = 'active'
+        GROUP BY r.id, r.reflection_type
+        HAVING (r.reflection_type = 'world_knowledge' AND COUNT(DISTINCT source.id) < 2)
+            OR (r.reflection_type != 'world_knowledge'
+                AND COUNT(DISTINCT legacy.id) = 0 AND COUNT(DISTINCT source.id) = 0)
         """,
         (workspace_id,),
     ).fetchall()
@@ -188,7 +254,8 @@ def _prune_graph_edge_provenance(
         return {"graph_edges_pruned": 0, "graph_edges": 0}
     rows = connection.execute(
         """
-        SELECT id, source_observations_json
+        SELECT id, edge_type, source_node_id, target_node_id, source_observations_json,
+               metadata_json
         FROM graph_edges
         WHERE workspace_id = ? AND invalidated_at IS NULL
         """,
@@ -197,6 +264,20 @@ def _prune_graph_edge_provenance(
     pruned = 0
     invalidated = 0
     for row in rows:
+        edge = dict(row)
+        if row["edge_type"] in {"SUPERSEDED_BY", "CONTRADICTS"}:
+            if graph_relation_has_bilateral_support(connection, row, workspace_id):
+                pass
+            else:
+                result = connection.execute(
+                    "UPDATE graph_edges SET invalidated_at = ? "
+                    "WHERE id = ? AND workspace_id = ? AND invalidated_at IS NULL",
+                    (now, row["id"], workspace_id),
+                )
+                if result.rowcount:
+                    restore_invalidated_graph_relation(connection, edge, workspace_id)
+                    invalidated += result.rowcount
+                continue
         source_ids = _json_string_set(row["source_observations_json"])
         if not source_ids or not source_ids.intersection(observation_ids):
             continue
@@ -209,16 +290,17 @@ def _prune_graph_edge_provenance(
                 )
             )
         else:
-            invalidated += _rowcount(
-                connection.execute(
-                    """
-                    UPDATE graph_edges
-                    SET invalidated_at = ?
-                    WHERE id = ? AND invalidated_at IS NULL
-                    """,
-                    (now, row["id"]),
-                )
+            result = connection.execute(
+                """
+                UPDATE graph_edges
+                SET invalidated_at = ?
+                WHERE id = ? AND workspace_id = ? AND invalidated_at IS NULL
+                """,
+                (now, row["id"], workspace_id),
             )
+            if result.rowcount:
+                restore_invalidated_graph_relation(connection, edge, workspace_id)
+                invalidated += result.rowcount
     return {"graph_edges_pruned": pruned, "graph_edges": invalidated}
 
 
@@ -260,7 +342,27 @@ def _unsupported_source_node_ids(connection: sqlite3.Connection, workspace_id: s
         WHERE graph_nodes.workspace_id = ?
           AND (
             (graph_nodes.source_table = 'atomic_facts'
-             AND COALESCE(atomic_facts.status, 'missing') != 'active')
+             AND COALESCE(atomic_facts.status, 'missing') != 'active'
+             AND NOT EXISTS (
+                SELECT 1 FROM evidence_links AS link
+                JOIN evidence_sources AS source
+                  ON source.id = link.source_id AND source.workspace_id = link.workspace_id
+                WHERE link.workspace_id = graph_nodes.workspace_id
+                  AND link.target_type = 'atomic_fact'
+                  AND link.target_id = atomic_facts.id
+                  AND link.stance = 'support'
+                  AND link.retracted_at IS NULL
+                  AND source.retracted_at IS NULL
+             )
+             AND NOT EXISTS (
+                SELECT 1 FROM observations AS observation
+                JOIN sessions AS session
+                  ON session.id = observation.session_id
+                 AND session.workspace_id = observation.workspace_id
+                WHERE observation.id = atomic_facts.source_observation_id
+                  AND observation.workspace_id = atomic_facts.workspace_id
+                  AND session.status != 'deleted'
+             ))
             OR
             (graph_nodes.source_table = 'reflections'
              AND COALESCE(reflections.status, 'missing') != 'active')
@@ -354,6 +456,21 @@ def _delete_graph_nodes(
     if not node_ids:
         return 0
     placeholders = ", ".join("?" for _ in node_ids)
+    parameters = (workspace_id, *sorted(node_ids), *sorted(node_ids))
+    linked_rows = connection.execute(
+        f"""
+        SELECT DISTINCT edge.source_node_id, edge.target_node_id
+        FROM graph_edges AS edge
+        JOIN evidence_links AS link ON link.workspace_id = edge.workspace_id
+          AND link.target_type = 'graph_edge' AND link.target_id = edge.id
+        WHERE edge.workspace_id = ?
+          AND (edge.source_node_id IN ({placeholders}) OR edge.target_node_id IN ({placeholders}))
+        """,  # nosec B608
+        parameters,
+    ).fetchall()
+    preserved_node_ids = {
+        str(row[key]) for row in linked_rows for key in ("source_node_id", "target_node_id")
+    } & node_ids
     connection.execute(
         f"""
         DELETE FROM graph_edges
@@ -362,9 +479,37 @@ def _delete_graph_nodes(
             source_node_id IN ({placeholders})
             OR target_node_id IN ({placeholders})
           )
+          AND NOT EXISTS (
+            SELECT 1 FROM evidence_links AS link
+            WHERE link.workspace_id = graph_edges.workspace_id
+              AND link.target_type = 'graph_edge' AND link.target_id = graph_edges.id
+          )
         """,  # nosec B608
-        (workspace_id, *sorted(node_ids), *sorted(node_ids)),
+        parameters,
     )
+    if preserved_node_ids:
+        preserved_placeholders = ", ".join("?" for _ in preserved_node_ids)
+        connection.execute(
+            f"""
+            UPDATE graph_nodes
+            SET node_type = 'retracted', source_table = NULL, source_id = NULL,
+                label = '[retracted evidence]', metadata_json = NULL
+            WHERE workspace_id = ? AND id IN ({preserved_placeholders})
+            """,  # nosec B608
+            (workspace_id, *sorted(preserved_node_ids)),
+        )
+        node_placeholders = ", ".join("?" for _ in node_ids)
+        preserved_placeholders = ", ".join("?" for _ in preserved_node_ids)
+        return _rowcount(
+            connection.execute(
+                f"""
+                DELETE FROM graph_nodes
+                WHERE workspace_id = ? AND id IN ({node_placeholders})
+                  AND id NOT IN ({preserved_placeholders})
+                """,  # nosec B608
+                (workspace_id, *sorted(node_ids), *sorted(preserved_node_ids)),
+            )
+        )
     return _rowcount(
         connection.execute(
             f"""

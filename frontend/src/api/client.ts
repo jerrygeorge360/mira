@@ -84,6 +84,16 @@ export interface KnowledgeBaseDocumentsResponse {
   items?: KnowledgeBaseDocument[];
 }
 
+export interface SessionKnowledgeBase extends KnowledgeBase {
+  attached: boolean;
+}
+
+export interface SessionKnowledgeBasesResponse {
+  session_id: string;
+  knowledge_bases: SessionKnowledgeBase[];
+  retrieval_enabled: boolean;
+}
+
 /**
  * Sleep responses are intentionally open-ended. The sleep lifecycle is still
  * gaining fields, so the admin surface normalizes additive fields at the edge.
@@ -367,6 +377,12 @@ export const api = {
     return req<ItemsResponse>(`/foresight?${qs}`);
   },
 
+  confirmForesightCandidate: (recordId: string) =>
+    req<{ id: string; status: string }>(
+      `/foresight/${encodeURIComponent(recordId)}/confirm`,
+      { method: 'POST', body: JSON.stringify({ confirmed: true }) },
+    ),
+
   reflections: (params?: { limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.limit != null) qs.set('limit', String(params.limit));
@@ -383,6 +399,18 @@ export const api = {
 
   sessionWorkingSet: (sessionId: string) =>
     req<Record<string, unknown>>(`/sessions/${sessionId}/working-set`),
+
+  sessionKnowledgeBases: (sessionId: string) =>
+    req<SessionKnowledgeBasesResponse>(`/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`),
+
+  updateSessionKnowledgeBases: (sessionId: string, knowledgeBaseIds: string[]) =>
+    req<SessionKnowledgeBasesResponse>(
+      `/sessions/${encodeURIComponent(sessionId)}/knowledge-bases`,
+      {
+        method: 'PUT',
+        body: JSON.stringify({ knowledge_base_ids: knowledgeBaseIds }),
+      },
+    ),
 
   retrievalTrace: (traceId: string) =>
     req<Record<string, unknown>>(`/retrieval/traces/${traceId}`),

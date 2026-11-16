@@ -79,7 +79,15 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "fact_status": frozenset({"active", "superseded", "contradicted", "expired", "rejected"}),
     "graph_node_type": frozenset(
-        {"observation", "entity", "reflection", "community", "foresight", "atomic_fact"}
+        {
+            "observation",
+            "document_chunk",
+            "entity",
+            "reflection",
+            "community",
+            "foresight",
+            "atomic_fact",
+        }
     ),
     "graph_edge_type": frozenset(
         {
@@ -98,7 +106,9 @@ ENUM_VALUES: dict[str, frozenset[str]] = {
     ),
     "reflection_type": frozenset({"user_knowledge", "world_knowledge", "self_knowledge"}),
     "reflection_status": frozenset({"active", "stale", "invalidated", "superseded"}),
-    "foresight_status": frozenset({"pending", "active", "resolved", "expired", "cancelled"}),
+    "foresight_status": frozenset(
+        {"candidate", "pending", "active", "resolved", "expired", "cancelled"}
+    ),
     "working_memory_type": frozenset(
         {
             "project_constraint",
@@ -896,6 +906,65 @@ def list_knowledge_bases(
     )
 
 
+def list_session_knowledge_base_ids(session_id: str, *, workspace_id: str) -> list[str]:
+    """List only active KBs explicitly attached to a live session in this workspace."""
+    with repository_connection() as connection:
+        session = connection.execute(
+            "SELECT 1 FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
+            (session_id, workspace_id),
+        ).fetchone()
+        if session is None:
+            raise ValueError("session not found in workspace")
+        rows = connection.execute(
+            "SELECT a.knowledge_base_id FROM session_knowledge_base_attachments AS a "
+            "JOIN knowledge_bases AS k ON k.id = a.knowledge_base_id "
+            "AND k.workspace_id = a.workspace_id "
+            "WHERE a.workspace_id = ? AND a.session_id = ? AND k.status = 'active' "
+            "ORDER BY a.created_at, a.knowledge_base_id",
+            (workspace_id, session_id),
+        ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def replace_session_knowledge_base_ids(
+    session_id: str, knowledge_base_ids: list[str], *, workspace_id: str
+) -> list[str]:
+    """Replace a session's explicit KB allowlist after validating every KB owner."""
+    normalized = list(dict.fromkeys(value.strip() for value in knowledge_base_ids if value.strip()))
+    with repository_connection() as connection:
+        session = connection.execute(
+            "SELECT 1 FROM sessions WHERE id = ? AND workspace_id = ? AND status != 'deleted'",
+            (session_id, workspace_id),
+        ).fetchone()
+        if session is None:
+            raise ValueError("session not found in workspace")
+        if normalized:
+            placeholders = ", ".join("?" for _ in normalized)
+            rows = connection.execute(
+                "SELECT id FROM knowledge_bases WHERE workspace_id = ? AND status = 'active' "
+                f"AND id IN ({placeholders})",  # nosec B608 - IDs remain bound parameters
+                (workspace_id, *normalized),
+            ).fetchall()
+            found = {str(row[0]) for row in rows}
+            if found != set(normalized):
+                raise ValueError("knowledge base not found in workspace")
+        connection.execute(
+            "DELETE FROM session_knowledge_base_attachments "
+            "WHERE workspace_id = ? AND session_id = ?",
+            (workspace_id, session_id),
+        )
+        attachment_rows = [
+            (workspace_id, session_id, knowledge_base_id, _now())
+            for knowledge_base_id in normalized
+        ]
+        connection.executemany(
+            "INSERT INTO session_knowledge_base_attachments "
+            "(workspace_id, session_id, knowledge_base_id, created_at) VALUES (?, ?, ?, ?)",
+            attachment_rows,
+        )
+    return normalized
+
+
 def create_document(document: RepositoryRecord, *, workspace_id: str | None = None) -> str:
     """Insert a document row after validating its workspace and lifecycle status."""
     prepared = dict(document)
@@ -1503,14 +1572,15 @@ def create_atomic_fact(fact: RepositoryRecord) -> str:
     _require_fields(
         "atomic_facts",
         record,
-        {"subject", "predicate", "object", "confidence", "status", "source_observation_id"},
+        {"subject", "predicate", "object", "confidence", "status"},
     )
+    if not record.get("source_observation_id") and not record.get("workspace_id"):
+        raise ValueError("atomic fact requires a source observation or explicit workspace")
     workspace_id = str(
-        record.setdefault(
-            "workspace_id",
-            _workspace_id_for("observations", str(record["source_observation_id"])),
-        )
+        record.get("workspace_id")
+        or _workspace_id_for("observations", str(record["source_observation_id"]))
     )
+    record["workspace_id"] = workspace_id
     _validate_record_enums(record, {"status": "fact_status"})
     record.setdefault(
         "canonical_subject_id",
@@ -1658,11 +1728,13 @@ def create_foresight_record(record: RepositoryRecord) -> str:
     _require_fields(
         "foresight_records",
         prepared_record,
-        {"content", "status", "source_observation_id"},
+        {"content", "status"},
     )
-    prepared_record.setdefault(
-        "workspace_id",
-        _workspace_id_for("observations", str(prepared_record["source_observation_id"])),
+    if not prepared_record.get("source_observation_id") and not prepared_record.get("workspace_id"):
+        raise ValueError("foresight requires a source observation or explicit workspace")
+    prepared_record["workspace_id"] = str(
+        prepared_record.get("workspace_id")
+        or _workspace_id_for("observations", str(prepared_record["source_observation_id"]))
     )
     _validate_record_enums(prepared_record, {"status": "foresight_status"})
     return _insert_with_generated_id("foresight_records", prepared_record)

@@ -43,6 +43,7 @@ class PublicMemorySearch(PlatformModel):
     query: str = Field(min_length=1, max_length=20_000)
     mode: Literal["auto", "quick", "deep", "relational"] = "auto"
     limit: int = Field(default=10, ge=1, le=50)
+    include_project_knowledge: bool = False
 
 
 class BillingSubscribe(PlatformModel):

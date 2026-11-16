@@ -37,6 +37,31 @@ class SessionWorkingSetResponse(BaseModel):
     items: list[dict[str, object]]
 
 
+class SessionKnowledgeBase(BaseModel):
+    """A workspace-owned KB and whether the current session may retrieve it."""
+
+    id: str
+    name: str
+    description: str | None = None
+    attached: bool
+
+
+class SessionKnowledgeBasesResponse(BaseModel):
+    """Explicit KB attachment state for one session."""
+
+    session_id: str
+    knowledge_bases: list[SessionKnowledgeBase]
+    retrieval_enabled: bool
+
+
+class UpdateSessionKnowledgeBasesRequest(BaseModel):
+    """Replacement allowlist for one session."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    knowledge_base_ids: list[str]
+
+
 class SessionSummary(BaseModel):
     """Compact session entry for the conversation-history sidebar."""
 

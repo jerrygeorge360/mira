@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
 from typing import TypedDict
@@ -237,12 +238,32 @@ def assess_provenance_completeness(
             if not record.get(key) and not evidence.get(key):
                 missing.append(key)
     elif source == "atomic_facts":
-        for key in ("id", "workspace_id", "source_observation_id"):
+        for key in ("id", "workspace_id"):
             if not record.get(key) and not evidence.get(key):
                 missing.append(key)
+        if not record.get("source_observation_id") and not _has_active_support(
+            record, "atomic_fact"
+        ):
+            missing.append("evidence_source")
     elif source in {"graph_edge", "graph_path"}:
-        if not evidence.get("source_observations"):
-            missing.append("source_observations")
+        if not _has_live_observation_support(record, "graph_edge") and not _has_active_support(
+            record, "graph_edge"
+        ):
+            missing.append("evidence_source")
+    elif source in {"reflections", "reflection"}:
+        if not record.get("id") or not record.get("workspace_id"):
+            missing.append("reflection_identity")
+        elif not _has_legacy_reflection_support(record) and not _has_active_support(
+            record, "reflection"
+        ):
+            missing.append("evidence_source")
+    elif source in {"foresight_records", "foresight"}:
+        if not record.get("id") or not record.get("workspace_id"):
+            missing.append("foresight_identity")
+        elif not _has_live_observation_support(record, "foresight") and not _has_active_support(
+            record, "foresight"
+        ):
+            missing.append("evidence_source")
     elif source == "community_summary" and not (
         evidence.get("member_node_ids") or evidence.get("provenance")
     ):
@@ -437,11 +458,113 @@ def _provenance_complete(
         return bool(record.get("id") and record.get("workspace_id") and record.get("session_id"))
     if source == "atomic_facts":
         return bool(
-            record.get("id") and record.get("workspace_id") and record.get("source_observation_id")
+            record.get("id")
+            and record.get("workspace_id")
+            and (record.get("source_observation_id") or _has_active_support(record, "atomic_fact"))
         )
-    if source in {"reflections", "foresight_records", "working_memory", "community_summary"}:
+    if source == "graph_edge":
+        return bool(
+            record.get("id")
+            and record.get("workspace_id")
+            and (
+                _has_live_observation_support(record, "graph_edge")
+                or _has_active_support(record, "graph_edge")
+            )
+        )
+    if source in {"reflections", "reflection"}:
+        return bool(
+            record.get("id")
+            and record.get("workspace_id")
+            and (
+                _has_legacy_reflection_support(record) or _has_active_support(record, "reflection")
+            )
+        )
+    if source in {"foresight_records", "foresight"}:
+        return bool(
+            record.get("id")
+            and record.get("workspace_id")
+            and (
+                _has_live_observation_support(record, "foresight")
+                or _has_active_support(record, "foresight")
+            )
+        )
+    if source in {"working_memory", "community_summary"}:
         return bool(provenance.get("record_id") or record.get("id"))
     return True
+
+
+def _has_active_support(record: dict[str, object], target_type: str) -> bool:
+    record_id = record.get("id")
+    workspace_id = record.get("workspace_id")
+    if not isinstance(record_id, str) or not isinstance(workspace_id, str):
+        return False
+    try:
+        from core.db.evidence import list_active_evidence
+
+        return any(
+            item.get("stance") == "support"
+            for item in list_active_evidence(target_type, record_id, workspace_id=workspace_id)
+        )
+    except Exception:
+        return False
+
+
+def _has_live_observation_support(record: dict[str, object], target_type: str) -> bool:
+    workspace_id = record.get("workspace_id")
+    if not isinstance(workspace_id, str):
+        return False
+    identifiers: list[str] = []
+    if target_type == "foresight" and record.get("source_observation_id"):
+        identifiers.append(str(record["source_observation_id"]))
+    raw = record.get("source_observations_json")
+    if isinstance(raw, str):
+        try:
+            values = json.loads(raw)
+        except ValueError:
+            values = []
+        if isinstance(values, list):
+            identifiers.extend(str(value) for value in values if value)
+    else:
+        source_observations = record.get("source_observations")
+        if isinstance(source_observations, list):
+            identifiers.extend(str(value) for value in source_observations if value)
+    if not identifiers:
+        return False
+    from core.db.repositories import repository_connection
+
+    placeholders = ", ".join("?" for _ in set(identifiers))
+    with repository_connection() as connection:
+        return (
+            connection.execute(
+                "SELECT 1 FROM observations AS o JOIN sessions AS s "
+                "ON s.id = o.session_id AND s.workspace_id = o.workspace_id "
+                f"WHERE o.workspace_id = ? AND s.status != 'deleted' AND o.id IN ({placeholders}) "  # nosec B608 - IDs remain bound below
+                "LIMIT 1",
+                (workspace_id, *sorted(set(identifiers))),
+            ).fetchone()
+            is not None
+        )
+
+
+def _has_legacy_reflection_support(record: dict[str, object]) -> bool:
+    record_id = record.get("id")
+    workspace_id = record.get("workspace_id")
+    if not isinstance(record_id, str) or not isinstance(workspace_id, str):
+        return False
+    from core.db.repositories import repository_connection
+
+    with repository_connection() as connection:
+        return (
+            connection.execute(
+                "SELECT 1 FROM reflection_evidence AS e "
+                "JOIN observations AS o ON o.id = e.observation_id "
+                "AND o.workspace_id = ? JOIN sessions AS s ON s.id = o.session_id "
+                "AND s.workspace_id = o.workspace_id AND s.status != 'deleted' "
+                "WHERE e.reflection_id = ? LIMIT 1",
+                (workspace_id, record_id),
+            ).fetchone()
+            is not None
+        )
 
 
 def _fallback_trust(authority: float, freshness: float, state: dict[str, object]) -> float:

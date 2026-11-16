@@ -104,3 +104,29 @@ def test_transition_supersession_is_idempotent(database_path: Path) -> None:
     assert len(first) == 1
     assert second == []
     assert len(find_edges_by_type("SUPERSEDED_BY")) == 1
+
+
+def test_retracted_transition_can_be_recorded_again(database_path: Path) -> None:
+    """An invalidated relation must not suppress a new live transition."""
+    first_session = create_session("jerry")
+    content = "I migrated from MySQL to Postgres."
+    first_observation = save_observation(first_session, "user", content)
+    first_edges = _apply_transition_supersessions(first_observation, content)
+    assert len(first_edges) == 1
+    with repository_connection() as connection:
+        connection.execute(
+            "UPDATE graph_edges SET invalidated_at = '2026-11-16T00:00:00+00:00' WHERE id = ?",
+            (first_edges[0],),
+        )
+
+    second_session = create_session("jerry")
+    second_observation = save_observation(second_session, "user", content)
+    second_edges = _apply_transition_supersessions(second_observation, content)
+
+    assert len(second_edges) == 1
+    with repository_connection() as connection:
+        active_edges = connection.execute(
+            "SELECT COUNT(*) FROM graph_edges WHERE edge_type = 'SUPERSEDED_BY' "
+            "AND invalidated_at IS NULL"
+        ).fetchone()[0]
+    assert active_edges == 1

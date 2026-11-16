@@ -19,7 +19,6 @@ from core.db import chroma
 from core.db.repositories import (
     canonical_form_for_id,
     claim_pending_batch,
-    create_atomic_fact,
     list_session_items_by_status,
     mark_done,
     mark_failed,
@@ -671,9 +670,36 @@ def run_worker(
                 if semantic_config is not None
                 else run_slow_path_batch(batch_size)
             )
+            # Document enrichment uses its own durable queue. A document failure
+            # cannot hold up conversation memory, and a ready document stays searchable.
+            document_counts = {"processed": 0, "failed": 0}
+            try:
+                from core.knowledge.enrichment import run_document_enrichment_batch
+
+                document_counts = run_document_enrichment_batch(
+                    limit=batch_size, worker_id=worker_id
+                )
+            except Exception as error:  # noqa: BLE001 - isolate the document queue
+                LOGGER.exception("Document enrichment batch failed")
+                log_event(
+                    "document_enrichment_batch_failed",
+                    "document enrichment batch failed",
+                    level=logging.WARNING,
+                    worker_id=worker_id,
+                    error_message=str(error) or error.__class__.__name__,
+                )
             duration_ms = int((time.monotonic() - started) * 1000)
 
-            if not results:
+            if document_counts["processed"] or document_counts["failed"]:
+                log_event(
+                    "document_enrichment_batch_completed",
+                    "document enrichment batch completed",
+                    worker_id=worker_id,
+                    processed=document_counts["processed"],
+                    failed=document_counts["failed"],
+                )
+
+            if not results and not document_counts["processed"]:
                 log_event(
                     "batch_empty", "no pending observations", worker_id=worker_id, batch_id=batch_id
                 )
@@ -711,6 +737,12 @@ def run_worker(
                     worker_id=worker_id,
                     seconds=poll_interval_s,
                 )
+                time.sleep(poll_interval_s)
+                continue
+
+            if not results:
+                if once or _reached(max_iterations, iterations):
+                    break
                 time.sleep(poll_interval_s)
                 continue
 
@@ -1632,9 +1664,11 @@ def _apply_transition_supersessions(observation_id: str, content: str) -> list[s
                 current=transition["current_object"],
             )
             continue
-        prior_id = create_atomic_fact(_transition_fact(transition, "prior_object", observation_id))
-        current_id = create_atomic_fact(
-            _transition_fact(transition, "current_object", observation_id)
+        prior_id, current_id = store_atomic_facts(
+            [
+                _transition_fact(transition, "prior_object", observation_id),
+                _transition_fact(transition, "current_object", observation_id),
+            ]
         )
         edge_ids.append(apply_supersession(prior_id, current_id, [observation_id]))
         log_event(
@@ -1693,6 +1727,7 @@ def _transition_supersession_exists(
             JOIN atomic_facts prior_fact ON prior_fact.id = prior_node.source_id
             JOIN atomic_facts current_fact ON current_fact.id = current_node.source_id
             WHERE edge.edge_type = 'SUPERSEDED_BY'
+              AND edge.invalidated_at IS NULL
               AND prior_node.source_table = 'atomic_facts'
               AND current_node.source_table = 'atomic_facts'
               AND prior_fact.canonical_subject_id = ?

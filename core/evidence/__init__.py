@@ -1,0 +1,1 @@
+"""Source-aware evidence adapters."""

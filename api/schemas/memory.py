@@ -80,3 +80,9 @@ class MemoryForgetResponse(BaseModel):
     """Lifecycle state after a public forgetting operation."""
 
     memory: dict[str, object]
+
+
+class ForesightConfirmRequest(BaseModel):
+    """Explicitly accept a document-derived foresight proposal."""
+
+    confirmed: bool

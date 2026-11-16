@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Collection
 
 from core.db.repositories import repository_connection, workspace_id_for_session
 from core.db.schema import LEGACY_WORKSPACE_ID
@@ -25,7 +26,7 @@ from core.memory.lifecycle import (
     is_historical_query,
     lifecycle_for_retrieval,
 )
-from core.retrieval.quick import retrieve_quick
+from core.retrieval.quick import graph_node_allowed, retrieve_quick, source_record_allowed
 from core.retrieval.vector import vector_search
 
 Evidence = dict[str, object]
@@ -74,6 +75,8 @@ def retrieve_deep(
     *,
     workspace_id: str | None = None,
     historical: bool = False,
+    include_documents: bool = True,
+    allowed_knowledge_base_ids: Collection[str] | None = None,
 ) -> list[Evidence]:
     """Retrieve synthesis-ready context from community summaries and reflections."""
     if limit < 1:
@@ -87,17 +90,67 @@ def retrieve_deep(
     workspace_id = workspace_id or session_workspace or LEGACY_WORKSPACE_ID
     historical = is_historical_query(query, historical=historical)
     summaries = _community_candidates(query, limit, workspace_id, historical=historical)
+    if not include_documents or allowed_knowledge_base_ids is not None:
+        summaries = [
+            item
+            for item in summaries
+            if _community_source_allowed(
+                item, workspace_id, include_documents, allowed_knowledge_base_ids
+            )
+        ]
     if not summaries:
         LOGGER.info("Deep Mode found no community summaries; falling back to Quick Mode")
-        return _quick_fallback(query, session_id, limit, workspace_id, historical=historical)
+        return _quick_fallback(
+            query,
+            session_id,
+            limit,
+            workspace_id,
+            historical=historical,
+            include_documents=include_documents,
+            allowed_knowledge_base_ids=allowed_knowledge_base_ids,
+        )
 
     candidates = [
         *summaries,
         *_reflection_candidates(query, limit, workspace_id, historical=historical),
         *_supporting_observation_candidates(query, session_id, workspace_id, historical=historical),
     ]
+    if not include_documents or allowed_knowledge_base_ids is not None:
+        candidates = [
+            item
+            for item in candidates
+            if item.get("source") != "reflection"
+            or source_record_allowed(
+                "reflection",
+                str(item["source_id"]),
+                workspace_id,
+                include_documents,
+                allowed_knowledge_base_ids,
+                record=item.get("record"),
+            )
+        ]
     candidates.sort(key=_ranking_key)
     return candidates[:limit]
+
+
+def _community_source_allowed(
+    item: Evidence,
+    workspace_id: str,
+    include_documents: bool,
+    allowed_knowledge_base_ids: Collection[str] | None,
+) -> bool:
+    members = item.get("member_node_ids")
+    return (
+        isinstance(members, list)
+        and bool(members)
+        and all(
+            isinstance(node_id, str)
+            and graph_node_allowed(
+                node_id, workspace_id, include_documents, allowed_knowledge_base_ids
+            )
+            for node_id in members
+        )
+    )
 
 
 def deep_retrieve(query: str, limit: int = 8, *, historical: bool = False) -> list[Evidence]:
@@ -112,9 +165,17 @@ def _quick_fallback(
     workspace_id: str,
     *,
     historical: bool = False,
+    include_documents: bool = True,
+    allowed_knowledge_base_ids: Collection[str] | None = None,
 ) -> list[Evidence]:
     results = retrieve_quick(
-        query, session_id, limit, workspace_id=workspace_id, historical=historical
+        query,
+        session_id,
+        limit,
+        workspace_id=workspace_id,
+        historical=historical,
+        include_documents=include_documents,
+        allowed_knowledge_base_ids=allowed_knowledge_base_ids,
     )
     for result in results:
         result["retrieval_mode"] = "deep"
